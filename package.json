@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "shadcn": "^4.16.2"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

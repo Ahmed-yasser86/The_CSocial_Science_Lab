@@ -1,0 +1,30 @@
+{
+  "id": "v1example0000000000000000001",
+  "webpage_url": "https://www.youtube.com/watch?v=v1example0000000000000000001",
+  "title": "An Example Research Video",
+  "description": "Description with **markdown**.",
+  "duration": 618,
+  "upload_date": "20240115",
+  "timestamp": 1705314000,
+  "channel": "Example Channel",
+  "channel_id": "UCexample00000000000000000",
+  "channel_url": "https://www.youtube.com/channel/UCexample00000000000000000",
+  "uploader": "Example Channel",
+  "uploader_id": "@example",
+  "view_count": 1234567,
+  "like_count": 45678,
+  "comment_count": 987,
+  "favorite_count": 0,
+  "tags": ["research", "demo"],
+  "categories": ["Science & Technology"],
+  "language": "en",
+  "live_status": "not_live",
+  "availability": "public",
+  "age_limit": 0,
+  "thumbnail": "https://i.ytimg.com/vi/v1example0000000000000000001/hqdefault.jpg",
+  "chapters": [
+    {"start_time": 0, "end_time": 100, "title": "Intro"},
+    {"start_time": 100, "end_time": 618, "title": "Body"}
+  ],
+  "is_short": false
+}

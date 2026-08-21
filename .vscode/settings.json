@@ -1,0 +1,11 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python.testing.pytestArgs": [
+        "Retrival_Pipline"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.analysis.extraPaths": [
+        "Retrival_Pipline/Graph/Chains/tests"
+    ]
+}

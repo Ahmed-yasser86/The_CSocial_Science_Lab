@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "graph-rag-agent"
+version = "0.1.0"
+description = "Graph-based Agentic RAG Architecture"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "cast>=0.1.1",
+    "certifi>=2026.6.17",
+    "google-api-core>=2.31.0",
+    "gpt-researcher>=0.15.1",
+    "langchain-cohere>=0.6.0",
+    "langchain-google-genai>=4.3.1",
+    "langchain-mcp-adapters>=0.3.1",
+    "langchain-openai>=1.4.1",
+    "langchain-qdrant>=1.1.0",
+    "langchain-tavily>=0.2.18",
+    "langchain-text-splitters>=1.1.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "python-dotenv>=1.2.2",
+    "qdrant-client>=1.18.0",
+    "rich>=15.0.0",
+    "tavily>=1.1.0",
+    "tenacity>=9.1.4",
+    "tiktoken>=0.13.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "Ingestion_Pipline",
+    "Retrival_Pipline",
+    "Retrival_Pipline/Graph/Chains"
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "Ingestion_Pipline",
+    "Retrival_Pipline",
+    "Retrival_Pipline/Graph/Chains"
+]
+testpaths = ["Retrival_Pipline/Graph/Chains/tests"]

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "Ugxrootcomment0000000000001",
+    "text": "First comment from a researcher.",
+    "timestamp": 1705314000,
+    "like_count": 42,
+    "reply_count": 2,
+    "author": "Researcher A",
+    "author_id": "UCA0000000000000000000000001",
+    "author_is_uploader": false,
+    "parent": null
+  },
+  {
+    "id": "Ugxreplycomment0000000000001",
+    "text": "A reply to the first comment.",
+    "timestamp": 1705400400,
+    "like_count": 5,
+    "reply_count": 0,
+    "author": "Commenter B",
+    "author_id": "UCB0000000000000000000002",
+    "author_is_uploader": true,
+    "parent": "Ugxrootcomment0000000000001"
+  },
+  {
+    "id": "Ugxrootcomment0000000000002",
+    "text": "Second root comment with no likes.",
+    "timestamp": 1705500000,
+    "like_count": 0,
+    "reply_count": 0,
+    "author": "Commenter C",
+    "author_id": "UCC0000000000000000000003",
+    "author_is_uploader": false,
+    "parent": null
+  }
+]

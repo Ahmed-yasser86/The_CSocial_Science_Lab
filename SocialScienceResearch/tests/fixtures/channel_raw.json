@@ -1,0 +1,32 @@
+{
+  "_type": "playlist",
+  "id": "UCexample00000000000000000",
+  "channel": "Example Channel",
+  "channel_id": "UCexample00000000000000000",
+  "channel_url": "https://www.youtube.com/channel/UCexample00000000000000000",
+  "uploader": "Example Channel",
+  "uploader_id": "@example",
+  "description": "Channel description",
+  "channel_follower_count": 100000,
+  "channel_video_count": 500,
+  "channel_view_count": 50000000,
+  "thumbnails": [{"url": "https://example.com/avatar.jpg"}],
+  "entries": [
+    {
+      "id": "v1example0000000000000000001",
+      "title": "An Example Research Video",
+      "duration": 618,
+      "view_count": 1234567,
+      "channel_id": "UCexample00000000000000000",
+      "channel": "Example Channel"
+    },
+    {
+      "id": "v2example0000000000000000002",
+      "title": "Second Video",
+      "duration": 300,
+      "view_count": 5000,
+      "channel_id": "UCexample00000000000000000",
+      "channel": "Example Channel"
+    }
+  ]
+}

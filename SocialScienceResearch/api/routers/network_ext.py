@@ -1,0 +1,423 @@
+"""B6: Full network analytics router.
+
+Endpoints for network-wide metrics, temporal slices, paginated edges and
+graph exports (graphml/edgelist/gexf). Extends RecommendationGraphService;
+backed by ``NetworkAnalyticsService`` (lazily built on ``app.state`` via
+:func:`get_service`).
+
+Routes (all under the configured API prefix):
+
+* ``GET /network/metrics`` - aggregate network statistics;
+* ``GET /network/temporal`` - per-run slices + consecutive-run growth;
+* ``GET /network/edges`` - cursor-paginated edge listing;
+* ``GET /network/export`` - graphml/edgelist/gexf download;
+* ``POST /network/export-to-project`` - persist a scoped network export as a
+  ProjectItem artifact under a Project;
+* ``POST /network/merge`` - overlap + combined SNA statistics for two scopes;
+* ``GET /network/merge/options`` - picker payload of runs + expansions;
+* ``GET /network/channels`` - lightweight channel projection.
+
+Owned by the B6 module agent. Do NOT edit ``api/app.py`` from here.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
+
+from SocialScienceResearch.api.routers.common import get_service, paginated
+from SocialScienceResearch.api.schemas import (
+    NetworkExportToProjectRequest,
+    NetworkMergeRequest,
+    NetworkScopeRequest,
+)
+from SocialScienceResearch.domain.dataset_models import ProjectItem
+from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
+from SocialScienceResearch.services.network_analytics_service import (
+    ChannelGraphPayload,
+    ChannelProjection,
+    EdgeRow,
+    MergedNetworkResult,
+    NetworkAnalyticsService,
+    NetworkGraph,
+    NetworkMergeOptions,
+    NetworkMetrics,
+    NetworkScope,
+    TemporalResult,
+)
+from SocialScienceResearch.services.pagination import Paginated
+from SocialScienceResearch.services.project_item_service import ProjectItemService
+from SocialScienceResearch.utils.idgen import utcnow
+
+router = APIRouter()
+
+DEFAULT_PAGE_SIZE = 50
+
+EXPORT_FORMATS = {"graphml", "edgelist", "gexf", "csv", "json", "xlsx"}
+
+
+def _service(request: Request) -> NetworkAnalyticsService:
+    return get_service(
+        request,
+        "network_analytics",
+        lambda: NetworkAnalyticsService(request.app.state.services["repos"]),
+    )
+
+
+def _layer_service(request: Request) -> LayerScrapeService:
+    return get_service(
+        request,
+        "layer_scrape",
+        lambda: LayerScrapeService(
+            request.app.state.services["recommendations"]._provider,
+            request.app.state.services["repos"],
+            settings=request.app.state.settings,
+        ),
+    )
+
+
+def _items_service(request: Request) -> ProjectItemService:
+    return get_service(
+        request,
+        "project_items",
+        lambda: ProjectItemService(request.app.state.services["repos"]),
+    )
+
+
+def _resolve_scope(
+    request: Request, scope: NetworkScopeRequest
+) -> NetworkScope:
+    """Normalize a request scope: ``action_id`` -> its expansion runs."""
+    if scope.action_id:
+        layer = _layer_service(request).get_expansion(scope.action_id)
+        if layer is None:
+            raise ValueError(f"Expansion action {scope.action_id!r} not found")
+        return NetworkScope(
+            run_id=None,
+            run_ids=list(layer.run_ids),
+            video_ids=list(scope.video_ids),
+        )
+    return NetworkScope(
+        run_id=scope.run_id,
+        run_ids=[],
+        video_ids=list(scope.video_ids),
+    )
+
+
+def _scope_request(body) -> NetworkScopeRequest:
+    """Project the export/merge body's scope fields onto a scope request."""
+    return NetworkScopeRequest(
+        run_id=body.run_id,
+        action_id=body.action_id,
+        video_ids=list(body.video_ids),
+    )
+
+
+def _scope_label(scope: NetworkScopeRequest, action_id: str | None) -> str:
+    if scope.run_id:
+        return f"run {scope.run_id}"
+    if action_id:
+        return f"expansion {action_id}"
+    if scope.video_ids:
+        return f"{len(scope.video_ids)} video(s)"
+    return "all edges"
+
+
+def _edge_key(edge) -> tuple[str, ...]:
+    """Feed-rank pagination key: source video, position, then identity.
+
+    Positions are zero-padded so string comparison mirrors numeric order and
+    ``None`` (unknown rank) sorts after ranked edges. All keys are strings so
+    cursor tokens remain comparable inside ``page_sorted``.
+    
+    Handles both dict and EdgeRow objects.
+    """
+    # Handle both dict and EdgeRow objects
+    if hasattr(edge, "__dict__"):
+        # EdgeRow object
+        position = edge.position
+        position_key = f"{position:08d}" if position is not None else "~"
+        return (
+            edge.source_video_id,
+            position_key,
+            edge.run_id or "",
+            edge.recommended_video_id,
+        )
+    else:
+        # dict
+        position = edge["position"]
+        position_key = f"{position:08d}" if position is not None else "~"
+        return (
+            edge["source_video_id"],
+            position_key,
+            edge["run_id"] or "",
+            edge["recommended_video_id"],
+        )
+
+
+@router.get(
+    "/network/metrics",
+    tags=["network"],
+    response_model=NetworkMetrics,
+)
+def network_metrics(
+    request: Request,
+    run_id: str | None = Query(None),
+    top_n: int = Query(10, ge=1, le=500),
+):
+    """Aggregate statistics for the whole recommendation network (or a run)."""
+    return _service(request).metrics(run_id=run_id, top_n=top_n)
+
+
+@router.get(
+    "/network/graph",
+    tags=["network"],
+    response_model=NetworkGraph | ChannelGraphPayload,
+)
+def network_graph(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None, description="Filter edges by channel_id"),
+    channel_scope: str = Query(
+        "source",
+        description="Which edge endpoint a channel filter matches: source|target|either",
+    ),
+    projection: str = Query(
+        "video",
+        description="Graph projection: video | channel",
+    ),
+    layer_index: int | None = Query(
+        None,
+        ge=0,
+        description="Limit the slice to a single crawl layer (None = all layers)",
+    ),
+    connected: str | None = Query(
+        None,
+        description="Node filter: 'only' shows only connected nodes, 'isolated' shows only isolated nodes (None = all)",
+    ),
+    scraped: str | None = Query(
+        None,
+        description="Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all",
+    ),
+):
+    """Enriched node/edge payload for the interactive graph UI.
+
+    Nodes carry composite labels (``[ID] + Channel Name + Video Title +
+    thumbnails/metrics``) plus degree/kind/provenance; the response includes
+    run and channel facets so the filter bar never derives options from the
+    rendered graph. ``projection=channel`` collapses the video network into
+    a channel-level graph (channels as nodes, weighted edges between them).
+
+    Advanced selection:
+    - ``layer_index`` limits the slice to one crawl layer.
+    - ``connected=only`` keeps nodes that participate in at least one edge;
+      ``connected=isolated`` keeps only isolated nodes (they render detached).
+    - ``scraped=scraped`` keeps only nodes whose recommendation feed has been
+      scraped; ``scraped=unscraped`` keeps only nodes never scraped (the
+      candidates for a next expansion).
+    """
+    if projection not in ("video", "channel"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="projection must be video or channel")
+    if channel_scope not in ("source", "target", "either"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="channel_scope must be source, target or either")
+    if connected not in (None, "only", "isolated"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="connected must be only or isolated")
+    if scraped not in (None, "scraped", "unscraped"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="scraped must be scraped or unscraped")
+    service = _service(request)
+    if projection == "channel":
+        return service.channel_graph(
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_scope=channel_scope,
+            layer_index=layer_index,
+        )
+    return service.graph(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        connected=connected,
+        scraped=scraped,
+    )
+
+
+@router.get(
+    "/network/temporal",
+    tags=["network"],
+    response_model=TemporalResult,
+)
+def network_temporal(
+    request: Request,
+    runs: str = Query(
+        "", description="Comma-separated run ids, e.g. runs=a,b,c"
+    ),
+):
+    """Per-run network slices plus growth between consecutive requested runs."""
+    run_ids = [r for r in (part.strip() for part in runs.split(",")) if r]
+    return _service(request).temporal(run_ids)
+
+
+@router.get(
+    "/network/edges",
+    tags=["network"],
+    response_model=Paginated[EdgeRow],
+)
+def network_edges(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None, description="Filter edges by channel_id"),
+    channel_scope: str = Query(
+        "source",
+        description="Which edge endpoint a channel filter matches: source|target|either",
+    ),
+    cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+):
+    """Cursor-paginated list of observed recommendation edges.
+    
+    Supports filtering by `run_id` and `channel_id` (source channel by default).
+    """
+    if channel_scope not in ("source", "target", "either"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="channel_scope must be source, target or either")
+    return paginated(
+        _service(request).edges(
+            run_id=run_id, channel_id=channel_id, channel_scope=channel_scope
+        ),
+        cursor=cursor,
+        page_size=page_size,
+        key=_edge_key,
+    )
+
+
+@router.get("/network/export", tags=["network"])
+def network_export(
+    request: Request,
+    format: str = Query("graphml"),
+    run_id: str | None = Query(None),
+):
+    """Download the recommendation network as graphml/edgelist/gexf.
+
+    Unknown formats raise ``ValueError`` (mapped to a 400 by the app).
+    """
+    filename, content, media_type = _service(request).export_network(
+        format=format, run_id=run_id
+    )
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/network/export-to-project",
+    tags=["network"],
+    response_model=ProjectItem,
+)
+def network_export_to_project(body: NetworkExportToProjectRequest, request: Request):
+    """Persist a scoped video network export as a ProjectItem artifact.
+
+    Serializes the network slice (``run_id`` / ``action_id`` / ``video_ids``,
+    or the whole persisted network when no scope is given) via
+    ``NetworkAnalyticsService.export_network`` and stores the artifact file
+    under ``{data_dir}/network_exports/``, tracked by a new ProjectItem
+    (``item_type="mixed"``, naming mirrors the network-expansion auto-project
+    convention). Returns the created ProjectItem.
+    """
+    fmt = (body.format or "graphml").strip().lower()
+    if fmt not in EXPORT_FORMATS:
+        raise ValueError(
+            f"Unsupported export format {fmt!r}; expected one of "
+            f"{sorted(EXPORT_FORMATS)}"
+        )
+    scope = _resolve_scope(request, _scope_request(body))
+    filename, content, _ = _service(request).export_network(
+        fmt,
+        run_id=scope.run_id,
+        run_ids=scope.run_ids or None,
+        video_ids=scope.video_ids or None,
+    )
+
+    now = utcnow()
+    label = _scope_label(_scope_request(body), body.action_id)
+    name = body.name or f"Network export · {label} · {now.strftime('%Y-%m-%d %H:%M')}"
+    description = body.description or (
+        f"Exported video network ({label}) as {fmt}. "
+        f"Scope: run_id={scope.run_id or ''}, run_ids={scope.run_ids}, "
+        f"video_ids={scope.video_ids}."
+    )
+    artifact_dir = Path(request.app.state.settings.repository.data_dir)
+    item = _items_service(request).create_artifact_item(
+        body.project_id,
+        name=name,
+        description=description,
+        tags=[
+            tag
+            for tag in [
+                "network_export",
+                f"format:{fmt}",
+                f"run_id:{scope.run_id}" if scope.run_id else "scope:all",
+                f"action_id:{body.action_id}" if body.action_id else None,
+                f"video_ids:{len(scope.video_ids)}" if scope.video_ids else None,
+            ]
+            if tag is not None
+        ],
+        artifact_filename=filename,
+        artifact_content=content,
+        artifact_dir=artifact_dir,
+    )
+    return item
+
+
+@router.post(
+    "/network/merge",
+    tags=["network"],
+    response_model=MergedNetworkResult,
+)
+def network_merge(body: NetworkMergeRequest, request: Request):
+    """Merge two video-network scopes: overlap + combined SNA statistics.
+
+    Reports shared/exclusive node & edge counts with Jaccard coefficients
+    (``None`` when the union is empty - never fabricated as 0) and the SNA
+    statistics of the union graph (density, reciprocity, degree distribution,
+    components, communities/modularity, top labeled degree nodes) plus the
+    enriched union nodes/edges.
+    """
+    scope_a = _resolve_scope(request, body.scope_a)
+    scope_b = _resolve_scope(request, body.scope_b)
+    if scope_a.is_empty() and scope_b.is_empty():
+        raise ValueError("merge requires at least one non-empty scope")
+    return _service(request).merge_networks(scope_a, scope_b, top_n=body.top_n)
+
+
+@router.get(
+    "/network/merge/options",
+    tags=["network"],
+    response_model=NetworkMergeOptions,
+)
+def network_merge_options(request: Request):
+    """Runs + expansion actions usable as merge scopes (UI picker)."""
+    return _service(request).merge_options()
+
+
+@router.get(
+    "/network/channels",
+    tags=["network"],
+    response_model=ChannelProjection,
+)
+def network_channels(request: Request, run_id: str | None = Query(None)):
+    """Lightweight channel projection: distinct channels seen on edges."""
+    return _service(request).channel_projection(run_id=run_id)

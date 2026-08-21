@@ -1,0 +1,71 @@
+import { test, expect } from "@playwright/test";
+import { readFileSync } from "fs";
+
+const BASE_URL = process.env.BASE_URL ?? "http://127.0.0.1:3000";
+const API = process.env.API_URL ?? "http://127.0.0.1:8000/api/v1/social-science";
+
+/**
+ * Connects the previously orphaned surfaces (Lab / Compare / Query / Data) and
+ * the "Export project to Excel" button introduced in Sprint 0/1 of the unified
+ * journey work. Requires the UI (3000) and API (8000) to be running.
+ */
+test.describe("Unified journey connectors", () => {
+  test.setTimeout(180_000);
+
+  const connectors: Array<[string, string]> = [
+    ["Lab", "/network/full"],
+    ["Compare", "/compare"],
+    ["Query", "/query"],
+    ["Data", "/data"],
+  ];
+
+  for (const [label, path] of connectors) {
+    test(`top-nav "${label}" opens ${path} without a 404`, async ({ page }) => {
+      await page.goto(`${BASE_URL}/network/full`);
+      await page.waitForLoadState("networkidle");
+
+      const nav = page.getByRole("navigation");
+      await nav.getByRole("link", { name: label, exact: true }).click();
+      await page.waitForLoadState("networkidle");
+
+      await expect(page).toHaveURL(new RegExp(`${path.replace(/\//g, "\\/")}(\\/|$)`));
+      await expect(page.getByText("This page could not be found")).toHaveCount(0);
+    });
+  }
+
+  test("project detail exports a multi-sheet Excel workbook", async ({ request, page }) => {
+    // Guarantee a project exists without depending on seeded data.
+    const list = await request.get(`${API}/projects`);
+    let projectId: string;
+    if ((await list.json()).items?.length) {
+      projectId = (await list.json()).items[0].project_id;
+    } else {
+      const created = await request.post(`${API}/projects`, {
+        data: {
+          name: "e2e export project",
+          targets: [{ kind: "channel", value: "UC_e2e" }],
+        },
+      });
+      expect(created.ok()).toBeTruthy();
+      projectId = (await created.json()).project_id;
+    }
+
+    await page.goto(`${BASE_URL}/projects/${projectId}`);
+    await page.waitForLoadState("networkidle");
+
+    const exportButton = page.getByRole("button", { name: /Export project to Excel/i });
+    await exportButton.waitFor({ state: "visible", timeout: 30000 });
+
+    const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
+    await exportButton.click();
+    const download = await downloadPromise;
+
+    expect(download.suggestedFilename()).toMatch(/\.xlsx$/);
+    const localPath = await download.path();
+    expect(localPath).toBeTruthy();
+    // openpyxl-free sanity check: xlsx is a non-empty zip.
+    const buf = readFileSync(localPath!);
+    expect(buf.length).toBeGreaterThan(0);
+    expect(buf.slice(0, 2).toString("latin1")).toBe("PK");
+  });
+});
