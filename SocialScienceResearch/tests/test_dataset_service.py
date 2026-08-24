@@ -277,9 +277,9 @@ def test_unknown_entity_raises(service_env) -> None:
     service = DatasetService(repos, settings)
     with pytest.raises(ValueError):
         service.create_dataset("bad", entity_type="planet")
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError):
         service.get_dataset("missing")
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError):
         service.delete_dataset("missing")
 
 
@@ -485,7 +485,7 @@ def test_project_crud_and_config_hash(service_env) -> None:
     ]
 
     projects.delete_project("proj_a")
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError):
         projects.get_project("proj_a")
     assert [p.project_id for p in projects.list_projects()] == ["proj_a2"]
 
@@ -572,8 +572,8 @@ def test_api_project_and_dataset_flow(client) -> None:
     assert resp.status_code == 200
     assert resp.json()["deleted"] is True
     resp = client.get(f"{PREFIX}/datasets/{dataset_id}")
-    assert resp.status_code == 400
-    assert resp.json()["code"] == "invalid_argument"
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "not_found"
 
     # ValueError -> 400 envelope via the app's handler.
     resp = client.post(
@@ -586,7 +586,7 @@ def test_api_project_and_dataset_flow(client) -> None:
     resp = client.delete(f"{PREFIX}/projects/{project_id}")
     assert resp.status_code == 200
     resp = client.get(f"{PREFIX}/projects/{project_id}")
-    assert resp.status_code == 400
+    assert resp.status_code == 404
 
 
 def test_api_project_items_flow(client) -> None:
@@ -652,3 +652,230 @@ def test_api_project_items_flow(client) -> None:
     resp = client.get(f"{PREFIX}/projects/{project_id}/items")
     assert resp.status_code == 200
     assert {item["name"] for item in resp.json()} == {"Item B"}
+
+
+# ----------------------------------------------------------------------
+# Defect regressions (404s, update/combine, run/video scoping)
+# ----------------------------------------------------------------------
+def test_missing_dataset_project_item_return_404(client) -> None:
+    for method, url, kwargs in (
+        ("get", f"{PREFIX}/datasets/dst_missing", {}),
+        ("patch", f"{PREFIX}/datasets/dst_missing", {"json": {"name": "x"}}),
+        ("delete", f"{PREFIX}/datasets/dst_missing", {}),
+        ("get", f"{PREFIX}/projects/proj_missing", {}),
+        ("patch", f"{PREFIX}/projects/proj_missing", {"json": {"name": "x"}}),
+        ("delete", f"{PREFIX}/projects/proj_missing", {}),
+    ):
+        resp = getattr(client, method)(url, **kwargs)
+        assert resp.status_code == 404, (method, url, resp.status_code)
+        assert resp.json()["code"] == "not_found"
+
+    resp = client.post(
+        f"{PREFIX}/projects",
+        json={
+            "name": "P",
+            "targets": [{"kind": "channel", "url": "https://www.youtube.com/@b7"}],
+        },
+    )
+    project_id = resp.json()["project_id"]
+    for method, url, kwargs in (
+        ("get", f"{PREFIX}/projects/{project_id}/items/item_missing", {}),
+        ("patch", f"{PREFIX}/projects/{project_id}/items/item_missing", {"json": {"name": "x"}}),
+        ("delete", f"{PREFIX}/projects/{project_id}/items/item_missing", {}),
+    ):
+        resp = getattr(client, method)(url, **kwargs)
+        assert resp.status_code == 404, (method, url, resp.status_code)
+
+    # Bad input stays a 400 (ValueError), unknown ids are 404.
+    resp = client.post(f"{PREFIX}/datasets/combine", json={"name": "c", "dataset_ids": []})
+    assert resp.status_code == 400
+    resp = client.post(
+        f"{PREFIX}/projects/proj_missing/items", json={"name": "orphan"}
+    )
+    assert resp.status_code == 404
+
+
+def test_update_dataset_renames_header(service_env) -> None:
+    repos, settings = service_env
+    service = DatasetService(repos, settings)
+    dataset = service.create_dataset("before", entity_type="video")
+
+    class Patch:
+        name = "renamed"
+        description = None
+        model_fields_set = {"name"}
+
+    updated = service.update_dataset(dataset.dataset_id, Patch())
+    assert updated.name == "renamed"
+    assert updated.description is None  # not provided -> untouched
+    assert updated.dataset_id == dataset.dataset_id
+    assert updated.member_count == dataset.member_count
+    assert updated.source_projection == dataset.source_projection
+
+    fetched = service.get_dataset(dataset.dataset_id)
+    assert fetched.name == "renamed"
+    members = service.members(dataset.dataset_id)
+    assert len(members) == 6
+
+
+def test_api_patch_dataset_renames_header(client) -> None:
+    resp = client.post(f"{PREFIX}/datasets", json={"name": "api ds", "entity_type": "video"})
+    dataset_id = resp.json()["dataset_id"]
+    resp = client.patch(
+        f"{PREFIX}/datasets/{dataset_id}",
+        json={"name": "renamed via api", "description": "d"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "renamed via api"
+    assert body["description"] == "d"
+    assert body["member_count"] == 6
+
+
+def test_combine_datasets_unions_and_dedups(service_env) -> None:
+    repos, settings = service_env
+    service = DatasetService(repos, settings)
+    d1 = service.create_dataset("d1", entity_type="video", member_ids=["v00", "v01"])
+    d2 = service.create_dataset("d2", entity_type="video", member_ids=["v01", "v02"])
+
+    combined = service.combine_datasets(
+        name="combined",
+        dataset_ids=[d1.dataset_id, d2.dataset_id],
+        deduplicate=True,
+    )
+    assert combined.entity_type == "video"
+    assert combined.member_count == 3
+    lineage = combined.source_projection["lineage"]
+    assert [s["dataset_id"] for s in lineage["combined_from"]] == [
+        d1.dataset_id, d2.dataset_id,
+    ]
+    assert lineage["deduplicated"] is True
+    assert {m["video_id"] for m in service.members(combined.dataset_id)} == {
+        "v00", "v01", "v02",
+    }
+
+    with_dupes = service.combine_datasets(
+        name="with dupes",
+        dataset_ids=[d1.dataset_id, d2.dataset_id],
+        deduplicate=False,
+    )
+    assert with_dupes.member_count == 4
+
+    # Mismatched entity types are rejected as bad input.
+    rec = service.create_dataset("rec", entity_type="recommendation")
+    with pytest.raises(ValueError):
+        service.combine_datasets(
+            name="bad", dataset_ids=[d1.dataset_id, rec.dataset_id]
+        )
+
+
+def test_api_combine_datasets_endpoint(client) -> None:
+    ids = []
+    for member_ids in (["v00", "v01"], ["v01", "v02"]):
+        resp = client.post(
+            f"{PREFIX}/datasets",
+            json={"name": "src", "entity_type": "video", "member_ids": member_ids},
+        )
+        assert resp.status_code == 200, resp.text
+        ids.append(resp.json()["dataset_id"])
+
+    resp = client.post(
+        f"{PREFIX}/datasets/combine",
+        json={"name": "combined", "dataset_ids": ids},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["member_count"] == 3
+    assert body["source_projection"]["lineage"]["combined_from"] == [
+        {"dataset_id": ids[0], "name": "src", "member_count": 2},
+        {"dataset_id": ids[1], "name": "src", "member_count": 2},
+    ]
+
+    resp = client.post(
+        f"{PREFIX}/datasets/combine", json={"name": "one", "dataset_ids": ids[:1]}
+    )
+    assert resp.status_code == 400
+
+    resp = client.post(
+        f"{PREFIX}/datasets/combine",
+        json={"name": "ghost", "dataset_ids": ["dst_missing", ids[0]]},
+    )
+    assert resp.status_code == 404
+
+
+def test_create_dataset_run_ids_exclude_other_runs(service_env) -> None:
+    repos, settings = service_env
+    repos.runs.create_run(
+        CollectionRun(
+            run_id="run_other",
+            run_type="channel",
+            target_url="https://www.youtube.com/@other",
+            started_at=utcnow(),
+            status="success",
+        )
+    )
+    repos.videos.upsert_video(
+        Video(
+            video_id="v_other_run",
+            url="https://www.youtube.com/watch?v=v_other_run",
+            channel_id=CHANNEL_ID,
+            title="Other-run video",
+            first_observed_run_id="run_other",
+        )
+    )
+
+    service = DatasetService(repos, settings)
+    scoped = service.create_dataset(
+        "run b7 only", entity_type="video", run_ids=["run_b7"]
+    )
+    assert scoped.member_count == 6  # v00..v04 + v_noobs; v_other_run excluded
+    members = service.members(scoped.dataset_id)
+    assert "v_other_run" not in {m["video_id"] for m in members}
+
+    other = service.create_dataset(
+        "other run only", entity_type="video", run_ids=["run_other"]
+    )
+    assert other.member_count == 1
+    assert other.source_projection["scope"]["run_ids"] == ["run_other"]
+
+    empty = service.create_dataset(
+        "no such rows", entity_type="video", run_ids=["run_absent"]
+    )
+    assert empty.member_count == 0
+
+
+def test_recommendation_dataset_video_ids_match_either_side(service_env) -> None:
+    from SocialScienceResearch.domain.models import RecommendationObservation
+
+    repos, settings = service_env
+    repos.recommendations.save_recommendation(
+        RecommendationObservation(
+            observation_id="rec_a",
+            collection_run_id="run_b7",
+            source_video_id="v00",
+            recommended_video_id="v01",
+            position=0,
+        )
+    )
+    repos.recommendations.save_recommendation(
+        RecommendationObservation(
+            observation_id="rec_b",
+            collection_run_id="run_b7",
+            source_video_id="v03",
+            recommended_video_id="v99",
+            position=1,
+        )
+    )
+
+    service = DatasetService(repos, settings)
+    dataset = service.create_dataset(
+        "edges touching v00", entity_type="recommendation", video_ids=["v00"]
+    )
+    # Previously this was silently empty: recommendation rows expose
+    # source/recommended ids, not ``video_id``. Now either side matches.
+    assert dataset.member_count == 1
+    assert dataset.source_projection["scope"]["video_ids_match"] == (
+        "source_or_recommended"
+    )
+    members = service.members(dataset.dataset_id)
+    assert {m["recommended_video_id"] for m in members} == {"v01"}

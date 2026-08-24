@@ -105,7 +105,18 @@ class DatasetService:
         if channel_ids:
             rows = [r for r in rows if r.get("channel_id") in channel_ids]
         if video_ids:
-            rows = [r for r in rows if r.get("video_id") in video_ids]
+            wanted = set(video_ids)
+            if entity == "recommendation":
+                # Recommendation rows have no ``video_id``; a scope video
+                # matches an edge on *either* side (source or recommended).
+                rows = [
+                    r
+                    for r in rows
+                    if r.get("source_video_id") in wanted
+                    or r.get("recommended_video_id") in wanted
+                ]
+            else:
+                rows = [r for r in rows if r.get("video_id") in wanted]
         if member_ids:
             id_field = _ID_FIELD[entity]
             member_set = set(member_ids)
@@ -201,12 +212,104 @@ class DatasetService:
     def get_dataset(self, dataset_id: str) -> Dataset:
         dataset = self._datasets.get_dataset(dataset_id)
         if dataset is None:
-            raise ValueError(f"Dataset {dataset_id!r} not found")
+            raise KeyError(f"Dataset {dataset_id!r} not found")
         return dataset
 
     def delete_dataset(self, dataset_id: str) -> None:
         self.get_dataset(dataset_id)
         self._datasets.delete_dataset(dataset_id)
+
+    def update_dataset(self, dataset_id: str, patch: Any) -> Dataset:
+        """Rename / re-describe the dataset header only.
+
+        Only explicitly provided fields of ``patch`` (``name``/``description``,
+        pydantic ``model_fields_set`` semantics) are applied; members and the
+        recorded ``source_projection`` are left untouched.
+        """
+        current = self.get_dataset(dataset_id)
+        data = current.model_dump()
+        for field in ("name", "description"):
+            if field in getattr(patch, "model_fields_set", set()):
+                data[field] = getattr(patch, field)
+        updated = Dataset(**data)
+        self._datasets.save_dataset(updated)
+        return updated
+
+    def combine_datasets(
+        self,
+        name: str,
+        description: str | None = None,
+        dataset_ids: list[str] | None = None,
+        deduplicate: bool = True,
+    ) -> Dataset:
+        """Union the member rows of several datasets into a new one.
+
+        All sources must share the same ``entity_type``. With ``deduplicate``
+        (the default) rows repeating a member id already seen are dropped;
+        otherwise all rows are kept. The combined sources are recorded
+        honestly in ``source_projection["lineage"]``.
+        """
+        ids = list(dataset_ids or [])
+        if len(ids) < 2:
+            raise ValueError("at least two dataset_ids are required for combining")
+        sources: list[tuple[Dataset, list[dict[str, Any]]]] = []
+        entity: str | None = None
+        id_field: str | None = None
+        for dataset_id in ids:
+            dataset = self.get_dataset(dataset_id)
+            source_entity = dataset.source_projection.get("entity") or dataset.entity_type
+            if entity is None:
+                entity = source_entity
+                id_field = dataset.source_projection.get("id_field") or _ID_FIELD[
+                    self._entity(source_entity)
+                ]
+            elif source_entity != entity:
+                raise ValueError(
+                    f"cannot combine datasets of different entity types "
+                    f"({entity!r} vs {source_entity!r})"
+                )
+            sources.append((dataset, self._datasets.list_members(dataset_id)))
+
+        seen: set[Any] = set()
+        rows: list[dict[str, Any]] = []
+        for _, members in sources:
+            for member in members:
+                if deduplicate:
+                    key = member.get(id_field)
+                    if key is None:
+                        key = json.dumps(member, sort_keys=True, default=str)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                rows.append(member)
+
+        return self._register(
+            name=name,
+            description=description,
+            entity=entity or "",
+            rows=rows,
+            columns=_union_columns(rows) if rows else [],
+            project_id=None,
+            query_hash=None,
+            include_raw=False,
+            run_ids=[],
+            channel_ids=[],
+            video_ids=[],
+            member_ids=[],
+            criteria=None,
+            variable_selection=[],
+            lineage={
+                "combined_from": [
+                    {
+                        "dataset_id": dataset.dataset_id,
+                        "name": dataset.name,
+                        "member_count": len(members),
+                    }
+                    for dataset, members in sources
+                ],
+                "deduplicated": deduplicate,
+            },
+        )
 
     def members(self, dataset_id: str) -> list[dict[str, Any]]:
         """Return the member row projections of a dataset (id-field present)."""
@@ -360,6 +463,14 @@ class DatasetService:
                     "channel_ids": channel_ids,
                     "video_ids": video_ids,
                     "member_ids": member_ids,
+                    # For recommendation datasets a scoped video matches an
+                    # edge on either side (source or recommended); elsewhere
+                    # it is the entity's own ``video_id``.
+                    "video_ids_match": (
+                        "source_or_recommended"
+                        if entity == "recommendation"
+                        else "entity_video_id"
+                    ),
                 },
                 "criteria": criteria,
                 "lineage": lineage,

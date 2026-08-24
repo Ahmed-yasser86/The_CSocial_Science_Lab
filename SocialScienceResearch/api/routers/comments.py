@@ -15,6 +15,8 @@ Owned by the B3 module agent. Do NOT edit ``api/app.py`` from here.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Query, Request
 
 from SocialScienceResearch.api.routers.common import get_service, paginated
@@ -160,6 +162,11 @@ def single_run_deltas(run_id: str, request: Request):
 # Comment tree helper
 # ----------------------------------------------------------------------
 
+#: Maximum recursion depth when expanding a thread. Deeper replies stay
+#: reachable in the corpus but are not walked further; the deepest node of a
+#: cut subtree is flagged with ``truncated=True`` instead of being dropped.
+MAX_DEPTH = 50
+
 
 def _build_comment_tree(repos: Repositories, video_id: str, root_comment_id: str) -> CommentTreePayload:
     """Build a full comment tree with all nested replies for a root comment."""
@@ -169,9 +176,7 @@ def _build_comment_tree(repos: Repositories, video_id: str, root_comment_id: str
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=f"Comment {root_comment_id} not found in video {video_id}")
 
-    # Get latest observations for the root comment
     latest_obs = repos.comments.get_latest_comment_observations([root_comment_id])
-    root_obs = latest_obs.get(root_comment_id)
 
     def enrich_comment(comment):
         payload = comment.model_dump()
@@ -182,22 +187,37 @@ def _build_comment_tree(repos: Repositories, video_id: str, root_comment_id: str
             payload["is_removed"] = obs.is_removed
         return payload
 
-    def build_tree(comment_id: str, depth: int = 0) -> CommentTreePayload:
-        comment = repos.comments.get_comment(comment_id)
+    # Walk the tree breadth-first, batch-fetching each level's replies in one
+    # scan per level (``list_replies_by_ids``) instead of one per node.
+    nodes: dict[str, Any] = {root_comment_id: root_comment}
+    levels: dict[str, list[Any]] = {}
+    frontier = [root_comment_id]
+    depth = 0
+    truncated_ids: set[str] = set()
+    while frontier and depth < MAX_DEPTH:
+        batches = repos.comments.list_replies_by_ids(frontier)
+        next_frontier: list[str] = []
+        for parent_id in frontier:
+            replies = batches.get(parent_id, [])
+            levels[parent_id] = replies
+            for reply in replies:
+                if reply.comment_id not in nodes:
+                    nodes[reply.comment_id] = reply
+                    next_frontier.append(reply.comment_id)
+        frontier = next_frontier
+        depth += 1
+    # Depth cap hit: the frontier nodes' subtrees are unexplored - flag them.
+    truncated_ids = set(frontier)
+
+    reply_obs = repos.comments.get_latest_comment_observations(list(nodes))
+    latest_obs.update(reply_obs)
+
+    def build_tree(comment_id: str, depth: int) -> CommentTreePayload | None:
+        comment = nodes.get(comment_id)
         if comment is None:
             return None
 
-        enriched = enrich_comment(comment)
-        replies = repos.comments.list_replies(comment_id)
-
-        # Get observations for all replies in one batch
-        reply_ids = [r.comment_id for r in replies]
-        reply_obs = repos.comments.get_latest_comment_observations(reply_ids)
-
-        # Update latest_obs for children
-        for rid, obs in reply_obs.items():
-            latest_obs[rid] = obs
-
+        replies = levels.get(comment_id, [])
         children = []
         for reply in replies:
             child_tree = build_tree(reply.comment_id, depth + 1)
@@ -205,11 +225,22 @@ def _build_comment_tree(repos: Repositories, video_id: str, root_comment_id: str
                 children.append(child_tree)
 
         return CommentTreePayload(
-            comment=enriched,
+            comment=enrich_comment(comment),
             replies=children,
             total_replies=len(replies),
             max_depth=depth if not children else max(c.max_depth for c in children) + 1,
+            truncated=comment_id in truncated_ids,
         )
 
-    tree = build_tree(root_comment_id)
+    tree = build_tree(root_comment_id, 0)
+    if tree is None:
+        # Deleted between the existence check and the walk - return an
+        # explicit empty payload rather than ``None``.
+        tree = CommentTreePayload(
+            comment=enrich_comment(root_comment),
+            replies=[],
+            total_replies=0,
+            max_depth=0,
+            truncated=False,
+        )
     return tree

@@ -448,8 +448,8 @@ def test_export_to_project_unknown_project(client):
         f"{PREFIX}/network/export-to-project",
         json={"project_id": "p_missing", "format": "graphml"},
     )
-    assert resp.status_code == 400
-    assert resp.json()["code"] == "invalid_argument"
+    assert resp.status_code == 404
+    assert resp.json()["code"] == "not_found"
 
 
 def test_export_to_project_unknown_action(client):

@@ -610,6 +610,12 @@ class CollectionService:
         edges = normalize_recommendations(video.video_id, raw_recommendations, run.run_id)
         for edge in edges:
             self._repos.recommendations.save_recommendation(edge)
+        if edges:
+            # Pitfall A1/R1: any write of recommendation edges must invalidate
+            # the cached graph so the new edges surface immediately.
+            from .recommendation_graph_service import RecommendationGraphService
+
+            RecommendationGraphService.clear_graph_cache()
 
     def _enrich_video_task(
         self,
@@ -910,6 +916,13 @@ class CollectionService:
             self._repos.comments.upsert_comment(comment)
         for observation in observations:
             self._repos.comments.save_comment_observation(observation)
+        if comments:
+            # Writers invalidate the commenter-overlap cache immediately
+            # (pitfall A1/R1: writers invalidate, readers never trust stale);
+            # the 60s TTL is only a safety net.
+            from .commenter_overlap_service import CommenterOverlapService
+
+            CommenterOverlapService.clear_overlap_cache()
 
         if excluded:
             logger.info(

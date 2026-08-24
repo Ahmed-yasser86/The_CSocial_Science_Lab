@@ -663,7 +663,7 @@ class TestProjectServiceSql:
         assert fetched.config_hash == p.config_hash
         assert len(service.list_projects()) == 1
         service.delete_project("p_svc")
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             service.get_project("p_svc")
 
 
@@ -685,7 +685,7 @@ class TestProjectItemServiceSql:
         service.add_samples(item.item_id, ["s2"])
         assert set(service.get_item(item.item_id).sample_ids) == {"s1", "s2"}
         service.delete_item(item.item_id)
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             service.get_item(item.item_id)
 
 
@@ -720,7 +720,7 @@ class TestDatasetServiceSql:
         assert report.dataset_id == dataset.dataset_id
         assert service.get_dataset(dataset.dataset_id).dataset_id == dataset.dataset_id
         service.delete_dataset(dataset.dataset_id)
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             service.get_dataset(dataset.dataset_id)
 
 

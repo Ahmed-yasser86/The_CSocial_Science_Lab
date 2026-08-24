@@ -13,8 +13,8 @@ active across which audience units":
   render as a co-occurrence graph overlay;
 * a per-commenter drill-down profile with full evidence comments.
 
-All data derives from ``list_comments()`` + the video->channel map; no new
-persistence. Statistics reuse ``StatisticsService.ratio`` (None/zero-safe, the
+All data derives from a chunked ``iter_comments()`` scan + the video->channel
+map; no new persistence. Statistics reuse ``StatisticsService.ratio`` (None/zero-safe, the
 module's "observed, never estimated" rule).
 """
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import combinations
 from typing import Any, Callable, Literal
@@ -249,6 +249,38 @@ class _AuthorAgg:
     is_author: bool | None = None
 
 
+@dataclass
+class _ProjectionAgg:
+    """Compact per-projection aggregates built in one streaming pass.
+
+    Only identity keys, counts and timestamps are retained -- never the
+    comment rows themselves -- so memory stays proportional to distinct
+    authors per entity rather than corpus size.
+    """
+
+    authors: dict[str, dict[str, _AuthorAgg]] = field(default_factory=dict)
+    kinds: dict[str, IdentityKind] = field(default_factory=dict)
+    comment_count: Counter[str] = field(default_factory=Counter)
+    unidentified: Counter[str] = field(default_factory=Counter)
+
+    def add(self, unit: str, c: Comment) -> None:
+        self.comment_count[unit] += 1
+        kind, key, display = resolve_author(c)
+        if key is None:
+            self.unidentified[unit] += 1
+            return
+        self.kinds.setdefault(key, kind or "name")
+        agg = self.authors.setdefault(unit, {}).setdefault(
+            key, _AuthorAgg(display_name=display)
+        )
+        agg.count += 1
+        if c.published_at:
+            agg.first_seen = _earlier(agg.first_seen, c.published_at)
+            agg.last_seen = _later(agg.last_seen, c.published_at)
+        if c.is_author is True:
+            agg.is_author = True
+
+
 def _metric_value(metric: str, pair: "PairOverlap") -> float | None:
     if metric == "intersection":
         return float(pair.intersection_size)
@@ -261,9 +293,13 @@ class CommenterOverlapService:
     # The overlap scan reads every comment plus the video/channel maps, which is
     # the dominant cost for audience-duplication analytics. The underlying
     # comments are immutable between scrapes, so we memoize per scope; a short
-    # TTL bounds staleness after a new collection lands.
+    # TTL bounds staleness and writers call ``clear_overlap_cache()`` (pitfall
+    # A1/R1: writers invalidate, readers never trust stale). The entry cap
+    # keeps the per-scope keys from growing without bound.
     _overlap_cache: dict[tuple, tuple[float, "CommenterOverlapResult"]] = {}
     _OVERLAP_TTL_SECONDS = 60.0
+    _OVERLAP_CACHE_MAX_ENTRIES = 128
+    _CHUNK_SIZE = 5000
 
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
@@ -319,7 +355,14 @@ class CommenterOverlapService:
             top_n=top_n,
         )
         self._overlap_cache[cache_key] = (time.time(), result)
+        while len(self._overlap_cache) > self._OVERLAP_CACHE_MAX_ENTRIES:
+            self._overlap_cache.pop(next(iter(self._overlap_cache)))
         return result
+
+    @classmethod
+    def clear_overlap_cache(cls) -> None:
+        """Invalidate cached overlaps (call after any comment write)."""
+        cls._overlap_cache.clear()
 
     def _compute_overlap(
         self,
@@ -332,7 +375,6 @@ class CommenterOverlapService:
         top_n: int,
     ) -> CommenterOverlapResult:
         """Uncached overlap computation (see :meth:`overlap`)."""
-        comments = self._repos.comments.list_comments()
         videos = {v.video_id: v for v in self._repos.videos.list_videos()}
         channels = {c.channel_id: c for c in self._repos.channels.list_channels()}
         video_channel = {v.video_id: v.channel_id for v in videos.values()}
@@ -340,33 +382,38 @@ class CommenterOverlapService:
         video_set = set(video_ids)
         channel_set = set(channel_ids)
 
-        scoped: list[Comment] = []
-        for c in comments:
-            if c.video_id in video_set:
-                scoped.append(c)
-                continue
-            channel_id = video_channel.get(c.video_id)
-            if channel_id is not None and channel_id in channel_set:
-                scoped.append(c)
-
+        # One chunked, column-projected scan feeds both projections and the
+        # global maps; only compact aggregates are retained (never the rows).
+        video_agg = _ProjectionAgg()
+        channel_agg = _ProjectionAgg()
         global_videos: dict[str, set[str]] = {}
         global_channels: dict[str, set[str]] = {}
         global_comment_count = 0
-        for c in scoped:
-            global_comment_count += 1
-            _, key, _ = resolve_author(c)
-            if key is None:
-                continue
-            global_videos.setdefault(key, set()).add(c.video_id)
-            channel_id = video_channel.get(c.video_id)
-            if channel_id is not None:
-                global_channels.setdefault(key, set()).add(channel_id)
+        columns = ["author_id", "author_name", "is_author", "published_at"]
+        for chunk in self._repos.comments.iter_comments(
+            chunk_size=self._CHUNK_SIZE, columns=columns
+        ):
+            for c in chunk:
+                vid = c.video_id
+                ch = video_channel.get(vid)
+                in_video_scope = vid in video_set
+                in_channel_scope = ch is not None and ch in channel_set
+                if not (in_video_scope or in_channel_scope):
+                    continue
+                global_comment_count += 1
+                _, key, _ = resolve_author(c)
+                if key is not None:
+                    global_videos.setdefault(key, set()).add(vid)
+                    if ch is not None:
+                        global_channels.setdefault(key, set()).add(ch)
+                if in_video_scope:
+                    video_agg.add(vid, c)
+                if in_channel_scope:
+                    channel_agg.add(ch, c)
 
-        videos_projection = None
-        if video_set:
-            videos_projection = self._projection(
-                comments=scoped,
-                unit_of=lambda c: c.video_id,
+        videos_projection = (
+            self._projection(
+                aggregation=video_agg,
                 unit_type="video",
                 entity_ids=video_set,
                 entity_meta={
@@ -391,11 +438,12 @@ class CommenterOverlapService:
                 global_videos=global_videos,
                 global_channels=global_channels,
             )
-        channels_projection = None
-        if channel_set:
-            channels_projection = self._projection(
-                comments=scoped,
-                unit_of=lambda c: video_channel.get(c.video_id),
+            if video_set
+            else None
+        )
+        channels_projection = (
+            self._projection(
+                aggregation=channel_agg,
                 unit_type="channel",
                 entity_ids=channel_set,
                 entity_meta={
@@ -411,6 +459,9 @@ class CommenterOverlapService:
                 global_videos=global_videos,
                 global_channels=global_channels,
             )
+            if channel_set
+            else None
+        )
 
         bridge_keys: set[str] = set()
         for projection in (videos_projection, channels_projection):
@@ -443,7 +494,6 @@ class CommenterOverlapService:
         if not (1 <= limit <= 500):
             raise ValueError("limit must be in 1..500")
 
-        comments = self._repos.comments.list_comments()
         videos = {v.video_id: v for v in self._repos.videos.list_videos()}
         channels = {c.channel_id: c for c in self._repos.channels.list_channels()}
         video_channel = {v.video_id: v.channel_id for v in videos.values()}
@@ -451,42 +501,71 @@ class CommenterOverlapService:
         video_set = set(video_ids or [])
         channel_set = set(channel_ids or [])
 
-        by_id = {c.comment_id: c for c in comments}
-
-        matched: list[Comment] = []
+        # Pass 1 (streaming, identity columns only): find the matched comments
+        # without materializing the corpus. Only compact per-comment dicts are
+        # kept, sized by the matched author's activity.
+        matched: list[dict[str, Any]] = []
+        parent_ids: set[str] = set()
         identity_kind: IdentityKind | None = None
         author_name: str | None = None
         is_author: bool | None = None
         first_seen: datetime | None = None
         last_seen: datetime | None = None
-        for c in comments:
-            kind, key, display = resolve_author(c)
-            if key != author_key:
-                continue
-            if video_set and c.video_id not in video_set:
-                continue
-            ch = video_channel.get(c.video_id)
-            if channel_set and (ch is None or ch not in channel_set):
-                continue
-            matched.append(c)
-            identity_kind = identity_kind or kind
-            author_name = author_name or display
-            if c.published_at:
-                if first_seen is None or c.published_at < first_seen:
-                    first_seen = c.published_at
-                if last_seen is None or c.published_at > last_seen:
-                    last_seen = c.published_at
-            if c.is_author is True:
-                is_author = True
+        columns = ["author_id", "author_name", "is_reply", "is_author", "published_at"]
+        for chunk in self._repos.comments.iter_comments(
+            chunk_size=self._CHUNK_SIZE, columns=columns
+        ):
+            for c in chunk:
+                kind, key, display = resolve_author(c)
+                if key != author_key:
+                    continue
+                if video_set and c.video_id not in video_set:
+                    continue
+                ch = video_channel.get(c.video_id)
+                if channel_set and (ch is None or ch not in channel_set):
+                    continue
+                matched.append(
+                    {
+                        "comment_id": c.comment_id,
+                        "video_id": c.video_id,
+                        "published_at": c.published_at,
+                        "is_reply": c.is_reply,
+                        "parent_comment_id": c.parent_comment_id,
+                        "is_author": c.is_author,
+                    }
+                )
+                if c.parent_comment_id:
+                    parent_ids.add(c.parent_comment_id)
+                identity_kind = identity_kind or kind
+                author_name = author_name or display
+                if c.published_at:
+                    if first_seen is None or c.published_at < first_seen:
+                        first_seen = c.published_at
+                    if last_seen is None or c.published_at > last_seen:
+                        last_seen = c.published_at
+                if c.is_author is True:
+                    is_author = True
 
         if not matched:
             raise KeyError(author_key)
 
+        # Pass 2: fetch evidence text for the matched comments and author
+        # context for their parents only -- never the whole corpus.
+        wanted_ids = {m["comment_id"] for m in matched} | parent_ids
+        by_id: dict[str, Comment] = {}
+        ref_columns = ["author_id", "author_name", "comment_text"]
+        for chunk in self._repos.comments.iter_comments(
+            chunk_size=self._CHUNK_SIZE, columns=ref_columns
+        ):
+            for c in chunk:
+                if c.comment_id in wanted_ids:
+                    by_id[c.comment_id] = c
+
         video_rows: dict[str, dict[str, Any]] = {}
         channel_rows: dict[str, dict[str, Any]] = {}
-        for c in matched:
+        for m in matched:
             vrow = video_rows.setdefault(
-                c.video_id,
+                m["video_id"],
                 {
                     "comment_count": 0,
                     "root_count": 0,
@@ -497,19 +576,19 @@ class CommenterOverlapService:
                 },
             )
             vrow["comment_count"] += 1
-            if c.is_reply:
+            if m["is_reply"]:
                 vrow["reply_count"] += 1
             else:
                 vrow["root_count"] += 1
-            if c.is_reply and c.parent_comment_id in by_id:
-                parent = by_id[c.parent_comment_id]
+            if m["is_reply"] and m["parent_comment_id"] in by_id:
+                parent = by_id[m["parent_comment_id"]]
                 _, parent_key, _ = resolve_author(parent)
                 if parent_key is not None:
                     vrow["reply_to"].add(parent_key)
-            if c.published_at:
-                vrow["first"] = _earlier(vrow["first"], c.published_at)
-                vrow["last"] = _later(vrow["last"], c.published_at)
-            ch_id = video_channel.get(c.video_id)
+            if m["published_at"]:
+                vrow["first"] = _earlier(vrow["first"], m["published_at"])
+                vrow["last"] = _later(vrow["last"], m["published_at"])
+            ch_id = video_channel.get(m["video_id"])
             if ch_id is not None:
                 crow = channel_rows.setdefault(
                     ch_id,
@@ -523,14 +602,14 @@ class CommenterOverlapService:
                     },
                 )
                 crow["comment_count"] += 1
-                crow["videos"].add(c.video_id)
-                if c.is_reply:
+                crow["videos"].add(m["video_id"])
+                if m["is_reply"]:
                     crow["reply_count"] += 1
                 else:
                     crow["root_count"] += 1
-                if c.published_at:
-                    crow["first"] = _earlier(crow["first"], c.published_at)
-                    crow["last"] = _later(crow["last"], c.published_at)
+                if m["published_at"]:
+                    crow["first"] = _earlier(crow["first"], m["published_at"])
+                    crow["last"] = _later(crow["last"], m["published_at"])
 
         profile_videos = [
             ProfileVideoRow(
@@ -572,34 +651,34 @@ class CommenterOverlapService:
         ]
 
         latest_likes = self._repos.comments.get_latest_comment_observations(
-            [c.comment_id for c in matched]
+            [m["comment_id"] for m in matched]
         )
         recent = sorted(
             matched,
-            key=lambda c: (c.published_at is None, c.published_at),
+            key=lambda m: (m["published_at"] is None, m["published_at"]),
             reverse=True,
         )[:limit]
         profile_comments = [
             ProfileComment(
-                comment_id=c.comment_id,
-                video_id=c.video_id,
-                comment_text=c.comment_text,
-                published_at=c.published_at,
-                is_reply=c.is_reply,
-                parent_comment_id=c.parent_comment_id,
+                comment_id=m["comment_id"],
+                video_id=m["video_id"],
+                comment_text=by_id[m["comment_id"]].comment_text,
+                published_at=m["published_at"],
+                is_reply=m["is_reply"],
+                parent_comment_id=m["parent_comment_id"],
                 parent_author_name=(
-                    by_id[c.parent_comment_id].author_name
-                    if c.parent_comment_id in by_id
+                    by_id[m["parent_comment_id"]].author_name
+                    if m["parent_comment_id"] in by_id
                     else None
                 ),
                 like_count=(
-                    latest_likes[c.comment_id].like_count
-                    if c.comment_id in latest_likes
+                    latest_likes[m["comment_id"]].like_count
+                    if m["comment_id"] in latest_likes
                     else None
                 ),
-                is_author=c.is_author,
+                is_author=m["is_author"],
             )
-            for c in recent
+            for m in recent
         ]
 
         return CommenterProfile(
@@ -623,8 +702,7 @@ class CommenterOverlapService:
     def _projection(
         self,
         *,
-        comments: list[Comment],
-        unit_of: Callable[[Comment], str | None],
+        aggregation: _ProjectionAgg,
         unit_type: str,
         entity_ids: set[str],
         entity_meta: dict[str, dict[str, Any]],
@@ -635,30 +713,10 @@ class CommenterOverlapService:
         global_videos: dict[str, set[str]],
         global_channels: dict[str, set[str]],
     ) -> CommenterProjection:
-        authors: dict[str, dict[str, _AuthorAgg]] = {}
-        kinds: dict[str, IdentityKind] = {}
-        comment_count: Counter[str] = Counter()
-        unidentified: Counter[str] = Counter()
-
-        for c in comments:
-            unit = unit_of(c)
-            if unit is None or unit not in entity_ids:
-                continue
-            comment_count[unit] += 1
-            kind, key, display = resolve_author(c)
-            if key is None:
-                unidentified[unit] += 1
-                continue
-            kinds.setdefault(key, kind or "name")
-            agg = authors.setdefault(unit, {}).setdefault(
-                key, _AuthorAgg(display_name=display)
-            )
-            agg.count += 1
-            if c.published_at:
-                agg.first_seen = _earlier(agg.first_seen, c.published_at)
-                agg.last_seen = _later(agg.last_seen, c.published_at)
-            if c.is_author is True:
-                agg.is_author = True
+        authors = aggregation.authors
+        kinds = aggregation.kinds
+        comment_count = aggregation.comment_count
+        unidentified = aggregation.unidentified
 
         ordered_units = sorted(entity_ids)
         entities: list[OverlapEntity] = []

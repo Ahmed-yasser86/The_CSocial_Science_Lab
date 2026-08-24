@@ -16,7 +16,7 @@ Shared mapping helpers
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from psycopg.types.json import Jsonb
 
@@ -471,6 +471,40 @@ class SqlCommentRepository(_SqlEntityRepository, CommentRepository):
             'SELECT * FROM "comments" WHERE "video_id" = %(vid)s', {"vid": video_id}
         )
         return [_row(Comment, r) for r in rows]  # type: ignore[return-value]
+
+    def iter_comments(
+        self, chunk_size: int = 5000, columns: list[str] | None = None
+    ) -> Iterator[list[Comment]]:
+        """Keyset-paginated, column-projected comment scan (bounded memory).
+
+        Chunks of ``chunk_size`` rows are fetched per query (ordered by the
+        ``comment_id`` primary key, resuming after the last seen key) so a
+        full-corpus scan never materializes the whole result set -- an
+        unbounded ``SELECT`` on the production corpus exhausts client memory.
+        ``columns`` projects only the fields the caller consumes; the model's
+        required columns are always included so rows rebuild into ``Comment``.
+        """
+        declared = [c for c in headers_for(Comment) if c != "raw_json"]
+        wanted = [c for c in (columns or declared) if c in declared]
+        for required in ("comment_id", "video_id", "first_observed_run_id"):
+            if required not in wanted:
+                wanted.append(required)
+        col_sql = ", ".join(f'"{c}"' for c in wanted)
+        last_key: str | None = None
+        while True:
+            sql = f'SELECT {col_sql} FROM "comments"'
+            params: dict[str, Any] = {"chunk": chunk_size}
+            if last_key is not None:
+                sql += ' WHERE "comment_id" > %(last)s'
+                params["last"] = last_key
+            sql += ' ORDER BY "comment_id" LIMIT %(chunk)s'
+            rows = self._db.execute(sql, params)
+            if not rows:
+                break
+            yield [_row(Comment, r) for r in rows]  # type: ignore[misc]
+            if len(rows) < chunk_size:
+                break
+            last_key = str(rows[-1]["comment_id"])
 
     def list_root_comments(self, video_id: str) -> list[Comment]:
         rows = self._db.execute(

@@ -31,9 +31,8 @@ class ProjectItemService:
     def create_item(self, project_id: str, request: CreateProjectItemRequest) -> ProjectItem:
         """Create a new project item and associate it with a project."""
         # Verify project exists
-        self._projects.get_project(project_id)
-        if not self._projects.get_project(project_id):
-            raise ValueError(f"Project {project_id!r} not found")
+        if self._projects.get_project(project_id) is None:
+            raise KeyError(f"Project {project_id!r} not found")
 
         item = ProjectItem(
             item_id=new_id("item"),
@@ -71,9 +70,8 @@ class ProjectItemService:
         appended to the item's description so the artifact stays retrievable
         without bloating the item row.
         """
-        self._projects.get_project(project_id)
-        if not self._projects.get_project(project_id):
-            raise ValueError(f"Project {project_id!r} not found")
+        if self._projects.get_project(project_id) is None:
+            raise KeyError(f"Project {project_id!r} not found")
 
         now = utcnow()
         item = ProjectItem(
@@ -106,7 +104,7 @@ class ProjectItemService:
         """Get a project item by ID."""
         item = self._items.get_item(item_id)
         if item is None:
-            raise ValueError(f"ProjectItem {item_id!r} not found")
+            raise KeyError(f"ProjectItem {item_id!r} not found")
         return item
 
     def list_items(self, project_id: str | None = None) -> list[ProjectItem]:

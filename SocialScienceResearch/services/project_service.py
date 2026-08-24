@@ -70,7 +70,7 @@ class ProjectService:
     def get_project(self, project_id: str) -> Project:
         project = self._projects.get_project(project_id)
         if project is None:
-            raise ValueError(f"Project {project_id!r} not found")
+            raise KeyError(f"Project {project_id!r} not found")
         return project
 
     def update_project(
@@ -93,6 +93,6 @@ class ProjectService:
         return updated
 
     def delete_project(self, project_id: str) -> None:
-        """Raise :class:`ValueError` for an unknown id, then delete."""
+        """Raise :class:`KeyError` for an unknown id, then delete."""
         self.get_project(project_id)
         self._projects.delete_project(project_id)

@@ -215,7 +215,9 @@ class QueryService:
         are resolved to their *latest* observation via one batch scan per
         entity. ``filter`` (VideoFilter/CommentFilter) narrows video/comment
         rows; ``context`` scopes the population (channel/video); ``run_ids``
-        scopes recommendation rows to edges observed in those runs.
+        scopes rows to those first observed in those runs - recommendation
+        edges via their ``collection_run_id``, video/comment/channel rows via
+        the entity's ``first_observed_run_id`` provenance column.
         """
         entity = entity.lower()
         if entity == "video":
@@ -237,6 +239,15 @@ class QueryService:
                 f"Unknown entity {entity!r}; expected one of "
                 "channel, video, comment, recommendation, author"
             )
+        if run_ids and entity in ("video", "comment", "channel"):
+            # AND-combine the run scope via each entity's provenance column;
+            # a run without such rows simply resolves to an empty result.
+            wanted = set(run_ids)
+            rows = [
+                row
+                for row in rows
+                if row.get("first_observed_run_id") in wanted
+            ]
         if sort is not None:
             rows = self._sorted_rows(rows, sort)
         return rows
@@ -256,6 +267,7 @@ class QueryService:
                 {
                     "video_id": video.video_id,
                     "channel_id": video.channel_id,
+                    "first_observed_run_id": video.first_observed_run_id,
                     "title": video.title,
                     "description": video.description,
                     "duration": video.duration,
@@ -292,6 +304,7 @@ class QueryService:
                 {
                     "comment_id": comment.comment_id,
                     "video_id": comment.video_id,
+                    "first_observed_run_id": comment.first_observed_run_id,
                     "author_id": comment.author_id,
                     "author_name": comment.author_name,
                     "comment_text": comment.comment_text,
@@ -318,6 +331,7 @@ class QueryService:
             rows.append(
                 {
                     "channel_id": channel.channel_id,
+                    "first_observed_run_id": channel.first_observed_run_id,
                     "title": channel.title,
                     "description": channel.description,
                     "handle": channel.handle,

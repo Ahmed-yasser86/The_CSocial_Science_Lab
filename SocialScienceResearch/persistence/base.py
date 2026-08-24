@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 from SocialScienceResearch.domain.enums import EntityType, RunType
 from SocialScienceResearch.domain.models import (
@@ -336,6 +336,23 @@ class CommentRepository(ABC):
     @abstractmethod
     def list_comments(self, video_id: str | None = None) -> list[Comment]:
         """Return comments (roots and replies), optionally for a video."""
+
+    def iter_comments(
+        self,
+        chunk_size: int = 5000,
+        columns: list[str] | None = None,
+    ) -> Iterator[list[Comment]]:
+        """Yield comments in bounded chunks for full-corpus scans.
+
+        The default materializes ``list_comments()`` and slices it; SQL
+        backends override with a keyset-paginated, column-projected query so
+        analytics over millions of rows never load every row (and never the
+        heavy ``raw_json`` blobs) into memory at once. ``columns`` names the
+        fields the caller actually consumes; unsupported backends ignore it.
+        """
+        comments = self.list_comments()
+        for start in range(0, len(comments), max(1, chunk_size)):
+            yield comments[start : start + chunk_size]
 
     @abstractmethod
     def list_root_comments(self, video_id: str) -> list[Comment]:

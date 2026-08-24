@@ -670,6 +670,18 @@ class LayerScrapeService(RecommendationService):
                 f"{len(new_edges)} edge(s), {len(discovered)} video(s) enriched"
             ),
         )
+
+        # Warm the graph cache so the user's post-expansion requests are
+        # instant instead of hitting a cold rebuild (mirrors scrape_next_layer:
+        # enrichment runs after the mid-run clear, so without this the graph
+        # would show stub metadata until the TTL lapses).
+        try:
+            from .recommendation_graph_service import RecommendationGraphService
+            RecommendationGraphService.clear_graph_cache()
+            RecommendationGraphService(self._repos).build_graph(run_id=None)
+        except Exception:  # noqa: BLE001 – best-effort; never block the crawl result
+            logger.debug("Graph cache warm-up after expansion failed", exc_info=True)
+
         return layer
 
     def _resolve_slice(

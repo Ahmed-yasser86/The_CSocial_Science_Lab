@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from SocialScienceResearch.domain.enums import RunType
 from SocialScienceResearch.domain.models import Comment
 from SocialScienceResearch.services.commenter_overlap_service import (
     CommenterOverlapService,
@@ -386,3 +387,82 @@ def test_profile_unknown_author_raises(excel_repos) -> None:
     svc = _service(excel_repos)
     with pytest.raises(KeyError):
         svc.profile("ghost")
+
+
+# ----------------------------------------------------------------------
+# Chunked scan + cache invalidation (pitfall A1/R1 for the overlap cache)
+# ----------------------------------------------------------------------
+def test_iter_comments_chunks_cover_corpus_and_match_full_scan(
+    excel_repos, monkeypatch
+) -> None:
+    svc = _service(excel_repos)
+
+    # The chunked iterator covers every comment exactly once.
+    chunks = list(excel_repos.comments.iter_comments(chunk_size=5))
+    assert len(chunks) == 3  # 12 seeded comments / chunk_size 5
+    assert all(len(chunk) <= 5 for chunk in chunks)
+    flattened = [c for chunk in chunks for c in chunk]
+    assert sorted(c.comment_id for c in flattened) == sorted(
+        c.comment_id for c in excel_repos.comments.list_comments()
+    )
+
+    # Aggregating over tiny chunks yields identical results to one full scan.
+    scope = dict(video_ids=["v1", "v2", "v3", "v4"], channel_ids=["UC1", "UC2"])
+    CommenterOverlapService.clear_overlap_cache()
+    expected = svc.overlap(**scope)
+    CommenterOverlapService.clear_overlap_cache()
+    monkeypatch.setattr(CommenterOverlapService, "_CHUNK_SIZE", 4)
+    chunked = CommenterOverlapService(excel_repos).overlap(**scope)
+    assert chunked == expected
+
+
+def test_comment_write_invalidates_overlap_cache(excel_repos) -> None:
+    """A persisted comment must surface without waiting out the TTL.
+
+    Mirrors ``test_recommendation_scrape_invalidates_graph_cache``: warm the
+    cache, drive the production comment write path
+    (``CollectionService._persist_comments``), and assert the next overlap read
+    reflects the new commenter immediately.
+    """
+    from SocialScienceResearch.domain.models import CollectionRun
+    from SocialScienceResearch.services.collection_service import CollectionService
+
+    svc = _service(excel_repos)
+    first = svc.overlap(video_ids=["v1", "v2"])
+    assert first.global_summary["unique_commenters"] == 4
+    pair = next(
+        p for p in first.videos.pairs if p.entity_b == "v2"
+    )
+    assert pair.set_size_b == 2  # alice, bob
+
+    service = CollectionService(None, excel_repos)
+    run = CollectionRun(
+        run_id="run_overlap_write",
+        run_type=RunType.VIDEO,
+        target_url="https://www.youtube.com/watch?v=v2",
+        started_at=T0,
+        status="pending",
+    )
+    effective = {
+        "comment_min_likes": None,
+        "comment_date_from": None,
+        "comment_date_to": None,
+        "max_comments_per_video": None,
+        "comment_criteria": None,
+    }
+    stored = service._persist_comments(
+        run,
+        [{"id": "c13", "author": "Frank", "author_id": "UCid_frank"}],
+        "v2",
+        [],
+        effective,
+        None,
+    )
+    assert stored == 1
+
+    second = svc.overlap(video_ids=["v1", "v2"])
+    assert second.global_summary["unique_commenters"] == 5
+    pair2 = next(
+        p for p in second.videos.pairs if p.entity_b == "v2"
+    )
+    assert pair2.set_size_b == 3  # frank joined v2
