@@ -302,7 +302,13 @@ export function useJob(jobId: string | null) {
     queryKey: queryKeys.job(jobId ?? ""),
     queryFn: () => api.getJob(jobId as string),
     enabled: !!jobId,
-    refetchInterval: false,
+    // SSE (EventSource) is the primary live channel, but if it drops we must
+    // still recover: poll at 2s while the job is not terminal so the card can
+    // never get stuck on "running".
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "pending" || status === "running" ? 2000 : false;
+    },
   });
 
   useEffect(() => {
@@ -348,6 +354,16 @@ export function useCancelJob() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (jobId: string) => api.cancelJob(jobId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs() });
+    },
+  });
+}
+
+export function useKillStuckJobs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.killStuckJobs(),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.jobs() });
     },

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowDownToLine, ArrowUpFromLine, Loader2, Sparkles } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Download, Loader2, Sparkles } from "lucide-react";
 import { useRuns, useChannels, useNetworkVideoContext } from "@/services/queries";
 import {
   LoadingState,
@@ -17,6 +17,15 @@ import { JobProgressCard } from "@/components/features/job-progress-card";
 import { DataTable, type Column } from "@/components/features/data-table";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { exportGraph, exportVideoMetadata } from "@/lib/export-graph";
 import { ScrapeFiltersDialog } from "@/components/features/network-expansion/scrape-filters-dialog";
 import {
   useExpansionJob,
@@ -476,19 +485,88 @@ export function EgoNetworkView({ videoId }: { videoId: string }) {
       <Card className="p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium">Graph</h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setScrapeAllOpen(true)}
-            disabled={expansionJob.isRunning}
-          >
-            {expansionJob.isRunning ? (
-              <Loader2 className="animate-spin" aria-hidden />
-            ) : (
-              <Sparkles aria-hidden />
-            )}
-            Scrape all recommendations
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button variant="outline" size="sm" disabled={visibleGraph.nodes.length === 0} />
+                }
+              >
+                <Download aria-hidden />
+                Export
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Download visible graph</DropdownMenuLabel>
+                </DropdownMenuGroup>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportGraph("edges-csv", visibleGraph.nodes, visibleGraph.links, `ego-network-${videoId}`)
+                  }
+                >
+                  Edge list (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportGraph("nodes-csv", visibleGraph.nodes, visibleGraph.links, `ego-network-${videoId}`)
+                  }
+                >
+                  Nodes (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportGraph("json", visibleGraph.nodes, visibleGraph.links, `ego-network-${videoId}`)
+                  }
+                >
+                  Graph (JSON)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportGraph("xlsx", visibleGraph.nodes, visibleGraph.links, `ego-network-${videoId}`)
+                  }
+                >
+                  Spreadsheet (XLSX)
+                </DropdownMenuItem>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>All video metadata</DropdownMenuLabel>
+                </DropdownMenuGroup>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportVideoMetadata("csv", visibleGraph.nodes, `ego-metadata-${videoId}`)
+                  }
+                >
+                  Metadata (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportVideoMetadata("json", visibleGraph.nodes, `ego-metadata-${videoId}`)
+                  }
+                >
+                  Metadata (JSON)
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() =>
+                    exportVideoMetadata("xlsx", visibleGraph.nodes, `ego-metadata-${videoId}`)
+                  }
+                >
+                  Metadata (XLSX)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setScrapeAllOpen(true)}
+              disabled={expansionJob.isRunning}
+            >
+              {expansionJob.isRunning ? (
+                <Loader2 className="animate-spin" aria-hidden />
+              ) : (
+                <Sparkles aria-hidden />
+              )}
+              Scrape all recommendations
+            </Button>
+          </div>
         </div>
         <NetworkGraph 
           nodes={visibleGraph.nodes} 

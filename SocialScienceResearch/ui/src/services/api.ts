@@ -170,6 +170,10 @@ export function cancelJob(jobId: string): Promise<{ job_id: string; cancelled: b
   return request(`/jobs/${jobId}/cancel`, { method: "POST" });
 }
 
+export function killStuckJobs(): Promise<{ killed: number; job_ids: string[] }> {
+  return request(`/jobs/kill-stuck`, { method: "POST" });
+}
+
 export function getJobResult(jobId: string): Promise<CollectJobResult> {
   return request(`/jobs/${jobId}/result`);
 }
@@ -221,9 +225,31 @@ export function getChannelTopVideos(
 // Runs (provenance)
 // ---------------------------------------------------------------------------
 export function getRuns(runType?: RunType): Promise<CollectionRun[]> {
-  return request< Paginated<CollectionRun>>(
-    `/runs${toQuery({ run_type: runType })}`,
-  ).then((page) => page.items ?? []);
+  // The provenance ledger (and every run picker) should surface the newest
+  // runs first. Page through the whole list (research scale) so no run is
+  // dropped, and de-duplicate by run_id in case of cursor overlap.
+  const collected: CollectionRun[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  let pages = 0;
+  const PAGE_SIZE = 500;
+  const pull = (): Promise<Paginated<CollectionRun>> =>
+    request<Paginated<CollectionRun>>(
+      `/runs${toQuery({ run_type: runType, sort_dir: "desc", page_size: PAGE_SIZE, cursor })}`,
+    );
+  const accumulate = (page: Paginated<CollectionRun>): Promise<CollectionRun[]> => {
+    for (const run of page.items ?? []) {
+      if (!seen.has(run.run_id)) {
+        seen.add(run.run_id);
+        collected.push(run);
+      }
+    }
+    cursor = page.next_cursor ?? undefined;
+    pages += 1;
+    if (cursor && pages < 25) return pull().then(accumulate);
+    return Promise.resolve(collected);
+  };
+  return pull().then(accumulate);
 }
 
 export function getRun(runId: string): Promise<CollectionRun> {
@@ -251,8 +277,11 @@ export function getRunSubRuns(runId: string): Promise<Paginated<CollectionRun>> 
 // ---------------------------------------------------------------------------
 // Channels
 // ---------------------------------------------------------------------------
-export function getChannels(cursor?: string): Promise<Paginated<Channel>> {
-  return request(`/channels${toQuery({ cursor })}`);
+export function getChannels(
+  cursor?: string,
+  q?: string,
+): Promise<Paginated<Channel>> {
+  return request(`/channels${toQuery({ cursor, q })}`);
 }
 
 export interface Channel {
@@ -261,6 +290,9 @@ export interface Channel {
   url?: string;
   handle?: string | null;
   description?: string | null;
+  subscriber_count?: number | null;
+  video_count?: number | null;
+  view_count?: number | null;
 }
 
 // ---------------------------------------------------------------------------

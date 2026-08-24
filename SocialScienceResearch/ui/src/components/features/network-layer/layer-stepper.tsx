@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Plus, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -15,17 +17,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, LoadingState } from "@/components/features/state";
+import { formatJobStage } from "@/components/features/job-progress-card";
 import { useRuns } from "@/services/queries";
 import {
   useBootstrapLayer,
   useCrawlNextLayer,
   useLayers,
 } from "@/services/networkLayer";
+import { formatNumber } from "@/lib/format";
 import type { LayerProjection } from "@/lib/network-layer-types";
 
 export function LayerStepper({
   selectedLayerRunId,
   onSelectLayer,
+  runId,
   projection,
   onProjectionChange,
   collectComments,
@@ -35,6 +40,7 @@ export function LayerStepper({
 }: {
   selectedLayerRunId: string | null;
   onSelectLayer: (layerRunId: string) => void;
+  runId?: string | null;
   projection: LayerProjection;
   onProjectionChange: (projection: LayerProjection) => void;
   collectComments: boolean;
@@ -44,21 +50,40 @@ export function LayerStepper({
     parent_layer_run_id: string;
     projection: LayerProjection;
     collect_comments: boolean;
+    max_recommendations_per_video?: number;
   }) => void;
 }) {
-  const layersQuery = useLayers();
+  const layersQuery = useLayers(runId);
   const runsQuery = useRuns();
   const bootstrapMutation = useBootstrapLayer();
   const [bootstrapRunId, setBootstrapRunId] = useState<string>("");
+  const [maxRecsPerVideo, setMaxRecsPerVideo] = useState<string>("");
+
+  // When the Lab scopes the Layer tab to a specific run, drive the bootstrap
+  // seed run from that selection so "Bootstrap layer 0" builds the run's own
+  // layer family instead of forcing the researcher to pick again.
+  useEffect(() => {
+    if (runId) setBootstrapRunId(runId);
+  }, [runId]);
 
   const layers = [...(layersQuery.data ?? [])].sort(
     (a, b) => a.layer_index - b.layer_index,
   );
   const runs = runsQuery.data ?? [];
 
+  // Disambiguate layers that share an index (e.g. two crawls of the same
+  // parent) so the tab bar doesn't show two identical "Layer 1" buttons.
+  const indexCounts = new Map<number, number>();
+  for (const layer of layers) {
+    indexCounts.set(
+      layer.layer_index,
+      (indexCounts.get(layer.layer_index) ?? 0) + 1,
+    );
+  }
+
   const selectedLayer =
     layers.find((layer) => layer.layer_run_id === selectedLayerRunId) ??
-    layers[layers.length - 1];
+    layers[0];
 
   const isCrawling = crawl.isPending || crawl.isRunning;
 
@@ -77,10 +102,15 @@ export function LayerStepper({
 
   async function handleCrawlNext() {
     if (!selectedLayer) return;
+    const trimmed = maxRecsPerVideo.trim();
+    const parsed =
+      trimmed === "" ? undefined : Math.max(1, Math.floor(Number(trimmed)));
     onStartCrawl({
       parent_layer_run_id: selectedLayer.layer_run_id,
       projection,
       collect_comments: collectComments,
+      max_recommendations_per_video:
+        parsed !== undefined && !Number.isNaN(parsed) ? parsed : undefined,
     });
   }
 
@@ -93,34 +123,50 @@ export function LayerStepper({
   }
 
   if (layers.length === 0) {
+    const scopeName =
+      runsQuery.data?.find((r) => r.run_id === runId)?.name ?? runId;
     return (
       <Card className="p-4">
         <EmptyState
-          title="No crawl layers yet"
-          description="Bootstrap a seed layer from an existing run, then crawl the recommendation network layer by layer."
+          title={
+            runId
+              ? `No crawl layers for this run yet`
+              : "No crawl layers yet"
+          }
+          description={
+            runId
+              ? `Bootstrap a seed layer from ${scopeName ?? runId} to start crawling its recommendation network.`
+              : "Bootstrap a seed layer from an existing run, then crawl the recommendation network layer by layer."
+          }
           className="mb-4"
         />
         <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Seed run
-            </Label>
-            <Select
-              value={bootstrapRunId}
-              onValueChange={(next) => setBootstrapRunId(next ?? "")}
-            >
-              <SelectTrigger className="w-80" aria-label="Select seed run">
-                <SelectValue placeholder="Pick a run to start from" />
-              </SelectTrigger>
-              <SelectContent>
-                {runs.map((run) => (
-                  <SelectItem key={run.run_id} value={run.run_id}>
-                    {run.name ?? run.run_id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {runId ? (
+            <Badge variant="outline" className="font-mono">
+              {scopeName ?? runId}
+            </Badge>
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Seed run
+              </Label>
+              <Select
+                value={bootstrapRunId || undefined}
+                onValueChange={(next) => setBootstrapRunId(next ?? "")}
+              >
+                <SelectTrigger className="w-80" aria-label="Select seed run">
+                  <SelectValue placeholder="Pick a run to start from" />
+                </SelectTrigger>
+                <SelectContent>
+                  {runs.map((run) => (
+                    <SelectItem key={run.run_id} value={run.run_id}>
+                      {run.name ?? run.run_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <Button
             onClick={() => void handleBootstrap()}
             disabled={!bootstrapRunId || bootstrapMutation.isPending}
@@ -159,25 +205,53 @@ export function LayerStepper({
             >
               Layer {layer.layer_index}
               {layer.layer_index === 0 ? " (seed)" : null}
+              {indexCounts.get(layer.layer_index) &&
+              indexCounts.get(layer.layer_index)! > 1
+                ? ` · ${layer.layer_run_id.slice(0, 4)}`
+                : null}
             </button>
           ))}
         </div>
       </div>
 
       {selectedLayer ? (
-        <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline">
-            {selectedLayer.discovered_video_ids.length} discovered
-          </Badge>
-          <Badge variant="outline">
-            {selectedLayer.frontier_video_ids.length} frontier
-          </Badge>
-          <Badge variant="outline">
-            {selectedLayer.run_ids.length} run(s)
-          </Badge>
-          <Badge variant="outline">
-            {selectedLayer.comments_collected} comment(s)
-          </Badge>
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            {selectedLayer.layer_index === 0 ? (
+              <>Seed layer built from </>
+            ) : (
+              <>Layer {selectedLayer.layer_index} expands the frontier of </>
+            )}
+            <span className="font-medium text-foreground">
+              {runs.find((r) => r.run_id === selectedLayer.parent_run_id)?.name ??
+                selectedLayer.parent_run_id ??
+                "an unknown run"}
+            </span>
+            {selectedLayer.layer_index > 0 ? (
+              <> &mdash; {selectedLayer.frontier_video_ids.length} frontier video(s) &rarr; {selectedLayer.discovered_video_ids.length} enriched</>
+            ) : null}
+          </p>
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">
+              {selectedLayer.discovered_video_ids.length} video(s) enriched
+            </Badge>
+            <Badge variant="outline">
+              {selectedLayer.frontier_video_ids.length} frontier
+            </Badge>
+            <Badge variant="outline">
+              {selectedLayer.run_ids.length} run(s)
+            </Badge>
+            <Badge variant="outline">
+              {selectedLayer.comments_collected} comment(s)
+            </Badge>
+          </div>
+          {selectedLayer.frontier_video_ids.length === 0 ? (
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              This layer&rsquo;s frontier is empty &mdash; the seed run has no
+              videos or recommendation edges to crawl from. Pick a run that has
+              collected content to start a real layer.
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -210,6 +284,22 @@ export function LayerStepper({
           Collect comments for new videos
         </label>
 
+        <div className="space-y-1.5">
+          <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Recs / video
+          </Label>
+          <Input
+            type="number"
+            min={1}
+            max={2000}
+            value={maxRecsPerVideo}
+            onChange={(e) => setMaxRecsPerVideo(e.target.value)}
+            placeholder="all"
+            className="w-28"
+            aria-label="Max recommendations to keep per frontier video (optional)"
+          />
+        </div>
+
         <Button
           onClick={() => void handleCrawlNext()}
           disabled={isCrawling || !selectedLayer}
@@ -228,6 +318,63 @@ export function LayerStepper({
           {(crawl.error as Error).message}
         </p>
       ) : null}
+
+      {isCrawling && crawl.job ? (
+        <CrawlProgress job={crawl.job} />
+      ) : isCrawling && crawl.isPending ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />
+          Submitting crawl job…
+        </div>
+      ) : null}
     </Card>
+  );
+}
+
+function CrawlProgress({
+  job,
+}: {
+  job: {
+    status: string;
+    progress?: {
+      stage: string;
+      discovered: number;
+      succeeded: number;
+      failed: number;
+      message: string | null;
+    } | null;
+    message?: string | null;
+  };
+}) {
+  const progress = job.progress;
+  const discovered = progress?.discovered ?? 0;
+  const succeeded = progress?.succeeded ?? 0;
+  const failed = progress?.failed ?? 0;
+  const pct =
+    discovered > 0 ? Math.round(((succeeded + failed) / discovered) * 100) : 0;
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md border border-primary/20 bg-primary/5 p-3">
+      <div className="flex items-center gap-2 text-sm">
+        <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden />
+        <span className="font-medium">
+          {formatJobStage(progress?.stage)}
+        </span>
+      </div>
+      {discovered > 0 ? (
+        <>
+          <Progress value={pct} className="h-1.5" />
+          <p className="text-xs text-muted-foreground">
+            {formatNumber(succeeded)} succeeded
+            {failed > 0 ? `, ${formatNumber(failed)} failed` : ""} of{" "}
+            {formatNumber(discovered)} target(s)
+          </p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {progress?.message ?? "Working…"}
+        </p>
+      )}
+    </div>
   );
 }

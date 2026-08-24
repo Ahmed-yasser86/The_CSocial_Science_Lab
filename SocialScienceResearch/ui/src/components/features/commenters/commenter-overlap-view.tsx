@@ -1,9 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { Search, Sparkles } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Maximize2, Search, Sparkles } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -276,6 +287,47 @@ function Tile({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ExpandableCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <Card className="relative">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-sm">{title}</CardTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Expand ${title}`}
+            onClick={() => setExpanded(true)}
+          >
+            <Maximize2 className="size-4" aria-hidden />
+          </Button>
+        </CardHeader>
+        <CardContent>{children}</CardContent>
+      </Card>
+      <Dialog
+        open={expanded}
+        onOpenChange={(open) => {
+          if (!open) setExpanded(false);
+        }}
+      >
+        <DialogContent className="fixed inset-0 top-0 left-0 z-50 flex h-screen w-screen max-h-none max-w-none translate-x-0 translate-y-0 flex-col overflow-hidden rounded-none p-0 sm:max-w-none">
+          <DialogHeader className="border-b px-4 py-3">
+            <DialogTitle>{title}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto p-4">{children}</div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 function OverlapResults({
   result,
   projection,
@@ -366,18 +418,26 @@ function OverlapResults({
               description="At least two entities with commenters are required for overlap analysis."
             />
           ) : (
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="space-y-4">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <ExpandableCard title="Overlap heatmap">
                 <OverlapHeatmap projection={projectionData} />
+              </ExpandableCard>
+              <ExpandableCard title="Top shared pairs">
                 <OverlapPairsTable pairs={projectionData.pairs} />
-              </div>
-              <div className="space-y-4">
+              </ExpandableCard>
+            </div>
+            <div className="space-y-4">
+              <ExpandableCard title="Bridge commenters">
                 <BridgeCommentersPanel commenters={projectionData.bridge_commenters} />
+              </ExpandableCard>
+              <ExpandableCard title="Top shared commenters">
                 <TopSharedCommentersPanel
                   commenters={projectionData.top_shared_commenters}
                 />
-              </div>
+              </ExpandableCard>
             </div>
+          </div>
           )}
         </>
       ) : (

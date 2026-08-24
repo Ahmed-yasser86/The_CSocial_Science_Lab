@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type Column } from "@/components/features/data-table";
+import { useChannels } from "@/services/queries";
 import type { PairOverlap } from "@/lib/commenter-overlap-types";
 
 const fmt = (v: number | null | undefined, digits = 3) =>
@@ -12,18 +13,31 @@ const fmt = (v: number | null | undefined, digits = 3) =>
 
 export function OverlapPairsTable({ pairs }: { pairs: PairOverlap[] }) {
   const [selectedPair, setSelectedPair] = useState<PairOverlap | null>(null);
+  const channelsQuery = useChannels();
+  const nameOf = (id: string) =>
+    channelsQuery.data?.find((c) => c.channel_id === id)?.title ?? id;
+
+  const EntityCell = ({ id }: { id: string }) => (
+    <Link
+      href={`/network/commenters?channel_ids=${encodeURIComponent(id)}`}
+      className="font-medium text-primary underline-offset-2 hover:underline"
+      title={id}
+    >
+      {nameOf(id)}
+    </Link>
+  );
 
   const columns: Column<PairOverlap>[] = [
     {
       key: "entity_a",
       header: "Entity A",
-      cell: (p) => p.entity_a,
+      cell: (p) => <EntityCell id={p.entity_a} />,
       sortValue: (p) => p.entity_a,
     },
     {
       key: "entity_b",
       header: "Entity B",
-      cell: (p) => p.entity_b,
+      cell: (p) => <EntityCell id={p.entity_b} />,
       sortValue: (p) => p.entity_b,
     },
     {
@@ -116,7 +130,8 @@ export function OverlapPairsTable({ pairs }: { pairs: PairOverlap[] }) {
         <Card className="p-4">
           <div className="mb-2 flex items-center justify-between gap-2">
             <h4 className="text-sm font-medium">
-              Shared commenters: {selectedPair.entity_a} ↔ {selectedPair.entity_b}
+              Shared commenters: {nameOf(selectedPair.entity_a)} ↔{" "}
+              {nameOf(selectedPair.entity_b)}
             </h4>
             <Badge variant="outline">
               {selectedPair.total_shared} shared

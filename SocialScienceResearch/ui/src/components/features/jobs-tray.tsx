@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Briefcase, Ban, Loader2 } from "lucide-react";
+import { Briefcase, Ban, Loader2, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useJobs, useCancelJob } from "@/services/queries";
+import { useJobs, useCancelJob, useKillStuckJobs } from "@/services/queries";
 import { useToast } from "@/components/ui/toast";
 import { RunStatusBadge } from "@/components/features/run-status-badge";
 import { LoadingState } from "@/components/features/state";
@@ -31,6 +31,7 @@ const RUN_STATUS: Record<JobStatus, CollectionStatus> = {
 export function JobsTray() {
   const { data: jobs, isLoading, isError } = useJobs();
   const cancel = useCancelJob();
+  const killStuck = useKillStuckJobs();
   const { toast } = useToast();
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
 
@@ -69,6 +70,36 @@ export function JobsTray() {
     });
   }
 
+  function requestKillStuck() {
+    if (
+      !window.confirm(
+        "Kill ALL pending/running jobs and recycle the worker pool? " +
+          "Stuck jobs blocked on a stalled network call cannot be cancelled cooperatively, " +
+          "so this force-terminates them. In-progress work will be lost.",
+      )
+    ) {
+      return;
+    }
+    killStuck.mutate(undefined, {
+      onSuccess: (res) => {
+        toast({
+          title: "Killed stuck jobs",
+          description:
+            res.killed > 0
+              ? `${res.killed} job(s) terminated and the worker pool was recycled.`
+              : "No pending/running jobs to kill.",
+        });
+      },
+      onError: (error) => {
+        toast({
+          title: "Could not kill stuck jobs",
+          description: (error as Error).message,
+          variant: "destructive",
+        });
+      },
+    });
+  }
+
   return (
     <Popover>
       <PopoverTrigger
@@ -98,11 +129,27 @@ export function JobsTray() {
         sideOffset={6}
         className="w-96 gap-0 overflow-hidden p-0"
       >
-        <div className="flex items-center justify-between border-b px-3 py-2.5">
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-2.5">
           <p className="text-sm font-medium">Jobs</p>
-          <span className="text-xs text-muted-foreground">
-            {activeCount} active
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {activeCount} active
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={requestKillStuck}
+              disabled={killStuck.isPending || activeCount === 0}
+              title="Force-terminate all pending/running jobs and recycle the worker pool"
+            >
+              {killStuck.isPending ? (
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+              ) : (
+                <Skull className="size-3" aria-hidden />
+              )}
+              Kill stuck
+            </Button>
+          </div>
         </div>
 
         <div className="max-h-[26rem] overflow-y-auto">

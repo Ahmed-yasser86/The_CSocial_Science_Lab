@@ -34,10 +34,10 @@ function invalidateLayerQueries(queryClient: ReturnType<typeof useQueryClient>) 
   void queryClient.invalidateQueries({ queryKey: ["jobs"] });
 }
 
-export function getLayers(): Promise<LayerRun[]> {
-  return request<Paginated<LayerRun>>("/network/layers").then(
-    (page) => page.items ?? [],
-  );
+export function getLayers(runId?: string | null): Promise<LayerRun[]> {
+  return request<Paginated<LayerRun>>(
+    `/network/layers${toQuery({ run_id: runId ?? undefined })}`,
+  ).then((page) => page.items ?? []);
 }
 
 export function getLayer(layerRunId: string): Promise<LayerRun> {
@@ -77,6 +77,7 @@ export function crawlNextLayer(body: {
   projection?: LayerProjection;
   collect_comments?: boolean;
   concurrency?: number;
+  max_recommendations_per_video?: number;
 }): Promise<{ job_id: string }> {
   return request("/network/layer/scrape", {
     method: "POST",
@@ -84,10 +85,10 @@ export function crawlNextLayer(body: {
   });
 }
 
-export function useLayers() {
+export function useLayers(runId?: string | null) {
   return useQuery({
-    queryKey: networkLayerKeys.layers,
-    queryFn: getLayers,
+    queryKey: ["network", "layer", "list", runId ?? "all"],
+    queryFn: () => getLayers(runId),
   });
 }
 

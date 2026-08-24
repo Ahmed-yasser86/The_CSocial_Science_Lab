@@ -14,6 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EmptyState, ErrorState, LoadingState } from "@/components/features/state";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useRuns } from "@/services/queries";
 import {
   NetworkMetricTiles,
@@ -24,6 +30,7 @@ import { TemporalOverlay } from "@/components/features/network-full/temporal-ove
 import { EdgeTable } from "@/components/features/network-full/edge-table";
 import { useNetworkMetrics, getNetworkExportUrl, useNetworkGraph, useScrapeNetwork } from "@/services/networkFull";
 import { EXPORT_FORMATS } from "@/lib/network-full-types";
+import { exportVideoMetadata, type ExportNode } from "@/lib/export-graph";
 import { NetworkGraph, type GraphLink, type GraphNode } from "@/components/features/network-graph";
 import { LayerPanel } from "@/components/features/network-layer/layer-panel";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
@@ -39,6 +46,9 @@ import { Toast } from "@/components/features/state";
 import { JobProgressCard } from "@/components/features/job-progress-card";
 import { AddToProjectDialog } from "@/components/features/network-full/add-to-project-dialog";
 import { NetworkInsightsPanel } from "@/components/features/network-full/network-insights-panel";
+import { NetworkMatrices } from "@/components/features/network-full/network-matrices";
+import { SamplingFeasibility } from "@/components/features/network-full/sampling-feasibility";
+import { ChannelsPanel } from "@/components/features/network-full/channels-panel";
 import {
   loadLabSession,
   saveLabSession,
@@ -148,29 +158,26 @@ function mapChannelGraphPayload(payload: ChannelGraphPayload): {
 export function FullNetworkView() {
   const runsQuery = useRuns();
   // Resumable Lab session (US-73-78 foundation): restore the previous view
-  // from localStorage so a researcher can pick up where they left off.
-  const initialSession = loadLabSession();
-  const [runId, setRunId] = useState<string | null>(initialSession.runId ?? null);
+  // from localStorage so a researcher can pick up where they left off. State is
+  // initialised to defaults on the server AND the client's first paint to avoid
+  // a hydration mismatch; the stored session is applied in a post-mount effect.
+  const [runId, setRunId] = useState<string | null>(null);
   const [temporalRuns, setTemporalRuns] = useState<string[]>([]);
-  const [tab, setTab] = useState<LabTab>(initialSession.tab ?? "metrics");
-  const [graphRunId, setGraphRunId] = useState<string | null>(
-    initialSession.runId ?? null,
-  );
-  const [graphChannelId, setGraphChannelId] = useState<string | null>(null);
-  const [graphProjection, setGraphProjection] = useState<GraphProjection>(
-    initialSession.graphProjection ?? "video",
-  );
-  const [graphLayerIndex, setGraphLayerIndex] = useState<number | null>(
-    initialSession.graphLayerIndex ?? null,
-  );
-  const [identity, setIdentity] = useState<string>(initialSession.identity ?? "");
+  const [tab, setTab] = useState<LabTab>("metrics");
+  const [graphRunId, setGraphRunId] = useState<string | null>(null);
+  const [graphChannelIds, setGraphChannelIds] = useState<string[]>([]);
+  const [graphProjection, setGraphProjection] = useState<GraphProjection>("video");
+  const [graphLayerIndex, setGraphLayerIndex] = useState<number | null>(null);
+  const [identity, setIdentity] = useState<string>("");
   const [annotation, setAnnotation] = useState<string>(
-    initialSession.annotation ?? "",
+    "",
   );
   const [showAnnotations, setShowAnnotations] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [graphConnected, setGraphConnected] = useState<"only" | "isolated" | null>(null);
   const [graphScraped, setGraphScraped] = useState<"scraped" | "unscraped" | null>(null);
-  const [graphVideoId, setGraphVideoId] = useState<string | null>(null);
+  const [graphIncludeSubRuns, setGraphIncludeSubRuns] = useState(false);
+  const [graphVideoIds, setGraphVideoIds] = useState<string[]>([]);
   const [addToProjectOpen, setAddToProjectOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [scrapeAllOpen, setScrapeAllOpen] = useState(false);
@@ -185,8 +192,27 @@ export function FullNetworkView() {
     return [...new Set(ids)];
   }, [runsQuery.data]);
 
-  // Persist Lab session state so the workspace is resumable (US-73-78).
+  // Restore the resumable Lab session on the client only (after mount). Reading
+  // localStorage during the initial render would mismatch server HTML.
   useEffect(() => {
+    const s = loadLabSession();
+    if (s.runId !== undefined) {
+      setRunId(s.runId ?? null);
+      setGraphRunId(s.runId ?? null);
+    }
+    if (s.tab) setTab(s.tab);
+    if (s.graphProjection) setGraphProjection(s.graphProjection);
+    if (s.graphLayerIndex !== undefined) setGraphLayerIndex(s.graphLayerIndex);
+    if (s.identity !== undefined) setIdentity(s.identity);
+    if (s.annotation !== undefined) setAnnotation(s.annotation);
+    setHydrated(true);
+  }, []);
+
+  // Persist Lab session state so the workspace is resumable (US-73-78). Gated on
+  // `hydrated` so we don't overwrite the stored session with defaults before
+  // the restore effect has run.
+  useEffect(() => {
+    if (!hydrated) return;
     saveLabSession({
       tab,
       runId,
@@ -195,7 +221,16 @@ export function FullNetworkView() {
       identity,
       annotation,
     });
-  }, [tab, runId, graphProjection, graphLayerIndex, identity, annotation]);
+  }, [hydrated, tab, runId, graphProjection, graphLayerIndex, identity, annotation]);
+
+  // Drop a persisted run filter that no longer exists (e.g. from a previous
+  // dataset) so the graph doesn't silently render empty with no recovery.
+  useEffect(() => {
+    if (runs.length > 0 && runId && !runs.includes(runId)) {
+      setRunId(null);
+      setGraphRunId(null);
+    }
+  }, [runs, runId]);
 
   const applyPreset = (preset: (typeof LAB_PRESETS)[number]) => {
     const p = preset.patch;
@@ -224,14 +259,36 @@ export function FullNetworkView() {
 
   const graphQuery = useNetworkGraph(
     graphRunId ?? undefined,
-    graphChannelId ?? undefined,
-    "source",
+    graphChannelIds,
+    graphVideoIds,
+    "either",
     graphProjection,
     { retry: 1 },
     graphLayerIndex ?? undefined,
     graphConnected ?? undefined,
     graphScraped ?? undefined,
+    graphIncludeSubRuns || undefined,
   );
+
+  const hasActiveGraphFilters =
+    graphRunId !== null ||
+    graphChannelIds.length > 0 ||
+    graphVideoIds.length > 0 ||
+    graphLayerIndex !== null ||
+    graphConnected !== null ||
+    graphScraped !== null ||
+    graphIncludeSubRuns;
+
+  const clearAllGraphFilters = () => {
+    setRunId(null);
+    setGraphRunId(null);
+    setGraphChannelIds([]);
+    setGraphVideoIds([]);
+    setGraphLayerIndex(null);
+    setGraphConnected(null);
+    setGraphScraped(null);
+    setGraphIncludeSubRuns(false);
+  };
 
   const scrapeRunMutation = useScrapeNetwork("run");
   const scrapeChannelMutation = useScrapeNetwork("channel");
@@ -252,13 +309,14 @@ export function FullNetworkView() {
   };
 
   const handleScrapeChannel = async () => {
-    if (!graphChannelId) return;
+    const channelId = graphChannelIds[0];
+    if (!channelId) return;
     try {
       await scrapeChannelMutation.mutateAsync({
-        channel_id: graphChannelId,
+        channel_id: channelId,
         dedupe: true,
       });
-      showToast(`Scrape queued for channel ${graphChannelId}`, "success");
+      showToast(`Scrape queued for channel ${channelId}`, "success");
     } catch (err) {
       showToast(`Failed to start scrape: ${(err as Error).message}`, "error");
     }
@@ -278,12 +336,26 @@ export function FullNetworkView() {
 
   const handleScrapeAll = async (filters: ExpansionFilters) => {
     const scopeRunId = graphRunId ?? runId;
+    // When no run scopes the slice, fall back to the videos currently visible
+    // in the graph so the expansion still has a valid scope (fixes
+    // "Expansion scope requires video_ids or run_id").
+    const fallbackVideoIds: string[] =
+      !scopeRunId && graphProjection === "video" && graphQuery.data
+        ? (graphQuery.data as NetworkGraphPayload).nodes.map((n) => n.video_id)
+        : [];
     setScrapeAllOpen(false);
+    if (!scopeRunId && fallbackVideoIds.length === 0) {
+      showToast(
+        "Select a run or load videos into the graph before scraping the whole network",
+        "error",
+      );
+      return;
+    }
     await startExpansionJob(
       () =>
         scrapeExpansionAll({
           run_id: scopeRunId,
-          video_ids: [],
+          video_ids: fallbackVideoIds,
           filters,
         }),
       "Scrape-all expansion queued",
@@ -311,6 +383,28 @@ export function FullNetworkView() {
     });
   }
 
+  // All video metadata for the currently visible network slice (client-side
+  // export, independent of the server-side /network/export endpoint).
+  const metadataNodes: ExportNode[] | null = useMemo(() => {
+    if (graphProjection !== "video" || !graphQuery.data) return null;
+    return (graphQuery.data as NetworkGraphPayload).nodes.map(
+      (n): ExportNode => ({
+        id: n.video_id,
+        title: n.title,
+        channel: n.channel_name ?? n.channel_id,
+        channel_id: n.channel_id,
+        kind: n.kind,
+        in_degree: n.in_degree,
+        out_degree: n.out_degree,
+        views: n.views,
+        likes: n.likes,
+        duration: n.duration,
+        community_id: n.community_id,
+        recommendations_scraped: n.recommendations_scraped,
+      }),
+    );
+  }, [graphProjection, graphQuery.data]);
+
   return (
     <div className="space-y-4">
       <Card className="p-4">
@@ -324,6 +418,7 @@ export function FullNetworkView() {
               names={runNames}
               value={runId}
               placeholder="All runs"
+              hideAllOption={tab === "layers"}
               onChange={(value) => {
                 // Drive both the metrics/edges slice (runId) and the graph
                 // slice (graphRunId) so a run chosen here actually filters the
@@ -347,6 +442,30 @@ export function FullNetworkView() {
               </a>
             ))}
           </div>
+          {metadataNodes ? (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                All video metadata
+              </span>
+              {(["csv", "json", "xlsx"] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  type="button"
+                  onClick={() =>
+                    exportVideoMetadata(
+                      fmt,
+                      metadataNodes,
+                      `network-metadata-${runId ?? "all"}`,
+                    )
+                  }
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <Download className="size-3.5" aria-hidden />
+                  {fmt.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </Card>
 
@@ -411,7 +530,10 @@ export function FullNetworkView() {
           <TabsTrigger value="graph">Graph</TabsTrigger>
           <TabsTrigger value="layers">Layers</TabsTrigger>
           <TabsTrigger value="commenters">Commenters</TabsTrigger>
+          <TabsTrigger value="matrices">Matrices</TabsTrigger>
+          <TabsTrigger value="sampling">Sampling</TabsTrigger>
           <TabsTrigger value="expansion">Expansion</TabsTrigger>
+          <TabsTrigger value="channels">Channels</TabsTrigger>
         </TabsList>
 
         <TabsContent value="metrics" className="mt-4 space-y-4">
@@ -519,6 +641,17 @@ export function FullNetworkView() {
                 </Badge>
               ) : null}
 
+              <ChannelMultiSelect
+                channels={
+                  graphQuery.data
+                    ? (graphQuery.data as NetworkGraphPayload | ChannelGraphPayload).channels
+                    : []
+                }
+                selected={graphChannelIds}
+                onChange={setGraphChannelIds}
+              />
+              <VideoMultiSelect selected={graphVideoIds} onChange={setGraphVideoIds} />
+
               <div className="flex flex-wrap items-center gap-2">
                 <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   Layer
@@ -601,20 +734,54 @@ export function FullNetworkView() {
                 </Select>
               </div>
 
-              {graphConnected === "isolated" || graphScraped !== null || graphLayerIndex !== null ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Run scope
+                </Label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={graphIncludeSubRuns}
+                    onCheckedChange={(v) => setGraphIncludeSubRuns(v === true)}
+                    disabled={!graphRunId}
+                    aria-label="Include sub-runs in the graph"
+                  />
+                  Include sub-runs
+                </label>
+                {graphRunId && (
+                  <span className="text-xs text-muted-foreground">
+                    {graphIncludeSubRuns
+                      ? "Parent run + all descendant sub-runs"
+                      : "Selected run only"}
+                  </span>
+                )}
+              </div>
+
+              {hasActiveGraphFilters ? (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => {
-                    setGraphLayerIndex(null);
-                    setGraphConnected(null);
-                    setGraphScraped(null);
-                  }}
+                  onClick={clearAllGraphFilters}
                 >
-                  Clear advanced filters
+                  Clear all filters
                 </Button>
               ) : null}
             </div>
+            {graphQuery.data &&
+            (
+              (graphQuery.data as NetworkGraphPayload | ChannelGraphPayload)
+                .nodes.length === 0
+            ) &&
+            hasActiveGraphFilters ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                <span>
+                  No network data for the current filters. The selection may point
+                  to an empty or removed slice.
+                </span>
+                <Button variant="outline" size="sm" onClick={clearAllGraphFilters}>
+                  Clear all filters
+                </Button>
+              </div>
+            ) : null}
             {graphQuery.isError ? (
               <ErrorState
                 message={
@@ -632,13 +799,21 @@ export function FullNetworkView() {
                   runs={graphQuery.data.runs}
                   channels={graphQuery.data.channels}
                   selectedRun={graphRunId ?? runId ?? undefined}
-                  selectedChannel={graphChannelId ?? undefined}
-                  onRunChange={(v) => setGraphRunId(v === "__all" ? null : v)}
-                  onChannelChange={(v) => setGraphChannelId(v === "__all" ? null : v)}
-                  onClearFilters={() => {
-                    setGraphRunId(null);
-                    setGraphChannelId(null);
+                  selectedChannel={graphChannelIds[0] ?? undefined}
+                  onRunChange={(v) => {
+                    setGraphRunId(v === "__all" ? null : v);
+                    if (v && v !== "__all") setRunId(v);
                   }}
+                  onChannelChange={(v) =>
+                    setGraphChannelIds((prev) =>
+                      v && v !== "__all"
+                        ? prev.includes(v)
+                          ? prev.filter((c) => c !== v)
+                          : [...prev, v]
+                        : [],
+                    )
+                  }
+                  onClearFilters={clearAllGraphFilters}
                   onScrapeClick={(channelId) => openVideoScrapeDialog(channelId)}
                 />
               ) : (
@@ -648,16 +823,27 @@ export function FullNetworkView() {
                   runs={graphQuery.data.runs}
                   channels={graphQuery.data.channels}
                   selectedRun={graphRunId ?? runId ?? undefined}
-                  selectedChannel={graphChannelId ?? undefined}
-                  onRunChange={(v) => setGraphRunId(v === "__all" ? null : v)}
-                  onChannelChange={(v) => setGraphChannelId(v === "__all" ? null : v)}
-                  onClearFilters={() => {
-                    setGraphRunId(null);
-                    setGraphChannelId(null);
+                  selectedChannel={graphChannelIds[0] ?? undefined}
+                  onRunChange={(v) => {
+                    setGraphRunId(v === "__all" ? null : v);
+                    if (v && v !== "__all") setRunId(v);
                   }}
+                  onChannelChange={(v) =>
+                    setGraphChannelIds((prev) =>
+                      v && v !== "__all"
+                        ? prev.includes(v)
+                          ? prev.filter((c) => c !== v)
+                          : [...prev, v]
+                        : [],
+                    )
+                  }
+                  onClearFilters={clearAllGraphFilters}
                   onScrapeClick={(videoId) => openVideoScrapeDialog(videoId)}
-                  onOverlapClick={(videoId) => {
-                    setGraphVideoId(videoId);
+                  onOverlapClick={(_videoId) => {
+                    const allVideoIds = (
+                      mapGraphPayload(graphQuery.data as NetworkGraphPayload).nodes
+                    ).map((n) => n.id);
+                    setGraphVideoIds(allVideoIds);
                     setTab("commenters");
                   }}
                 />
@@ -705,7 +891,7 @@ export function FullNetworkView() {
                   Re-scrape this run
                 </Button>
               ) : null}
-              {graphChannelId ? (
+              {graphChannelIds[0] ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -761,12 +947,21 @@ export function FullNetworkView() {
           </Card>
         </TabsContent>
         <TabsContent value="layers" className="mt-4">
-          <LayerPanel />
+          <LayerPanel runId={runId ?? graphRunId} />
         </TabsContent>
         <TabsContent value="commenters" className="mt-4">
           <CommenterOverlapView
-            initialVideoIds={graphVideoId ? [graphVideoId] : []}
-            initialChannelIds={graphChannelId ? [graphChannelId] : []}
+            initialVideoIds={graphVideoIds}
+            initialChannelIds={graphChannelIds}
+          />
+        </TabsContent>
+        <TabsContent value="matrices" className="mt-4">
+          <NetworkMatrices runIds={graphRunId ? [graphRunId] : undefined} />
+        </TabsContent>
+        <TabsContent value="sampling" className="mt-4">
+          <SamplingFeasibility
+            defaultChannelId={graphChannelIds[0] ?? undefined}
+            runIds={graphRunId ? [graphRunId] : undefined}
           />
         </TabsContent>
         <TabsContent value="expansion" className="mt-4">
@@ -774,6 +969,9 @@ export function FullNetworkView() {
             selectedActionId={selectedExpansionId}
             onSelectAction={setSelectedExpansionId}
           />
+        </TabsContent>
+        <TabsContent value="channels" className="mt-4">
+          <ChannelsPanel />
         </TabsContent>
       </Tabs>
 
@@ -832,12 +1030,14 @@ function RunPicker({
   value,
   placeholder,
   onChange,
+  hideAllOption,
 }: {
   runs: string[];
   names: Map<string, string>;
   value: string | null;
   placeholder: string;
   onChange: (value: string | null) => void;
+  hideAllOption?: boolean;
 }) {
   return (
     <Select
@@ -849,7 +1049,7 @@ function RunPicker({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="">{placeholder}</SelectItem>
+        {hideAllOption ? null : <SelectItem value="">{placeholder}</SelectItem>}
         {runs.map((id) => (
           <SelectItem key={id} value={id}>
             {names.get(id) ?? id}
@@ -873,7 +1073,8 @@ function NodeListPanel({
     const list = nodes.slice();
     list.sort((a, b) => {
       const deg = (b.in_degree + b.out_degree) - (a.in_degree + a.out_degree);
-      return deg !== 0 ? deg : (a.id).localeCompare(b.id);
+      if (deg !== 0) return deg;
+      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
     });
     return list;
   }, [nodes]);
@@ -949,6 +1150,168 @@ function NodeListPanel({
               ))}
             </tbody>
           </table>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type ChannelFacetLike = { channel_id: string; channel_name?: string | null };
+
+function ChannelMultiSelect({
+  channels,
+  selected,
+  onChange,
+}: {
+  channels: ChannelFacetLike[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return channels;
+    return channels.filter((c) => {
+      const name = (c.channel_name ?? c.channel_id ?? "").toLowerCase();
+      const id = (c.channel_id ?? "").toLowerCase();
+      return name.includes(q) || id.includes(q);
+    });
+  }, [channels, search]);
+
+  const toggle = (id: string) =>
+    onChange(
+      selected.includes(id)
+        ? selected.filter((x) => x !== id)
+        : [...selected, id],
+    );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button variant="outline" size="sm" className="gap-1" />
+        }
+      >
+        Channels{selected.length ? ` (${selected.length})` : ""}
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-2" align="start">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search channels…"
+          className="mb-2"
+          aria-label="Search channels"
+        />
+        <div className="max-h-64 overflow-y-auto">
+          {list.length === 0 ? (
+            <div className="p-2 text-xs text-muted-foreground">No channels</div>
+          ) : (
+            list.map((c) => (
+              <label
+                key={c.channel_id}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
+              >
+                <Checkbox
+                  checked={selected.includes(c.channel_id)}
+                  onCheckedChange={() => toggle(c.channel_id)}
+                />
+                <span className="truncate">
+                  {c.channel_name ?? c.channel_id}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+        {selected.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1 border-t pt-2">
+            {selected.map((id) => (
+              <Badge
+                key={id}
+                variant="secondary"
+                className="gap-1 font-mono"
+              >
+                {id.length > 16 ? `${id.slice(0, 16)}…` : id}
+                <button
+                  type="button"
+                  aria-label={`Remove ${id}`}
+                  className="ml-0.5 rounded hover:bg-background/60"
+                  onClick={() => toggle(id)}
+                >
+                  ×
+                </button>
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function VideoMultiSelect({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [text, setText] = useState("");
+
+  const add = () => {
+    const ids = text
+      .split(/[,\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length) {
+      onChange(Array.from(new Set([...selected, ...ids])));
+    }
+    setText("");
+  };
+
+  const remove = (id: string) =>
+    onChange(selected.filter((x) => x !== id));
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Videos
+      </Label>
+      <Input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            add();
+          }
+        }}
+        placeholder="Add video IDs (comma/space)…"
+        className="w-60"
+        aria-label="Add video IDs"
+      />
+      <Button variant="outline" size="sm" onClick={add}>
+        Add
+      </Button>
+      {selected.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {selected.map((id) => (
+            <Badge
+              key={id}
+              variant="secondary"
+              className="gap-1 font-mono"
+            >
+              {id.length > 16 ? `${id.slice(0, 16)}…` : id}
+              <button
+                type="button"
+                aria-label={`Remove ${id}`}
+                className="ml-0.5 rounded hover:bg-background/60"
+                onClick={() => remove(id)}
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
         </div>
       ) : null}
     </div>

@@ -117,7 +117,8 @@ export function ChannelNetworkView({ channelId }: { channelId: string }) {
 
   const graphQuery = useNetworkGraph(
     runId ?? undefined,
-    channelId,
+    [channelId],
+    undefined,
     "either",
     projection,
     { retry: 1 },

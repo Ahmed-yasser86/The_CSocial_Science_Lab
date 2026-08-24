@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { Ban, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useJob, useCancelJob } from "@/services/queries";
 import { Card } from "@/components/ui/card";
@@ -10,10 +11,11 @@ import type { JobProgress } from "@/lib/types";
 
 export function formatJobStage(stage?: string): string {
   if (!stage) return "Running";
-  const map: Record<string, string> = {
-    "recommendation/start": "Starting recommendation scrape",
-    "recommendation/batch/start": "Starting batch recommendation scrape",
-    "recommendation/extracting": "Extracting recommendations",
+    const map: Record<string, string> = {
+      "recommendation/start": "Starting recommendation scrape",
+      "recommendation/batch/start": "Starting batch recommendation scrape",
+      "recommendation/batch/progress": "Scraping videos",
+      "recommendation/extracting": "Extracting recommendations",
     "recommendation/top_n": "Collecting top-N recommendations",
     "recommendation/dedup": "Deduplicating recommendations",
     "recommendation/edges_found": "Found recommendation edges",
@@ -22,7 +24,8 @@ export function formatJobStage(stage?: string): string {
     "expansion/start": "Starting expansion",
     "expansion/complete": "Expansion complete",
     "layer/scrape": "Scraping layer",
-    "layer/enrich": "Enriching layer",
+    "layer/enrich": "Enriching layer targets",
+    "layer/classify": "Classifying new nodes and edges",
     "layer/complete": "Layer complete",
   };
   return map[stage] ?? stage.replace(/_/g, " ");
@@ -42,7 +45,15 @@ export function JobProgressCard({
   const job = jobQuery.data;
   const status = job?.status;
 
-  if (status === "succeeded" && onSuccess) onSuccess(jobQuery.data);
+  const onSuccessRef = useRef(onSuccess);
+  onSuccessRef.current = onSuccess;
+  useEffect(() => {
+    if (status === "succeeded" && onSuccessRef.current) {
+      onSuccessRef.current(jobQuery.data);
+    }
+    // Fire once when the job transitions to a succeeded state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   const progress: JobProgress | undefined = job?.progress;
   const succeeded = progress?.succeeded ?? 0;

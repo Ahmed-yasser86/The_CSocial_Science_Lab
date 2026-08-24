@@ -27,23 +27,27 @@ export const networkFullKeys = {
     ["network", "full", "channels", runId ?? "all"] as const,
   graph: (
     runId?: string,
-    channelId?: string,
+    channelIds?: string[],
+    videoIds?: string[],
     channelScope?: string,
     projection: GraphProjection = "video",
     layerIndex?: number,
     connected?: string,
     scraped?: string,
+    includeSubRuns?: boolean,
   ) =>
     [
       "network",
       "graph",
       runId ?? "all",
-      channelId ?? "all",
+      (channelIds ?? []).join(",") || "all",
+      (videoIds ?? []).join(",") || "all",
       channelScope ?? "source",
       projection,
       layerIndex ?? "all",
       connected ?? "all",
       scraped ?? "all",
+      includeSubRuns ? "subruns" : "single",
     ] as const,
 };
 
@@ -77,6 +81,102 @@ export function getChannelProjection(
   return request(
     `/network/channels${toQuery({ run_id: runId })}`,
   );
+}
+
+export interface NetworkMatricesResponse {
+  community_matrix: {
+    labels: string[];
+    matrix: Record<string, Record<string, number>>;
+    totals: Record<string, number>;
+    label_meta: Record<string, string>;
+  };
+  layer_matrix: {
+    labels: number[];
+    rows: Array<{
+      layer_index: number;
+      edge_count: number;
+      unique_sources: number;
+      unique_targets: number;
+      unique_target_channels: number;
+    }>;
+  };
+}
+
+export function getNetworkMatrices(
+  channelIds?: string[],
+  runIds?: string[],
+): Promise<NetworkMatricesResponse> {
+  return request(
+    `/network/matrices${toQuery({
+      channel_ids: channelIds?.join(","),
+      run_ids: runIds?.join(","),
+    })}`,
+  );
+}
+
+export function useNetworkMatrices(channelIds?: string[], runIds?: string[]) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "full",
+      "matrices",
+      (channelIds ?? []).join(","),
+      (runIds ?? []).join(","),
+    ] as const,
+    queryFn: () => getNetworkMatrices(channelIds, runIds),
+    retry: 1,
+  });
+}
+
+export interface SamplingFeasibilityResponse {
+  entity_type: string;
+  population_size: number;
+  available_metric: number;
+  missing_metric: number;
+  coverage: number | null;
+  requested_size: number | null;
+  max_sample_size: number;
+  recommended_sample_size: number;
+}
+
+export function getSamplingFeasibility(params: {
+  entity_type: string;
+  channel_id?: string;
+  run_ids?: string[];
+  metric?: string;
+  requested_size?: number;
+}): Promise<SamplingFeasibilityResponse> {
+  return request(
+    `/network/sampling-feasibility${toQuery({
+      entity_type: params.entity_type,
+      channel_id: params.channel_id,
+      run_ids: params.run_ids?.join(","),
+      metric: params.metric,
+      requested_size: params.requested_size,
+    })}`,
+  );
+}
+
+export function useSamplingFeasibility(params: {
+  entity_type: string;
+  channel_id?: string;
+  run_ids?: string[];
+  metric?: string;
+  requested_size?: number;
+}) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "sampling-feasibility",
+      params.entity_type,
+      params.channel_id ?? "all",
+      (params.run_ids ?? []).join(","),
+      params.metric ?? "all",
+      params.requested_size ?? "none",
+    ] as const,
+    queryFn: () => getSamplingFeasibility(params),
+    retry: 1,
+  });
 }
 
 export function getNetworkExportUrl(
@@ -123,55 +223,65 @@ export function useChannelProjection(runId?: string) {
 
 export function getNetworkGraph(
   runId?: string,
-  channelId?: string,
+  channelIds?: string[],
+  videoIds?: string[],
   channelScope?: "source" | "target" | "either",
   projection: GraphProjection = "video",
   layerIndex?: number,
   connected?: "only" | "isolated",
   scraped?: "scraped" | "unscraped",
+  includeSubRuns?: boolean,
 ): Promise<NetworkGraphPayload | ChannelGraphPayload> {
   return request(
     `/network/graph${toQuery({
       run_id: runId,
-      channel_id: channelId,
+      channel_ids: channelIds?.length ? channelIds.join(",") : undefined,
+      video_ids: videoIds?.length ? videoIds.join(",") : undefined,
       channel_scope: channelScope,
       projection,
       layer_index: layerIndex,
       connected,
       scraped,
+      include_sub_runs: includeSubRuns ? "true" : undefined,
     })}`,
   );
 }
 
 export function useNetworkGraph(
   runId?: string,
-  channelId?: string,
+  channelIds?: string[],
+  videoIds?: string[],
   channelScope: "source" | "target" | "either" = "source",
   projection: GraphProjection = "video",
   options = {},
   layerIndex?: number,
   connected?: "only" | "isolated",
   scraped?: "scraped" | "unscraped",
+  includeSubRuns?: boolean,
 ) {
   return useQuery({
     queryKey: networkFullKeys.graph(
       runId,
-      channelId,
+      channelIds,
+      videoIds,
       channelScope,
       projection,
       layerIndex,
       connected,
       scraped,
+      includeSubRuns,
     ),
     queryFn: () =>
       getNetworkGraph(
         runId,
-        channelId,
+        channelIds,
+        videoIds,
         channelScope,
         projection,
         layerIndex,
         connected,
         scraped,
+        includeSubRuns,
       ),
     placeholderData: (previous) => previous,
     ...options,
