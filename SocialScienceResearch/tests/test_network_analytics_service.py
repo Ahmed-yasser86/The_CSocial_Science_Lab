@@ -159,6 +159,31 @@ def test_metrics_reciprocity_bidirectional_pair(service) -> None:
     assert metrics.density == 1.0
 
 
+def test_run_scoped_metrics_match_graph_view(service) -> None:
+    """Metrics must be computed from the same edge set the graph view renders.
+
+    Regression guard for the bug where ``metrics()`` used the cached raw
+    ``build_graph`` (which could disagree with / lag the displayed graph), so
+    density / reciprocity / clustering / components / communities / HITS did not
+    match the interactive graph. The metrics panel must agree with the graph.
+    """
+    import networkx as nx
+
+    for run_id in (None, "net_r1", "net_r2"):
+        metrics = service.metrics(run_id=run_id)
+        graph = service.graph(run_id=run_id)
+
+        assert metrics.node_count == graph.node_count == len(graph.nodes)
+        assert metrics.edge_count == graph.edge_count == len(graph.edges)
+
+        g = nx.DiGraph()
+        for e in graph.edges:
+            g.add_edge(e.source, e.target)
+        assert metrics.weakly_connected_components == len(
+            list(nx.weakly_connected_components(g))
+        )
+
+
 def test_metrics_degree_percentiles_on_known_distribution(service) -> None:
     metrics = service.metrics(run_id="net_r2")
     assert metrics.node_count == 4
@@ -317,30 +342,32 @@ def test_export_unknown_format_raises_value_error(service) -> None:
 # ----------------------------------------------------------------------
 # Service: export_network (formats, scopes)
 # ----------------------------------------------------------------------
-def test_export_network_csv_labeled_rows(service) -> None:
+def test_export_network_csv_edge_list(service) -> None:
     _seed_videos(service._repos)
     filename, content, media_type = service.export_network(format="csv")
     assert filename == "recommendations.csv"
     assert media_type == "text/csv"
     rows = content.strip().splitlines()
-    assert rows[0].startswith(
-        "source_video_id,recommended_video_id,position,run_id"
-    )
+    assert rows[0] == "source,target,weight,relationship_type"
     assert len(rows) == 8  # header + 7 edges
-    assert "Title a" in content
+    assert "a,b,1,recommendation" in content
+    assert "b,a,1,recommendation" in content
 
 
-def test_export_network_json_payload(service) -> None:
+def test_export_network_json_cytoscape_schema(service) -> None:
     _seed_videos(service._repos)
     filename, content, media_type = service.export_network(format="json")
     assert filename == "recommendations.json"
     assert media_type == "application/json"
     payload = json.loads(content)
-    assert payload["node_count"] == 6
-    assert payload["edge_count"] == 7
-    assert payload["scope"] == {"run_id": None, "run_ids": [], "video_ids": []}
-    assert len(payload["edges"]) == 7
-    assert payload["edges"][0]["source_title"] is not None
+    assert set(payload) == {"nodes", "links"}
+    assert len(payload["nodes"]) == 6
+    assert len(payload["links"]) == 7
+    node = payload["nodes"][0]["data"]
+    assert {"id", "label", "degree", "community_id", "centrality"} <= set(node)
+    link = payload["links"][0]["data"]
+    assert {"source", "target", "weight", "relationship_type"} <= set(link)
+    assert link["relationship_type"] == "recommendation"
 
 
 def test_export_network_scoped_by_run_ids(service) -> None:
@@ -385,6 +412,52 @@ def test_export_network_xlsx_workbook(service) -> None:
     assert rows[0][0] == "source_video_id"
     assert len(rows) == 8  # header + 7 edges
     assert any("Title a" in str(cell) for row in rows for cell in row if cell)
+
+
+def test_export_parity_with_graph_view(service) -> None:
+    """Export must contain exactly the nodes/edges the active graph view shows."""
+    _seed_videos(service._repos)
+    for params in (
+        {},
+        {"channel_id": "UC1"},
+        {"channel_scope": "target"},
+        {"connected": "only"},
+    ):
+        graph = service.graph(**params)
+        _, content, _ = service.export_network(format="json", **params)
+        payload = json.loads(content)
+        graph_node_ids = {n.video_id for n in graph.nodes}
+        export_node_ids = {n["data"]["id"] for n in payload["nodes"]}
+        assert export_node_ids == graph_node_ids, params
+        graph_edges = {(e.source, e.target) for e in graph.edges}
+        export_edges = {(l["data"]["source"], l["data"]["target"]) for l in payload["links"]}
+        assert export_edges == graph_edges, params
+
+
+def test_export_channel_projection_parity(service) -> None:
+    _seed_videos(service._repos)
+    cg = service.channel_graph()
+    _, content, _ = service.export_network(format="json", projection="channel")
+    payload = json.loads(content)
+    assert set(payload) == {"nodes", "links"}
+    cg_nodes = {n.channel_id for n in cg.nodes}
+    export_nodes = {n["data"]["id"] for n in payload["nodes"]}
+    assert export_nodes == cg_nodes
+    cg_edges = {(e.source, e.target) for e in cg.edges}
+    export_edges = {(l["data"]["source"], l["data"]["target"]) for l in payload["links"]}
+    assert export_edges == cg_edges
+
+
+def test_export_graphml_carries_node_attributes(service) -> None:
+    _seed_videos(service._repos)
+    filename, content, media_type = service.export_network(format="graphml")
+    assert filename == "recommendations.graphml"
+    assert "xml" in media_type
+    assert "<graphml" in content
+    # Spec: node attributes id/label/degree/community_id/centrality present.
+    assert "degree" in content
+    assert "centrality" in content
+    assert "community_id" in content
 
 
 # ----------------------------------------------------------------------
@@ -979,3 +1052,109 @@ def test_endpoint_channels(client) -> None:
     body = resp.json()
     assert [f["channel_id"] for f in body["channels"]] == ["UC1", "UC2", "UC3"]
     assert body["edge_count"] == 7
+
+
+# ----------------------------------------------------------------------
+# Service: sub-run lineage ("include sub-runs" toggle)
+# ----------------------------------------------------------------------
+def _seed_run_family(repos) -> None:
+    """A parent run with two sub-runs, one of which has a grandchild, plus an
+    unrelated run. Each run contributes a single distinct recommendation edge."""
+    runs = [
+        ("fam_root", None),
+        ("fam_child1", "fam_root"),
+        ("fam_child2", "fam_root"),
+        ("fam_grand", "fam_child1"),
+        ("fam_other", None),  # unrelated: must never appear in the family
+    ]
+    for run_id, parent in runs:
+        repos.runs.create_run(
+            CollectionRun(
+                run_id=run_id,
+                run_type=RunType.VIDEO,
+                target_url=f"https://www.youtube.com/watch?v={run_id}",
+                parent_run_id=parent,
+                started_at=utcnow(),
+                status="success",
+            )
+        )
+    edges = [
+        ("ff_1", "fam_root", "r0", "r1"),
+        ("ff_2", "fam_child1", "r1", "r2"),
+        ("ff_3", "fam_child2", "r2", "r3"),
+        ("ff_4", "fam_grand", "r3", "r4"),
+        ("ff_5", "fam_other", "x0", "x1"),
+    ]
+    for observation_id, run_id, source, target in edges:
+        repos.recommendations.save_recommendation(
+            RecommendationObservation(
+                observation_id=observation_id,
+                collection_run_id=run_id,
+                source_video_id=source,
+                recommended_video_id=target,
+                position=0,
+                status=RecommendationStatus.OBSERVED,
+                channel_id="UCX",
+                title=f"T {source}->{target}",
+            )
+        )
+
+
+def test_run_family_includes_all_descendants(service) -> None:
+    _seed_run_family(service._repos)
+    family = service.run_family("fam_root")
+    assert set(family) == {"fam_root", "fam_child1", "fam_child2", "fam_grand"}
+    assert "fam_other" not in family
+    # Cycle safety: re-resolving is idempotent and does not loop forever.
+    assert service.run_family("fam_root") == family
+
+
+def test_graph_with_sub_runs_folds_family(service) -> None:
+    _seed_run_family(service._repos)
+    family = service.run_family("fam_root")
+    g = service.graph(run_ids=family)
+    node_ids = {n.video_id for n in g.nodes}
+    assert {"r0", "r1", "r2", "r3", "r4"}.issubset(node_ids)
+    # Unrelated run is excluded from the family graph.
+    assert "x0" not in node_ids and "x1" not in node_ids
+
+
+def test_graph_single_run_excludes_sub_runs(service) -> None:
+    _seed_run_family(service._repos)
+    g = service.graph(run_id="fam_root")
+    # Without include_sub_runs the parent shows only its own edge.
+    assert {n.video_id for n in g.nodes} == {"r0", "r1"}
+
+
+def test_endpoint_graph_include_sub_runs(family_client) -> None:
+    single = family_client.get(
+        f"{PREFIX}/network/graph", params={"run_id": "fam_root"}
+    ).json()
+    assert {n["video_id"] for n in single["nodes"]} == {"r0", "r1"}
+
+    family = family_client.get(
+        f"{PREFIX}/network/graph",
+        params={"run_id": "fam_root", "include_sub_runs": "true"},
+    ).json()
+    family_ids = {n["video_id"] for n in family["nodes"]}
+    assert {"r0", "r1", "r2", "r3", "r4"}.issubset(family_ids)
+    assert "x0" not in family_ids and "x1" not in family_ids
+
+
+@pytest.fixture
+def family_client(tmp_path):
+    repo_settings = RepositorySettings(data_dir=str(tmp_path), dataset_name="net")
+    repos = build_excel_repositories(repo_settings)
+    _seed_recommendations(repos)
+    _seed_videos(repos)
+    _seed_runs(repos)
+    _seed_run_family(repos)
+    repos.store.close()
+    settings = SocialScienceSettings(
+        repository=repo_settings,
+        scraper=ScraperSettings(retries=1, retry_backoff=0.0, request_delay_seconds=0),
+        collection=CollectionSettings(collect_comments=False),
+        api=ApiSettings(prefix=PREFIX),
+    )
+    app = create_app(settings)
+    yield TestClient(app)

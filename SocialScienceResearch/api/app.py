@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 from io import BytesIO
@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from SocialScienceResearch.config.settings import SocialScienceSettings
 from SocialScienceResearch.domain.collection import CollectionSpec
 from SocialScienceResearch.domain.enums import RunType
+from SocialScienceResearch.domain.layer_models import LayerRun
 from SocialScienceResearch.domain.query import (
     OPERATOR_DESCRIPTIONS,
     ResearchQueryRequest,
@@ -163,6 +164,7 @@ def _services(
         "jobs": JobManager(
                 max_workers=settings.jobs.max_workers,
                 max_run_seconds=settings.jobs.max_run_seconds,
+                max_stall_seconds=settings.jobs.max_stall_seconds,
             ),
         "layer_scrape": LayerScrapeService(provider, repos, settings=settings),
     }
@@ -173,7 +175,29 @@ def _run_key(run) -> tuple[str, ...]:
 
 
 def _job_key(job) -> tuple[str, ...]:
-    return (job.created_at.isoformat(), job.job_id)
+    created = getattr(job, "created_at", None)
+    created_key = created.isoformat() if isinstance(created, datetime) else str(created)
+    return (created_key, getattr(job, "job_id", ""))
+
+
+def _job_payload(job) -> dict[str, Any]:
+    """Best-effort JSON-safe payload for a single job.
+
+    A single malformed job must never take down the whole list, so any
+    serialization failure falls back to a minimal but valid payload.
+    """
+    try:
+        return JobPayload.model_validate(job.to_dict()).model_dump(mode="json")
+    except Exception:
+        created = getattr(job, "created_at", None)
+        created_iso = created.isoformat() if isinstance(created, datetime) else None
+        return {
+            "job_id": getattr(job, "job_id", "unknown"),
+            "kind": getattr(job, "kind", ""),
+            "status": str(getattr(job, "status", "")),
+            "created_at": created_iso or datetime.now(timezone.utc).isoformat(),
+            "cancel_requested": bool(getattr(job, "cancel_requested", False)),
+        }
 
 
 def _video_key(video) -> tuple[str, ...]:
@@ -217,16 +241,22 @@ def _recommendation_edge_key(edge) -> tuple[str, ...]:
 
 
 def _paginate(
-    entities: list, *, cursor: str | None, page_size: int, key
+    entities: list, *, cursor: str | None, page_size: int, key, reverse: bool = False
 ) -> Paginated[Any]:
     """Slice a materialized entity list into a ``Paginated`` envelope.
 
     ``total`` is always populated because the repositories return in-memory
-    lists (research scale), making the count free.
+    lists (research scale), making the count free. ``reverse`` yields pages
+    newest-first (see ``page_sorted``).
     """
     full = sorted(entities, key=key)
     page = page_sorted(
-        full, cursor=cursor, page_size=page_size, key_func=key, total=len(full)
+        full,
+        cursor=cursor,
+        page_size=page_size,
+        key_func=key,
+        total=len(full),
+        reverse=reverse,
     )
     items = []
     for e in page.items:
@@ -252,6 +282,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Pre-warm the graph cache in the background so the first user request
+        # doesn't block on a cold ~20s rebuild (which the proxy times out on).
+        import asyncio as _asyncio
+        def _warm() -> None:
+            try:
+                from SocialScienceResearch.services.recommendation_graph_service import (
+                    RecommendationGraphService,
+                )
+                RecommendationGraphService(services["repos"]).build_graph(run_id=None)
+            except Exception:  # noqa: BLE001
+                pass
+        _asyncio.get_event_loop().run_in_executor(None, _warm)
         yield
         services["repos"].store.close()
         services["jobs"].shutdown()
@@ -266,6 +308,20 @@ def create_app(
     )
     app.state.services = services
     app.state.settings = settings
+
+    # Mutable runtime scraper config (UI can update without restart).
+    from SocialScienceResearch.config.runtime_config import RuntimeScraperConfig
+    app.state.runtime_scraper_config = RuntimeScraperConfig(
+        request_delay_seconds=settings.scraper.request_delay_seconds,
+        enrichment_concurrency=settings.scraper.enrichment_concurrency,
+        socket_timeout=settings.scraper.socket_timeout,
+        retries=settings.scraper.retries,
+        retry_backoff=settings.scraper.retry_backoff,
+    )
+    # Wire runtime config into services so they read mutable settings
+    # instead of frozen ones.
+    services["layer_scrape"].set_runtime_config(app.state.runtime_scraper_config)
+    services["recommendations"].set_runtime_config(app.state.runtime_scraper_config)
 
     app.add_middleware(
         CORSMiddleware,
@@ -328,6 +384,7 @@ def create_app(
         network_ext,
         project_items,
         samples,
+        scraper_config,
         search,
     )
 
@@ -342,6 +399,7 @@ def create_app(
     app.include_router(network_ext.router, prefix=prefix)
     app.include_router(project_items.router, prefix=prefix)
     app.include_router(samples.router, prefix=prefix)
+    app.include_router(scraper_config.router, prefix=prefix)
     app.include_router(search.router, prefix=prefix)
 
     # ------------------------------------------------------------------
@@ -499,18 +557,35 @@ def create_app(
             jobs, cursor=cursor, page_size=page_size, key_func=_job_key, total=len(jobs)
         )
         return Paginated(
-            items=[j.to_dict() for j in page.items],
+            items=[_job_payload(j) for j in page.items],
             next_cursor=page.next_cursor,
             has_more=page.has_more,
             total=page.total,
         )
+
+    @app.post(
+        f"{prefix}/jobs/kill-stuck",
+        tags=["jobs"],
+    )
+    def kill_stuck_jobs():
+        """Force-terminate every pending/running job and recycle the worker pool.
+
+        Jobs blocked on a stalled yt-dlp/network call cannot be cancelled
+        cooperatively (cancellation is only honoured at unit boundaries), so
+        this marks them terminal and abandons their worker threads, unblocking
+        the queue. Intended as an explicit operator escape hatch.
+
+        Declared before ``/jobs/{job_id}`` so the static path wins over the
+        ``{job_id}`` path parameter for POST requests.
+        """
+        return services["jobs"].kill_stuck()
 
     @app.get(f"{prefix}/jobs/{{job_id}}", tags=["jobs"], response_model=JobPayload)
     def get_job(job_id: str):
         job = services["jobs"].get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        return job.to_dict()
+        return _job_payload(job)
 
     @app.post(
         f"{prefix}/jobs/{{job_id}}/cancel",
@@ -538,7 +613,28 @@ def create_app(
             raise HTTPException(status_code=409, detail="Job is still running")
         if job.error:
             return {"error": job.error}
-        return _collect_payload_many(job.result)
+        result = job.result
+        # Layer-crawl and network-expansion jobs store a ``LayerRun`` anchor as
+        # their result (not a ``CollectionResult``), so the generic
+        # collection-shape serializer below would raise ``AttributeError`` and
+        # 500. Serialize those results explicitly and surface them as extra
+        # fields on the response (``JobResultPayload`` allows ``extra``).
+        if isinstance(result, LayerRun):
+            dumped = result.model_dump(mode="json")
+            return {
+                "run_id": dumped.get("layer_run_id"),
+                "run_type": "layer",
+                "status": str(dumped.get("status", "")),
+                "started_at": dumped.get("started_at"),
+                "finished_at": dumped.get("finished_at"),
+                "layer_run": dumped,
+            }
+        if isinstance(result, list) and result and all(
+            isinstance(r, LayerRun) for r in result
+        ):
+            dumped = [r.model_dump(mode="json") for r in result]
+            return {"target_count": len(dumped), "layer_runs": dumped}
+        return _collect_payload_many(result)
 
     @app.get(
         f"{prefix}/jobs/{{job_id}}/stream",
@@ -598,9 +694,20 @@ def create_app(
         run_type: RunType | None = None,
         cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
         page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+        sort_dir: str = Query(
+            "desc",
+            pattern="^(asc|desc)$",
+            description="Sort direction by started_at. 'desc' (default) shows the newest runs first.",
+        ),
     ):
         runs = repos.runs.list_runs(run_type=run_type)
-        return _paginate(runs, cursor=cursor, page_size=page_size, key=_run_key)
+        return _paginate(
+            runs,
+            cursor=cursor,
+            page_size=page_size,
+            key=_run_key,
+            reverse=(sort_dir == "desc"),
+        )
 
     @app.get(f"{prefix}/runs/{{run_id}}", tags=["runs"], response_model=RunPayload)
     def get_run(run_id: str):

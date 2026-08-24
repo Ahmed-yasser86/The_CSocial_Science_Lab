@@ -35,6 +35,8 @@ from SocialScienceResearch.api.schemas import (
 )
 from SocialScienceResearch.domain.dataset_models import ProjectItem
 from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
+from SocialScienceResearch.services.network_matrix_service import NetworkMatrixService
+from SocialScienceResearch.services.sampling_service import SamplingService
 from SocialScienceResearch.services.network_analytics_service import (
     ChannelGraphPayload,
     ChannelProjection,
@@ -83,6 +85,22 @@ def _items_service(request: Request) -> ProjectItemService:
         request,
         "project_items",
         lambda: ProjectItemService(request.app.state.services["repos"]),
+    )
+
+
+def _matrix_service(request: Request) -> NetworkMatrixService:
+    return get_service(
+        request,
+        "network_matrix",
+        lambda: NetworkMatrixService(request.app.state.services["repos"]),
+    )
+
+
+def _sampling_service(request: Request) -> SamplingService:
+    return get_service(
+        request,
+        "sampling",
+        lambda: SamplingService(request.app.state.services["repos"]),
     )
 
 
@@ -179,7 +197,9 @@ def network_metrics(
 def network_graph(
     request: Request,
     run_id: str | None = Query(None),
-    channel_id: str | None = Query(None, description="Filter edges by channel_id"),
+    channel_id: str | None = Query(None, description="Filter edges by a single channel_id"),
+    channel_ids: str | None = Query(None, description="Comma-separated channel_ids (multi-channel filter)"),
+    video_ids: str | None = Query(None, description="Comma-separated video_ids (multi-video ego filter)"),
     channel_scope: str = Query(
         "source",
         description="Which edge endpoint a channel filter matches: source|target|either",
@@ -200,6 +220,11 @@ def network_graph(
     scraped: str | None = Query(
         None,
         description="Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all",
+    ),
+    include_sub_runs: bool = Query(
+        False,
+        description="When a run_id is given, also fold in every descendant sub-run "
+        "(the full run lineage) instead of just the selected run's own edges.",
     ),
 ):
     """Enriched node/edge payload for the interactive graph UI.
@@ -235,20 +260,47 @@ def network_graph(
 
         raise HTTPException(status_code=400, detail="scraped must be scraped or unscraped")
     service = _service(request)
+    parsed_channel_ids = (
+        [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
+        if channel_ids
+        else None
+    )
+    parsed_video_ids = (
+        [v for v in (p.strip() for p in (video_ids or "").split(",")) if v]
+        if video_ids
+        else None
+    )
+    channel_filter_ids = parsed_channel_ids or (
+        [channel_id] if channel_id else None
+    )
+    # "Include sub-runs" expands a selected run into its full lineage so the
+    # graph shows the parent run together with every descendant it spawned.
+    # We resolve the family once and pass it as run_ids (with run_id cleared so
+    # the slice isn't double-filtered against only the parent).
+    if include_sub_runs and run_id:
+        family_ids = service.run_family(run_id)
+        run_id = None
+    else:
+        family_ids = None
     if projection == "channel":
         return service.channel_graph(
             run_id=run_id,
+            run_ids=family_ids,
             channel_id=channel_id,
+            channel_ids=channel_filter_ids,
             channel_scope=channel_scope,
             layer_index=layer_index,
         )
     return service.graph(
         run_id=run_id,
+        run_ids=family_ids,
         channel_id=channel_id,
+        channel_ids=channel_filter_ids,
         channel_scope=channel_scope,
         layer_index=layer_index,
         connected=connected,
         scraped=scraped,
+        video_ids=parsed_video_ids,
     )
 
 
@@ -307,13 +359,80 @@ def network_export(
     request: Request,
     format: str = Query("graphml"),
     run_id: str | None = Query(None),
+    channel_id: str | None = Query(None, description="Filter edges by a single channel_id"),
+    channel_ids: str | None = Query(None, description="Comma-separated channel_ids (multi-channel filter)"),
+    video_ids: str | None = Query(None, description="Comma-separated video_ids (multi-video ego filter)"),
+    channel_scope: str = Query(
+        "source",
+        description="Which edge endpoint a channel filter matches: source|target|either",
+    ),
+    projection: str = Query(
+        "video",
+        description="Graph projection: video | channel",
+    ),
+    layer_index: int | None = Query(
+        None,
+        ge=0,
+        description="Limit the slice to a single crawl layer (None = all layers)",
+    ),
+    connected: str | None = Query(
+        None,
+        description="Node filter: 'only' shows only connected nodes, 'isolated' shows only isolated nodes (None = all)",
+    ),
+    scraped: str | None = Query(
+        None,
+        description="Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all",
+    ),
 ):
-    """Download the recommendation network as graphml/edgelist/gexf.
+    """Download the *visible* recommendation network as graphml/edgelist/gexf/
+    csv/json/xlsx.
 
-    Unknown formats raise ``ValueError`` (mapped to a 400 by the app).
+    Accepts exactly the same scope/filter parameters as ``GET /network/graph``,
+    so the exported file mirrors the Active Filter View: only the nodes and
+    edges currently rendered (with channel scoping, layer de-duplication,
+    ``connected`` and ``scraped`` pruning) are included - no leaked or orphaned
+    nodes.
+
+    Unknown formats / projections raise ``ValueError`` (mapped to a 400).
     """
+    if projection not in ("video", "channel"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="projection must be video or channel")
+    if channel_scope not in ("source", "target", "either"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="channel_scope must be source, target or either")
+    if connected not in (None, "only", "isolated"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="connected must be only or isolated")
+    if scraped not in (None, "scraped", "unscraped"):
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="scraped must be scraped or unscraped")
+    parsed_channel_ids = (
+        [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
+        if channel_ids
+        else None
+    )
+    parsed_video_ids = (
+        [v for v in (p.strip() for p in (video_ids or "").split(",")) if v]
+        if video_ids
+        else None
+    )
+    channel_filter_ids = parsed_channel_ids or ([channel_id] if channel_id else None)
     filename, content, media_type = _service(request).export_network(
-        format=format, run_id=run_id
+        format=format,
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_filter_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        connected=connected,
+        scraped=scraped,
+        video_ids=parsed_video_ids,
+        projection=projection,
     )
     return StreamingResponse(
         iter([content]),
@@ -349,6 +468,13 @@ def network_export_to_project(body: NetworkExportToProjectRequest, request: Requ
         run_id=scope.run_id,
         run_ids=scope.run_ids or None,
         video_ids=scope.video_ids or None,
+        channel_id=body.channel_id,
+        channel_ids=body.channel_ids or None,
+        channel_scope=body.channel_scope,
+        layer_index=body.layer_index,
+        connected=body.connected,
+        scraped=body.scraped,
+        projection=body.projection,
     )
 
     now = utcnow()
@@ -421,3 +547,63 @@ def network_merge_options(request: Request):
 def network_channels(request: Request, run_id: str | None = Query(None)):
     """Lightweight channel projection: distinct channels seen on edges."""
     return _service(request).channel_projection(run_id=run_id)
+
+
+@router.get(
+    "/network/matrices",
+    tags=["network"],
+)
+def network_matrices(
+    request: Request,
+    channel_ids: str | None = Query(
+        None, description="Comma-separated channel ids (community matrix)"
+    ),
+    run_ids: str | None = Query(
+        None, description="Comma-separated run ids (layer matrix)"
+    ),
+    top_n: int = Query(50, ge=1, le=500, description="Max rows"),
+):
+    """Structural matrices for science reporting (US-60/61).
+
+    * ``community_matrix`` - channel x channel shared-commenter counts.
+    * ``layer_matrix`` - recommendation-edge structure per crawl layer.
+    """
+    svc = _matrix_service(request)
+    community = svc.community_matrix(
+        channel_ids=[c for c in (channel_ids or "").split(",") if c] or None,
+        top_n=top_n,
+    )
+    layer = svc.layer_matrix(
+        run_ids=[r for r in (run_ids or "").split(",") if r] or None,
+        top_n=top_n,
+    )
+    return {"community_matrix": community, "layer_matrix": layer}
+
+
+@router.get(
+    "/network/sampling-feasibility",
+    tags=["network"],
+)
+def network_sampling_feasibility(
+    request: Request,
+    entity_type: str = Query(..., description="'video' | 'comment'"),
+    channel_id: str | None = Query(None),
+    run_ids: str | None = Query(None, description="Comma-separated run ids"),
+    metric: str | None = Query(
+        None, description="views | likes | comments"
+    ),
+    requested_size: int | None = Query(None, ge=0),
+):
+    """Pre-sample planning (US-32/33): is the requested sample feasible?
+
+    Reports population size, metric availability/coverage, and a recommended
+    capped sample size before any sampling is performed.
+    """
+    svc = _sampling_service(request)
+    return svc.feasibility(
+        entity_type,
+        channel_id=channel_id,
+        run_ids=[r for r in (run_ids or "").split(",") if r] or None,
+        metric=metric,
+        requested_size=requested_size,
+    )

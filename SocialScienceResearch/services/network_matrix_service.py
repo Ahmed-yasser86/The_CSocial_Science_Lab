@@ -28,6 +28,10 @@ from SocialScienceResearch.services.commenter_overlap_service import (
 class NetworkMatrixService:
     """Structural matrix builder over the persisted corpus."""
 
+    # Cap on the number of channels considered for the default (unscoped)
+    # community matrix, to keep the O(channels^2) overlap responsive.
+    _MAX_DEFAULT_CHANNELS = 75
+
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
 
@@ -45,8 +49,18 @@ class NetworkMatrixService:
         if top_n < 1:
             raise ValueError("top_n must be >= 1")
         service = CommenterOverlapService(self._repos)
+        if channel_ids is None:
+            # The default (all-channels) community matrix is O(channels^2);
+            # cap to the first channels (sorted for determinism) so the default
+            # view stays responsive. Scope to explicit channels for a focused
+            # matrix.
+            all_channels = self._repos.channels.list_channels()
+            all_channels.sort(key=lambda c: c.channel_id)
+            channel_ids = [c.channel_id for c in all_channels[: self._MAX_DEFAULT_CHANNELS]]
+        if not channel_ids:
+            return {"labels": [], "matrix": {}, "totals": {}}
         result = service.overlap(
-            channel_ids=channel_ids or None,
+            channel_ids=channel_ids,
             metric="intersection",
             min_entities=1,
             min_shared=1,
@@ -63,7 +77,18 @@ class NetworkMatrixService:
         totals = {
             e.entity_id: e.commenter_count for e in channels.entities
         }
-        return {"labels": labels, "matrix": matrix, "totals": totals}
+        channel_names = {
+            c.channel_id: (c.title or "") for c in self._repos.channels.list_channels()
+        }
+        label_meta = {
+            label: channel_names.get(label, "") or label for label in labels
+        }
+        return {
+            "labels": labels,
+            "matrix": matrix,
+            "totals": totals,
+            "label_meta": label_meta,
+        }
 
     def layer_matrix(
         self,

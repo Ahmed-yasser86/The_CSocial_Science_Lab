@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
+
 import pytest
 
 from SocialScienceResearch.services.statistics_service import (
@@ -271,3 +274,114 @@ def test_metadata_carried_on_results() -> None:
     assert result.n == 2
     assert result.population_size == 3
     assert result.method == "arithmetic_mean"
+
+
+# ----------------------------------------------------------------------
+# Shape / relationship statistics (skewness, kurtosis, correlation, histogram)
+# ----------------------------------------------------------------------
+def test_skewness_symmetric_is_zero() -> None:
+    assert StatisticsService.skewness([1, 2, 3, 4, 5]).value == pytest.approx(0.0, abs=1e-9)
+
+
+def test_skewness_right_tailed_positive() -> None:
+    assert StatisticsService.skewness([1, 1, 1, 1, 100]).value > 0.5
+
+
+def test_skewness_undefined_for_n_lt_3() -> None:
+    assert StatisticsService.skewness([1, 2]).value is None
+    assert StatisticsService.skewness([]).value is None
+
+
+def test_kurtosis_heavy_tailed_exceeds_flat() -> None:
+    # A single extreme outlier gives a heavy right tail (positive excess kurtosis);
+    # a uniform sample is platykurtic (negative excess kurtosis).
+    heavy = [1, 2, 3, 4, 5, 6, 7, 8, 9, 100]
+    flat = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert StatisticsService.kurtosis(heavy).value > StatisticsService.kurtosis(flat).value
+
+
+def test_kurtosis_undefined_for_n_lt_4() -> None:
+    assert StatisticsService.kurtosis([1, 2, 3]).value is None
+
+
+def test_pearson_perfect_positive_and_negative() -> None:
+    assert StatisticsService.pearson([1, 2, 3, 4], [2, 4, 6, 8]).value == pytest.approx(1.0)
+    assert StatisticsService.pearson([1, 2, 3, 4], [4, 3, 2, 1]).value == pytest.approx(-1.0)
+
+
+def test_pearson_zero_variance_undefined() -> None:
+    assert StatisticsService.pearson([1, 1, 1, 1], [1, 2, 3, 4]).value is None
+    assert StatisticsService.pearson([1], [2]).value is None
+
+
+def test_spearman_monotonic_is_one() -> None:
+    # Perfectly monotonic (non-linear) -> Spearman rho == 1.
+    assert StatisticsService.spearman([1, 2, 3, 4, 5], [1, 4, 9, 16, 25]).value == pytest.approx(1.0)
+
+
+def test_spearman_matches_pearson_on_ranks() -> None:
+    # Spearman rho must equal Pearson r computed over the integer ranks.
+    xs = [10, 20, 30, 40]
+    ys = [3, 1, 4, 2]
+    # Ranks (1-based, ties averaged): xs -> [1,2,3,4]; ys -> [3,1,4,2].
+    assert StatisticsService.spearman(xs, ys).value == pytest.approx(
+        StatisticsService.pearson([1, 2, 3, 4], [3, 1, 4, 2]).value
+    )
+
+
+def test_spearman_against_linear_reference() -> None:
+    # Spearman rho must equal Pearson r computed over the integer ranks.
+    xs = [1, 2, 3, 4]
+    ys = [4, 3, 2, 1]  # perfect inverse rank correlation -> -1
+    assert StatisticsService.spearman(xs, ys).value == pytest.approx(-1.0)
+
+
+def test_shape_statistics_match_scipy_benchmark() -> None:
+    """Cross-check skewness/kurtosis/Pearson/Spearman against SciPy (verified)."""
+    np.random.seed(0)
+    x = (np.random.randn(200) * 10 + 50).tolist()
+    y = (np.arange(200) * 2.0 + np.random.randn(200) * 5).tolist()
+    from scipy import stats
+
+    assert StatisticsService.skewness(x).value == pytest.approx(
+        stats.skew(x, bias=False), rel=1e-9
+    )
+    assert StatisticsService.kurtosis(x).value == pytest.approx(
+        stats.kurtosis(x, fisher=True, bias=False), rel=1e-9
+    )
+    assert StatisticsService.pearson(x, y).value == pytest.approx(
+        stats.pearsonr(x, y).statistic, rel=1e-9
+    )
+    assert StatisticsService.spearman(x, y).value == pytest.approx(
+        stats.spearmanr(x, y).statistic, rel=1e-9
+    )
+
+
+def test_histogram_counts_sum_to_n() -> None:
+    result = StatisticsService.histogram([1, 2, 3, 4, 5], bins=5)
+    assert sum(b.count for b in result.bins) == 5
+    assert result.bin_count == 5
+
+
+def test_histogram_excludes_nulls_but_counts_population() -> None:
+    result = StatisticsService.histogram([1, None, 3, 4, 5])
+    assert result.n == 4
+    assert result.population_size == 5
+    assert sum(b.count for b in result.bins) == 4
+
+
+def test_histogram_single_value_one_bin() -> None:
+    result = StatisticsService.histogram([7, 7, 7])
+    assert len(result.bins) == 1
+    assert result.bins[0].count == 3
+
+
+def test_histogram_outliers_do_not_raise() -> None:
+    result = StatisticsService.histogram([0, 0, 0, 0, 0, 100000])
+    assert sum(b.count for b in result.bins) == 6
+
+
+def test_histogram_empty_is_safe() -> None:
+    result = StatisticsService.histogram([])
+    assert result.bins == []
+    assert result.population_size == 0

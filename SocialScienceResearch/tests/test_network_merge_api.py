@@ -395,8 +395,10 @@ def test_export_to_project_scoped_csv_labels_and_file(client):
         if line.strip()
     ]
     assert len(lines) == 6  # header + the 5 nm_r2 edges
-    assert lines[0].startswith("source_video_id,recommended_video_id")
-    assert "Title a2" in lines[1]
+    assert lines[0] == "source,target,weight,relationship_type"
+    # Each data line is exactly 4 fields; nm_r2 nodes appear as endpoints.
+    assert all(len(line.split(",")) == 4 for line in lines[1:])
+    assert any("a2" in line for line in lines[1:])
 
 
 def test_export_to_project_by_action_scope_edgelist(client):

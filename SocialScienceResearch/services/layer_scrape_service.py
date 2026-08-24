@@ -26,6 +26,7 @@ edges), which is fully backward compatible.
 
 from __future__ import annotations
 
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,13 +85,19 @@ class LayerScrapeService(RecommendationService):
     # ------------------------------------------------------------------
     # Layer anchors
     # ------------------------------------------------------------------
-    def list_layers(self) -> list[LayerRun]:
+    def list_layers(self, run_id: str | None = None) -> list[LayerRun]:
         """All crawl layers, oldest (layer 0) first.
 
         Network-expansion anchors (marked ``config_json["expansion"]``) are
         excluded so the crawl stepper stays a pure crawl view.
+
+        When ``run_id`` is supplied the result is scoped to that run's layer
+        family: the seed layer(s) whose ``parent_run_id`` equals ``run_id`` plus
+        every descendant reached through ``parent_layer_run_id``. This lets the
+        Lab's network-slice selector drive the Layer tab instead of always
+        showing the global newest layer.
         """
-        return sorted(
+        layers = sorted(
             [
                 layer
                 for layer in self._repos.layers.list_layer_runs()
@@ -98,6 +105,27 @@ class LayerScrapeService(RecommendationService):
             ],
             key=lambda layer: layer.layer_index,
         )
+        if run_id is None:
+            return layers
+
+        seeds = [
+            layer
+            for layer in layers
+            if layer.layer_index == 0 and layer.parent_run_id == run_id
+        ]
+        if not seeds:
+            return []
+        family_ids = {layer.layer_run_id for layer in seeds}
+        changed = True
+        while changed:
+            changed = False
+            for layer in layers:
+                if layer.layer_run_id in family_ids:
+                    continue
+                if layer.parent_layer_run_id in family_ids:
+                    family_ids.add(layer.layer_run_id)
+                    changed = True
+        return [layer for layer in layers if layer.layer_run_id in family_ids]
 
     def get_layer(self, layer_run_id: str) -> LayerRun | None:
         """Return one crawl layer by id, or ``None``.
@@ -169,6 +197,7 @@ class LayerScrapeService(RecommendationService):
         projection: str = "video",
         collect_comments: bool = True,
         concurrency: int | None = None,
+        max_recommendations_per_video: int | None = None,
         reporter: ProgressReporter | None = None,
     ) -> list[CollectionResult]:
         """Scrape the next crawl layer (job worker entry point).
@@ -196,6 +225,16 @@ class LayerScrapeService(RecommendationService):
         if parent_layer is not None:
             layer_index = parent_layer.layer_index + 1
             frontier = list(parent_layer.discovered_video_ids)
+            # If no videos were newly discovered (e.g. all targets already
+            # exist in the DB), fall back to the target videos from the
+            # parent layer's edges so the crawl can expand deeper.
+            if not frontier and parent_layer.run_ids:
+                seen = set()
+                for rid in parent_layer.run_ids:
+                    for e in self._repos.recommendations.list_recommendation_edges(run_id=rid):
+                        if e.recommended_video_id not in seen:
+                            seen.add(e.recommended_video_id)
+                            frontier.append(e.recommended_video_id)
             parent_run_id = parent_layer.parent_run_id or parent_run_id
         else:
             layer_index = 1
@@ -224,16 +263,15 @@ class LayerScrapeService(RecommendationService):
             parent_run_id=parent_run_id,
             layer_index=layer_index,
             concurrency=concurrency,
+            max_recommendations_per_video=max_recommendations_per_video,
             reporter=reporter,
         )
         run_ids = [r.run_id for r in results]
 
-        new_edges = [
-            e
-            for e in self._repos.recommendations.list_recommendation_edges()
-            if e.collection_run_id in run_ids
-        ]
-        throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
+        new_edges = self._repos.recommendations.list_recommendation_edges(
+            run_ids=run_ids,
+        )
+        throttle = _RateLimiter(self._request_delay())
         errors: list = []
         discovered = self._enrich_new_targets(
             new_edges,
@@ -245,6 +283,19 @@ class LayerScrapeService(RecommendationService):
             reporter=reporter,
         )
         comments_collected = sum(v["comments"] for v in discovered)
+
+        # ``discovered_video_ids`` = the videos deep-enriched *by this layer*
+        # (newly seen targets). Pre-existing targets can still add edges/channels
+        # without being "discovered" again, which is why a layer may report
+        # "0 discovered" yet several new edges - that is consistent, not a bug.
+        discovered_video_ids = [v["video"].video_id for v in discovered]
+
+        self._report(
+            reporter,
+            "layer/classify",
+            succeeded=len(discovered),
+            message=f"Classifying {len(new_edges)} edge(s) and {len(discovered)} enriched video(s)",
+        )
 
         report = self._classify(
             snapshot,
@@ -265,7 +316,7 @@ class LayerScrapeService(RecommendationService):
             finished_at=utcnow(),
             status=CollectionStatus.PARTIAL if errors else CollectionStatus.SUCCESS,
             frontier_video_ids=frontier,
-            discovered_video_ids=[v["video"].video_id for v in discovered],
+            discovered_video_ids=discovered_video_ids,
             run_ids=run_ids,
             comments_collected=comments_collected,
             summary=report.counts,
@@ -296,6 +347,16 @@ class LayerScrapeService(RecommendationService):
                 f"{len(new_edges)} edge(s), {len(discovered)} video(s) enriched"
             ),
         )
+
+        # Warm the graph cache so the user's post-crawl requests are instant
+        # instead of hitting a cold ~20s rebuild that the proxy times out on.
+        try:
+            from .recommendation_graph_service import RecommendationGraphService
+            RecommendationGraphService.clear_graph_cache()
+            RecommendationGraphService(self._repos).build_graph(run_id=None)
+        except Exception:  # noqa: BLE001 – best-effort; never block the crawl result
+            logger.debug("Graph cache warm-up after layer crawl failed", exc_info=True)
+
         return results
 
     def relation_report(
@@ -321,7 +382,25 @@ class LayerScrapeService(RecommendationService):
                 discovered.append(
                     {"video": video, "comments": 0, "run_id": None}
                 )
-        snap = snapshot or self._snapshot(exclude_run_ids=set(layer.run_ids))
+        if snapshot is None:
+            # Baseline = the state that existed BEFORE this layer was crawled.
+            # Exclude this layer's own runs AND every *later* layer in the same
+            # crawl family, so a layer's "what was added" report is stable and
+            # independent of layers crawled afterwards. Otherwise layer N's
+            # counts get polluted by layer N+1's edges/nodes and comparing
+            # layers (layer 1 vs layer 2) yields contradictory matrices.
+            exclude = set(layer.run_ids)
+            family_root = layer.parent_run_id
+            if family_root is not None:
+                for sibling in self.list_layers(family_root):
+                    if (
+                        sibling.layer_run_id != layer.layer_run_id
+                        and (sibling.layer_index or 0) > (layer.layer_index or 0)
+                    ):
+                        exclude |= set(sibling.run_ids)
+            snap = self._snapshot(exclude_run_ids=exclude)
+        else:
+            snap = snapshot
         return self._classify(
             snap,
             new_edges,
@@ -405,11 +484,9 @@ class LayerScrapeService(RecommendationService):
     def expansion_stats(self, layer: LayerRun) -> ExpansionStats:
         """Overall + per-video statistics for one expansion action."""
         action = self.expansion_payload(layer)
-        edges = [
-            e
-            for e in self._repos.recommendations.list_recommendation_edges()
-            if e.collection_run_id in layer.run_ids
-        ]
+        edges = self._repos.recommendations.list_recommendation_edges(
+            run_ids=layer.run_ids,
+        )
         graph = nx.DiGraph()
         for edge in edges:
             graph.add_edge(edge.source_video_id, edge.recommended_video_id)
@@ -509,12 +586,10 @@ class LayerScrapeService(RecommendationService):
             reporter=reporter,
         )
         run_ids = [result.run_id for result in results]
-        new_edges = [
-            e
-            for e in self._repos.recommendations.list_recommendation_edges()
-            if e.collection_run_id in run_ids
-        ]
-        throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
+        new_edges = self._repos.recommendations.list_recommendation_edges(
+            run_ids=run_ids,
+        )
+        throttle = _RateLimiter(self._request_delay())
         errors: list = []
         discovered = self._enrich_new_targets(
             new_edges,
@@ -529,6 +604,9 @@ class LayerScrapeService(RecommendationService):
         )
         comments_collected = sum(item["comments"] for item in discovered)
         discovered_ids = {item["video"].video_id for item in discovered}
+
+        # ``discovered_video_ids`` = videos deep-enriched *by this expansion*.
+        discovered_video_ids = list(discovered_ids)
 
         report = self._classify(
             snapshot,
@@ -549,7 +627,7 @@ class LayerScrapeService(RecommendationService):
             finished_at=utcnow(),
             status=CollectionStatus.PARTIAL if errors else CollectionStatus.SUCCESS,
             frontier_video_ids=frontier,
-            discovered_video_ids=[item["video"].video_id for item in discovered],
+            discovered_video_ids=discovered_video_ids,
             run_ids=run_ids,
             comments_collected=comments_collected,
             summary=report.counts,
@@ -772,10 +850,24 @@ class LayerScrapeService(RecommendationService):
         """The frontier of a seed run: its videos or distinct edge sources.
 
         Mirrors the resolution ``POST /network/scrape/run`` uses
-        (``api/app.py``).
+        (``api/app.py``).  For CHANNEL runs the frontier includes videos
+        scraped by the parent run *and* the source videos from all its
+        sub-runs (child video scrapes), since the parent run itself never
+        touches videos directly.
         """
         if run.run_type == RunType.CHANNEL:
-            return [v.video_id for v in self._repos.videos.list_videos_by_run(run.run_id)]
+            video_ids: set[str] = {
+                v.video_id
+                for v in self._repos.videos.list_videos_by_run(run.run_id)
+            }
+            # Also include source videos from sub-runs (the videos that were
+            # actually scraped, not the enriched targets).
+            for sub in self._repos.runs.list_sub_runs(run.run_id):
+                for e in self._repos.recommendations.list_recommendation_edges(
+                    run_id=sub.run_id
+                ):
+                    video_ids.add(e.source_video_id)
+            return sorted(video_ids)
         return sorted(
             {
                 e.source_video_id
@@ -796,7 +888,7 @@ class LayerScrapeService(RecommendationService):
         """
         exclude = exclude_run_ids or set()
         edges = self._repos.recommendations.list_recommendation_edges(
-            exclude_run_ids=list(exclude)
+            exclude_run_ids=list(exclude) if exclude else None,
         )
         old_graph = nx.DiGraph()
         for edge in edges:
@@ -888,13 +980,26 @@ class LayerScrapeService(RecommendationService):
         )
         if not new_targets:
             return []
+        # Bound the heavy deep-enrichment so a layer crawl over hundreds of new
+        # targets always completes (and forms the LayerRun) instead of hanging
+        # on a slow/degraded yt-dlp. Edges are already persisted; only the
+        # per-video enrichment is capped. 0 = unlimited.
+        cap = self._max_enrich_targets()
+        if cap and len(new_targets) > cap:
+            logger.info(
+                "Capping layer deep-enrichment to %d of %d new targets "
+                "(raise max_enrich_targets to enrich more)",
+                cap,
+                len(new_targets),
+            )
+            new_targets = new_targets[:cap]
 
         target_run: dict[str, str | None] = {}
         for edge in new_edges:
             target_run.setdefault(edge.recommended_video_id, edge.collection_run_id)
         first_run_id = run_ids[0] if run_ids else None
         effective = comment_config or self._effective_comment_config()
-        concurrency = max(1, self._settings.scraper.enrichment_concurrency)
+        concurrency = max(1, self._enrichment_concurrency())
         total = len(new_targets)
 
         self._report(
@@ -907,109 +1012,142 @@ class LayerScrapeService(RecommendationService):
         enriched: list[dict[str, Any]] = []
         completed = 0
         order = {video_id: index for index, video_id in enumerate(new_targets)}
-        with ThreadPoolExecutor(
+        pending_futures: dict = {}
+        pool = ThreadPoolExecutor(
             max_workers=concurrency, thread_name_prefix="layer-enrich"
-        ) as pool:
-            futures = {
-                pool.submit(
-                    self._fetch_target_video, video_id, throttle
-                ): video_id
-                for video_id in new_targets
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                video_id = result["video_id"]
-                run_id = target_run.get(video_id) or first_run_id
-                run = self._repos.runs.get_run(run_id) if run_id else None
-                if run is None:
-                    completed += 1
-                    self._report(
-                        reporter,
-                        "layer/enrich",
-                        succeeded=completed,
-                        message=f"Enriched {completed}/{total} target video(s)",
-                    )
-                    continue
-                if result["error"] is not None:
-                    exc = result["error"]
-                    self._record_error(
-                        run,
-                        EntityType.VIDEO,
-                        video_id,
-                        exc.error_type,
-                        str(exc),
-                    )
-                    errors.append(exc)
-                    self._drop_failed_stub(video_id)
-                    completed += 1
-                    self._report(
-                        reporter,
-                        "layer/enrich",
-                        succeeded=completed,
-                        message=f"Enriched {completed}/{total} target video(s)",
-                    )
-                    continue
-                info = result["info"]
-                video = normalize_video(info, run.run_id)
-                if video is None:
-                    self._record_error(
-                        run,
-                        EntityType.VIDEO,
-                        video_id,
-                        ErrorType.VALIDATION,
-                        "Could not resolve a video id for the layer target.",
-                    )
-                    self._drop_failed_stub(video_id)
-                    completed += 1
-                    self._report(
-                        reporter,
-                        "layer/enrich",
-                        succeeded=completed,
-                        message=f"Enriched {completed}/{total} target video(s)",
-                    )
-                    continue
+        )
+        try:
+            for video_id in new_targets:
+                pending_futures[
+                    pool.submit(self._fetch_target_video, video_id, throttle)
+                ] = video_id
 
-                # A target that already exists keeps its original provenance:
-                # the run that FIRST observed it, never the run that re-scraped.
-                existing = self._repos.videos.get_video(video_id)
-                if (
-                    existing is not None
-                    and existing.first_observed_run_id is not None
-                ):
-                    video.first_observed_run_id = existing.first_observed_run_id
-                self._repos.videos.upsert_video(video)
-                obs = normalize_video_observation(info, run.run_id, video.video_id)
-                if obs is not None:
-                    self._repos.videos.save_video_observation(obs)
-
-                channel = normalize_channel(info, run.run_id)
-                if channel is not None:
-                    self._repos.channels.upsert_channel(channel)
-
-                comment_count = 0
-                if collect_comments and info.get("comments"):
-                    comment_count = self._persist_comments(
-                        run,
-                        info["comments"],
-                        video.video_id,
-                        errors,
-                        effective,
-                        reporter,
-                    )
-                enriched.append(
-                    {
-                        "video": video,
-                        "comments": comment_count,
-                        "run_id": run.run_id,
-                    }
+            # Process futures in batches: wait up to 120 s per round so a
+            # single stalled yt-dlp call never freezes the entire layer.
+            _FUTURE_TIMEOUT = 120
+            while pending_futures:
+                done, _ = concurrent.futures.wait(
+                    pending_futures, timeout=_FUTURE_TIMEOUT,
                 )
-                completed += 1
-                self._report(
-                    reporter,
-                    "layer/enrich",
-                    succeeded=completed,
-                    message=f"Enriched {completed}/{total} target video(s)",
-                )
+                if not done:
+                    # All pending futures stalled – cancel them and move on.
+                    for fut in list(pending_futures):
+                        fut.cancel()
+                    for vid in pending_futures.values():
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "layer/enrich",
+                            succeeded=completed,
+                            message=f"Enriched {completed}/{total} target video(s) (stalled videos skipped)",
+                        )
+                    break
+                for future in done:
+                    video_id = pending_futures.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "layer/enrich",
+                            succeeded=completed,
+                            message=f"Enriched {completed}/{total} target video(s)",
+                        )
+                        continue
+                    run_id = target_run.get(video_id) or first_run_id
+                    run = self._repos.runs.get_run(run_id) if run_id else None
+                    if run is None:
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "layer/enrich",
+                            succeeded=completed,
+                            message=f"Enriched {completed}/{total} target video(s)",
+                        )
+                        continue
+                    if result["error"] is not None:
+                        exc = result["error"]
+                        self._record_error(
+                            run,
+                            EntityType.VIDEO,
+                            video_id,
+                            exc.error_type,
+                            str(exc),
+                        )
+                        errors.append(exc)
+                        self._drop_failed_stub(video_id)
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "layer/enrich",
+                            succeeded=completed,
+                            message=f"Enriched {completed}/{total} target video(s)",
+                        )
+                        continue
+                    info = result["info"]
+                    video = normalize_video(info, run.run_id)
+                    if video is None:
+                        self._record_error(
+                            run,
+                            EntityType.VIDEO,
+                            video_id,
+                            ErrorType.VALIDATION,
+                            "Could not resolve a video id for the layer target.",
+                        )
+                        self._drop_failed_stub(video_id)
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "layer/enrich",
+                            succeeded=completed,
+                            message=f"Enriched {completed}/{total} target video(s)",
+                        )
+                        continue
+
+                    # A target that already exists keeps its original provenance:
+                    # the run that FIRST observed it, never the run that re-scraped.
+                    existing = self._repos.videos.get_video(video_id)
+                    if (
+                        existing is not None
+                        and existing.first_observed_run_id is not None
+                    ):
+                        video.first_observed_run_id = existing.first_observed_run_id
+                    self._repos.videos.upsert_video(video)
+                    obs = normalize_video_observation(info, run.run_id, video.video_id)
+                    if obs is not None:
+                        self._repos.videos.save_video_observation(obs)
+
+                    channel = normalize_channel(info, run.run_id)
+                    if channel is not None:
+                        self._repos.channels.upsert_channel(channel)
+
+                    comment_count = 0
+                    if collect_comments and info.get("comments"):
+                        comment_count = self._persist_comments(
+                            run,
+                            info["comments"],
+                            video.video_id,
+                            errors,
+                            effective,
+                            reporter,
+                        )
+                    enriched.append(
+                        {
+                            "video": video,
+                            "comments": comment_count,
+                            "run_id": run.run_id,
+                        }
+                    )
+                    completed += 1
+            self._report(
+                reporter,
+                "layer/enrich",
+                succeeded=completed,
+                message=f"Enriched {completed}/{total} target video(s)",
+            )
+        finally:
+            pool.shutdown(wait=False)
 
         enriched.sort(key=lambda item: order[item["video"].video_id])
         return enriched

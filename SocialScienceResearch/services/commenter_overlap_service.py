@@ -20,6 +20,7 @@ module's "observed, never estimated" rule).
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -257,6 +258,13 @@ def _metric_value(metric: str, pair: "PairOverlap") -> float | None:
 class CommenterOverlapService:
     """Commenter-overlap analytics. Pure reads; no writes."""
 
+    # The overlap scan reads every comment plus the video/channel maps, which is
+    # the dominant cost for audience-duplication analytics. The underlying
+    # comments are immutable between scrapes, so we memoize per scope; a short
+    # TTL bounds staleness after a new collection lands.
+    _overlap_cache: dict[tuple, tuple[float, "CommenterOverlapResult"]] = {}
+    _OVERLAP_TTL_SECONDS = 60.0
+
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
 
@@ -290,6 +298,40 @@ class CommenterOverlapService:
         if not video_ids and not channel_ids:
             raise ValueError("Provide at least one of video_ids or channel_ids")
 
+        cache_key = (
+            tuple(sorted(video_ids)),
+            tuple(sorted(channel_ids)),
+            metric,
+            min_entities,
+            min_shared,
+            top_n,
+        )
+        cached = self._overlap_cache.get(cache_key)
+        if cached is not None and (time.time() - cached[0]) < self._OVERLAP_TTL_SECONDS:
+            return cached[1]
+
+        result = self._compute_overlap(
+            video_ids=video_ids,
+            channel_ids=channel_ids,
+            metric=metric,
+            min_entities=min_entities,
+            min_shared=min_shared,
+            top_n=top_n,
+        )
+        self._overlap_cache[cache_key] = (time.time(), result)
+        return result
+
+    def _compute_overlap(
+        self,
+        *,
+        video_ids: list[str],
+        channel_ids: list[str],
+        metric: str,
+        min_entities: int,
+        min_shared: int,
+        top_n: int,
+    ) -> CommenterOverlapResult:
+        """Uncached overlap computation (see :meth:`overlap`)."""
         comments = self._repos.comments.list_comments()
         videos = {v.video_id: v for v in self._repos.videos.list_videos()}
         channels = {c.channel_id: c for c in self._repos.channels.list_channels()}

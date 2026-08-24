@@ -292,6 +292,36 @@ def test_collect_job_succeeds_and_returns_results(tmp_path) -> None:
     assert body["results"][0]["status"] == CollectionStatus.SUCCESS.value
 
 
+def test_expansion_job_result_returns_200(tmp_path) -> None:
+    """GET /jobs/{id}/result must not 500 for expansion/layer jobs.
+
+    Expansion and layer-crawl jobs store a ``LayerRun`` anchor (not a
+    ``CollectionResult``) as their result. The generic collection serializer
+    used to assume a ``CollectionResult`` and raised ``AttributeError``
+    (500). This is the recurring error seen on the jobs API for network work.
+    """
+    app = create_app(_settings(tmp_path), provider=InstantProvider())
+    client = TestClient(app)
+
+    resp = client.post(
+        f"{PREFIX}/network/expansion/scrape-all",
+        json={"video_ids": [VIDEO_URL.split("v=")[-1]], "filters": {"projection": "video"}},
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+
+    job = _wait_for_terminal(client, job_id)
+    assert job["status"] == "succeeded"
+
+    result_resp = client.get(f"{PREFIX}/jobs/{job_id}/result")
+    assert result_resp.status_code == 200
+    body = result_resp.json()
+    assert "layer_run" in body or "layer_runs" in body
+
+    # The list endpoint must remain healthy with the real job present.
+    assert client.get(f"{PREFIX}/jobs").status_code == 200
+
+
 def test_collect_job_cancel_while_running(tmp_path) -> None:
     started = threading.Event()
     gate = threading.Event()
@@ -354,6 +384,39 @@ def test_job_stream_404_unknown_job(tmp_path) -> None:
     client = TestClient(app)
     resp = client.get(f"{PREFIX}/jobs/nope/stream")
     assert resp.status_code == 404
+
+
+def test_jobs_list_survives_malformed_job(client) -> None:
+    """GET /jobs must never 500 because one job has an anomalous state.
+
+    Regression guard for the ``Internal Server Error`` seen on ``GET /jobs``:
+    a single job with a non-datetime ``created_at`` (or a non-serializable
+    ``progress``) used to crash ``_job_key`` / payload validation for the whole
+    list. The list now degrades that job to a minimal payload instead.
+    """
+    from SocialScienceResearch.services.jobs import Job
+
+    manager = client.app.state.services["jobs"]
+
+    good = Job(job_id="job_good", kind="layer")
+    manager._jobs[good.job_id] = good
+
+    bad_date = Job(job_id="job_bad_date", kind="recommendation")
+    bad_date.created_at = {"not": "a date"}  # force a non-datetime timestamp
+    manager._jobs[bad_date.job_id] = bad_date
+
+    bad_progress = Job(job_id="job_bad_progress", kind="collect")
+    bad_progress.progress = {"stages": {1, 2, 3}}  # non-JSON-serializable value
+    manager._jobs[bad_progress.job_id] = bad_progress
+
+    resp = client.get(f"{PREFIX}/jobs")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    assert {i["job_id"] for i in items} == {
+        "job_good",
+        "job_bad_date",
+        "job_bad_progress",
+    }
 
 
 def _parse_sse(lines) -> list[dict[str, Any]]:

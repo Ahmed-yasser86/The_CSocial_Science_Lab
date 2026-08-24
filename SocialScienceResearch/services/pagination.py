@@ -101,6 +101,20 @@ def _lower_bound(
     return lo
 
 
+def _lower_bound_inclusive(
+    items: Sequence[T], keys: tuple[str, ...], key_func: Callable[[T], tuple[str, ...]]
+) -> int:
+    """First index whose cursor key tuple is greater than or equal to ``keys``."""
+    lo, hi = 0, len(items)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if key_func(items[mid]) < keys:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 def page_sorted(
     items: list[T],
     *,
@@ -108,26 +122,54 @@ def page_sorted(
     page_size: int,
     key_func: Callable[[T], tuple[str, ...]],
     total: int | None = None,
+    reverse: bool = False,
 ) -> Paginated[T]:
     """Slice an already-sorted list into one page.
 
     ``items`` must be sorted ascending by ``key_func``. ``total`` defaults to
     ``len(items)`` (in-memory list); pass ``None`` explicitly to signal that
     counting is expensive.
+
+    When ``reverse`` is True the pages are yielded newest-first (descending
+    order) while still using stable cursor-based navigation: internally the
+    ascending list is walked from the end, and each emitted page is reversed so
+    callers receive items in descending order.
     """
     page_size = max(1, int(page_size))
     if not items:
         return Paginated(items=[], next_cursor=None, has_more=False, total=total or 0)
 
-    start = 0
-    if cursor is not None:
+    if not reverse:
+        start = 0
+        if cursor is not None:
+            n_keys = len(key_func(items[0]))
+            keys = decode_cursor(cursor, n_keys)
+            start = _lower_bound(items, keys, key_func)
+
+        page = items[start : start + page_size]
+        has_more = start + page_size < len(items)
+        next_cursor = encode_cursor(key_func(page[-1])) if page and has_more else None
+        return Paginated(
+            items=page,
+            next_cursor=next_cursor,
+            has_more=has_more,
+            total=len(items) if total is None else total,
+        )
+
+    # Reverse (descending) pagination: walk the ascending list from the end.
+    # The cursor encodes the smallest key already returned; the next page
+    # covers items strictly before it (first index with key >= cursor).
+    if cursor is None:
+        end = len(items)
+        start = max(0, len(items) - page_size)
+    else:
         n_keys = len(key_func(items[0]))
         keys = decode_cursor(cursor, n_keys)
-        start = _lower_bound(items, keys, key_func)
-
-    page = items[start : start + page_size]
-    has_more = start + page_size < len(items)
-    next_cursor = encode_cursor(key_func(page[-1])) if page and has_more else None
+        end = _lower_bound_inclusive(items, keys, key_func)
+        start = max(0, end - page_size)
+    page = list(reversed(items[start:end]))
+    has_more = start > 0
+    next_cursor = encode_cursor(key_func(items[start])) if page and has_more else None
     return Paginated(
         items=page,
         next_cursor=next_cursor,

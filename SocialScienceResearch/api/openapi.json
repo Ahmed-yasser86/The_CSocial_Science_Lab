@@ -2287,7 +2287,7 @@
           "network"
         ],
         "summary": "List Layers",
-        "description": "Paginated crawl layers, newest layer first (``layer_index`` desc).",
+        "description": "Paginated crawl layers, newest layer first (``layer_index`` desc).\n\nWhen ``run_id`` is supplied the result is scoped to that run's layer family\n(the seed layer whose ``parent_run_id`` equals ``run_id`` plus descendants).",
         "operationId": "list_layers_api_v1_social_science_network_layers_get",
         "parameters": [
           {
@@ -2319,6 +2319,24 @@
               "default": 50,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Scope to a run's layer family",
+              "title": "Run Id"
+            },
+            "description": "Scope to a run's layer family"
           }
         ],
         "responses": {
@@ -2437,7 +2455,7 @@
           "network"
         ],
         "summary": "Layer Graph",
-        "description": "The layer's graph in the requested projection.\n\nLayer 0 (a seed with no scraped edges) is served as the seed run's slice\n(``run_id`` scoping); deeper layers are scoped by ``layer_index`` so the\nresearcher sees exactly what that crawl added.",
+        "description": "The layer's graph in the requested projection.\n\nLayer 0 (a seed with no scraped edges) is served as the seed run's slice\n(``run_id`` scoping); deeper layers are scoped by the layer's ``run_ids``\nso the researcher sees exactly what that specific crawl added (not all\nlayers with the same ``layer_index``).",
         "operationId": "layer_graph_api_v1_social_science_network_layer__layer_run_id__graph_get",
         "parameters": [
           {
@@ -2637,10 +2655,46 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter edges by channel_id",
+              "description": "Filter edges by a single channel_id",
               "title": "Channel Id"
             },
-            "description": "Filter edges by channel_id"
+            "description": "Filter edges by a single channel_id"
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated channel_ids (multi-channel filter)",
+              "title": "Channel Ids"
+            },
+            "description": "Comma-separated channel_ids (multi-channel filter)"
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated video_ids (multi-video ego filter)",
+              "title": "Video Ids"
+            },
+            "description": "Comma-separated video_ids (multi-video ego filter)"
           },
           {
             "name": "channel_scope",
@@ -2720,6 +2774,18 @@
               "title": "Scraped"
             },
             "description": "Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all"
+          },
+          {
+            "name": "include_sub_runs",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "When a run_id is given, also fold in every descendant sub-run (the full run lineage) instead of just the selected run's own edges.",
+              "default": false,
+              "title": "Include Sub Runs"
+            },
+            "description": "When a run_id is given, also fold in every descendant sub-run (the full run lineage) instead of just the selected run's own edges."
           }
         ],
         "responses": {
@@ -2916,7 +2982,7 @@
           "network"
         ],
         "summary": "Network Export",
-        "description": "Download the recommendation network as graphml/edgelist/gexf.\n\nUnknown formats raise ``ValueError`` (mapped to a 400 by the app).",
+        "description": "Download the *visible* recommendation network as graphml/edgelist/gexf/\ncsv/json/xlsx.\n\nAccepts exactly the same scope/filter parameters as ``GET /network/graph``,\nso the exported file mirrors the Active Filter View: only the nodes and\nedges currently rendered (with channel scoping, layer de-duplication,\n``connected`` and ``scraped`` pruning) are included - no leaked or orphaned\nnodes.\n\nUnknown formats / projections raise ``ValueError`` (mapped to a 400).",
         "operationId": "network_export_api_v1_social_science_network_export_get",
         "parameters": [
           {
@@ -2944,6 +3010,139 @@
               ],
               "title": "Run Id"
             }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter edges by a single channel_id",
+              "title": "Channel Id"
+            },
+            "description": "Filter edges by a single channel_id"
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated channel_ids (multi-channel filter)",
+              "title": "Channel Ids"
+            },
+            "description": "Comma-separated channel_ids (multi-channel filter)"
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated video_ids (multi-video ego filter)",
+              "title": "Video Ids"
+            },
+            "description": "Comma-separated video_ids (multi-video ego filter)"
+          },
+          {
+            "name": "channel_scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Which edge endpoint a channel filter matches: source|target|either",
+              "default": "source",
+              "title": "Channel Scope"
+            },
+            "description": "Which edge endpoint a channel filter matches: source|target|either"
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Graph projection: video | channel",
+              "default": "video",
+              "title": "Projection"
+            },
+            "description": "Graph projection: video | channel"
+          },
+          {
+            "name": "layer_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Limit the slice to a single crawl layer (None = all layers)",
+              "title": "Layer Index"
+            },
+            "description": "Limit the slice to a single crawl layer (None = all layers)"
+          },
+          {
+            "name": "connected",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Node filter: 'only' shows only connected nodes, 'isolated' shows only isolated nodes (None = all)",
+              "title": "Connected"
+            },
+            "description": "Node filter: 'only' shows only connected nodes, 'isolated' shows only isolated nodes (None = all)"
+          },
+          {
+            "name": "scraped",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all",
+              "title": "Scraped"
+            },
+            "description": "Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all"
           }
         ],
         "responses": {
@@ -3108,6 +3307,200 @@
                 "schema": {
                   "$ref": "#/components/schemas/ChannelProjection"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/matrices": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Matrices",
+        "description": "Structural matrices for science reporting (US-60/61).\n\n* ``community_matrix`` - channel x channel shared-commenter counts.\n* ``layer_matrix`` - recommendation-edge structure per crawl layer.",
+        "operationId": "network_matrices_api_v1_social_science_network_matrices_get",
+        "parameters": [
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated channel ids (community matrix)",
+              "title": "Channel Ids"
+            },
+            "description": "Comma-separated channel ids (community matrix)"
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated run ids (layer matrix)",
+              "title": "Run Ids"
+            },
+            "description": "Comma-separated run ids (layer matrix)"
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Max rows",
+              "default": 50,
+              "title": "Top N"
+            },
+            "description": "Max rows"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/sampling-feasibility": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Sampling Feasibility",
+        "description": "Pre-sample planning (US-32/33): is the requested sample feasible?\n\nReports population size, metric availability/coverage, and a recommended\ncapped sample size before any sampling is performed.",
+        "operationId": "network_sampling_feasibility_api_v1_social_science_network_sampling_feasibility_get",
+        "parameters": [
+          {
+            "name": "entity_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "'video' | 'comment'",
+              "title": "Entity Type"
+            },
+            "description": "'video' | 'comment'"
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Id"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated run ids",
+              "title": "Run Ids"
+            },
+            "description": "Comma-separated run ids"
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "views | likes | comments",
+              "title": "Metric"
+            },
+            "description": "views | likes | comments"
+          },
+          {
+            "name": "requested_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requested Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3937,6 +4330,116 @@
         }
       }
     },
+    "/api/v1/social-science/scraper/config": {
+      "get": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Get Scraper Config",
+        "description": "Return current runtime scraper settings.",
+        "operationId": "get_scraper_config_api_v1_social_science_scraper_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Scraper Config Api V1 Social Science Scraper Config Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Update Scraper Config",
+        "description": "Update runtime scraper settings (only provided fields are changed).",
+        "operationId": "update_scraper_config_api_v1_social_science_scraper_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScraperConfigPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Scraper Config Api V1 Social Science Scraper Config Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/scraper/config/preset": {
+      "post": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Apply Preset",
+        "description": "Apply a named speed preset (fast / balanced / default / slow).",
+        "operationId": "apply_preset_api_v1_social_science_scraper_config_preset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Apply Preset Api V1 Social Science Scraper Config Preset Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/search": {
       "get": {
         "tags": [
@@ -4427,6 +4930,26 @@
         }
       }
     },
+    "/api/v1/social-science/jobs/kill-stuck": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Kill Stuck Jobs",
+        "description": "Force-terminate every pending/running job and recycle the worker pool.\n\nJobs blocked on a stalled yt-dlp/network call cannot be cancelled\ncooperatively (cancellation is only honoured at unit boundaries), so\nthis marks them terminal and abandons their worker threads, unblocking\nthe queue. Intended as an explicit operator escape hatch.\n\nDeclared before ``/jobs/{job_id}`` so the static path wins over the\n``{job_id}`` path parameter for POST requests.",
+        "operationId": "kill_stuck_jobs_api_v1_social_science_jobs_kill_stuck_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/jobs/{job_id}": {
       "get": {
         "tags": [
@@ -4642,6 +5165,19 @@
               "default": 50,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "sort_dir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(asc|desc)$",
+              "description": "Sort direction by started_at. 'desc' (default) shows the newest runs first.",
+              "default": "desc",
+              "title": "Sort Dir"
+            },
+            "description": "Sort direction by started_at. 'desc' (default) shows the newest runs first."
           }
         ],
         "responses": {
@@ -6113,7 +6649,7 @@
           "export"
         ],
         "summary": "Export Data",
-        "description": "Export selected data to Excel file.\n\nAccepts entity_type (video|comment|channel|run|sample|dataset), optional ids[],\noptional columns[], and optional filename. Returns an Excel file download.",
+        "description": "Export selected data to Excel file.\n\nTwo modes:\n- ``project_id`` set: export *everything the project collected* as a\n  multi-sheet workbook (Videos, Comments, Channels, Recommendations, Runs).\n- otherwise: export a single entity type (optionally filtered by ``ids``/\n  ``columns``) to one sheet.",
         "operationId": "export_data_api_v1_social_science_export_post",
         "requestBody": {
           "content": {
@@ -6313,6 +6849,22 @@
                 }
               ],
               "title": "Run Id"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Ids"
             }
           }
         ],
@@ -10262,7 +10814,14 @@
       "ExportRequest": {
         "properties": {
           "entity_type": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Entity Type"
           },
           "ids": {
@@ -10289,15 +10848,23 @@
               }
             ],
             "title": "Filename"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           }
         },
         "additionalProperties": true,
         "type": "object",
-        "required": [
-          "entity_type"
-        ],
         "title": "ExportRequest",
-        "description": "Request to export selected data to Excel."
+        "description": "Request to export selected data to Excel.\n\nProvide ``entity_type`` (+ optional ``ids``/``columns``) for a single-entity\nsheet, or ``project_id`` to export *everything a project collected* as a\nmulti-sheet workbook (Videos, Comments, Channels, Recommendations, Runs)."
       },
       "ExportResponse": {
         "properties": {
@@ -11069,6 +11636,20 @@
               }
             ],
             "title": "Concurrency"
+          },
+          "max_recommendations_per_video": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Recommendations Per Video",
+            "description": "Optional cap on how many recommendations to keep per frontier video (speeds up wide crawls). Omit for no per-video limit."
           }
         },
         "additionalProperties": false,
@@ -11431,6 +12012,67 @@
             },
             "type": "array",
             "title": "Video Ids"
+          },
+          "channel_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Id"
+          },
+          "channel_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Channel Ids"
+          },
+          "channel_scope": {
+            "type": "string",
+            "title": "Channel Scope",
+            "default": "source"
+          },
+          "layer_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer Index"
+          },
+          "connected": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connected"
+          },
+          "scraped": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scraped"
+          },
+          "projection": {
+            "type": "string",
+            "title": "Projection",
+            "default": "video"
           },
           "name": {
             "anyOf": [
@@ -13727,6 +14369,19 @@
         "title": "PeriodSummary",
         "description": "One upload-date (or joined-date) window and its metric stats."
       },
+      "PresetRequest": {
+        "properties": {
+          "preset": {
+            "type": "string",
+            "title": "Preset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "preset"
+        ],
+        "title": "PresetRequest"
+      },
       "ProfileChannelRow": {
         "properties": {
           "channel_id": {
@@ -15819,6 +16474,90 @@
         ],
         "title": "ScrapeRecommendationsRequest"
       },
+      "ScraperConfigPayload": {
+        "properties": {
+          "request_delay_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 30.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Delay Seconds"
+          },
+          "enrichment_concurrency": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 20.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrichment Concurrency"
+          },
+          "socket_timeout": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 120.0,
+                "minimum": 5.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Socket Timeout"
+          },
+          "retries": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retries"
+          },
+          "retry_backoff": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 30.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Backoff"
+          },
+          "max_enrich_targets": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Enrich Targets"
+          }
+        },
+        "type": "object",
+        "title": "ScraperConfigPayload"
+      },
       "SearchHit": {
         "properties": {
           "entity": {
@@ -17207,6 +17946,13 @@
             },
             "type": "array",
             "title": "Graph Edges"
+          },
+          "node_channels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Node Channels"
           }
         },
         "additionalProperties": true,

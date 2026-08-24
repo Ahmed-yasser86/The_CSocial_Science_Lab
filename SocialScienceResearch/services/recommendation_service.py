@@ -26,6 +26,7 @@ dataset with lineage (``Dataset.source_projection["lineage"]``).
 
 from __future__ import annotations
 
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -49,6 +50,7 @@ from SocialScienceResearch.domain.enums import (
 from SocialScienceResearch.utils.logger import get_logger
 
 from .collection_service import CollectionService, ProgressReporter, _RateLimiter
+from .recommendation_graph_service import RecommendationGraphService
 from .results import CollectionResult
 
 logger = get_logger(__name__)
@@ -214,31 +216,70 @@ class RecommendationService(CollectionService):
 
         results: list[CollectionResult] = []
         pending_targets: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rec") as pool:
-            futures = {
-                pool.submit(
-                    self._scrape_video_task,
-                    video_id,
-                    parent_run_id,
-                    dedupe_run_ids,
-                    existing_pairs,
-                    throttle,
-                ): video_id
-                for video_id in video_ids
-            }
-            for future in as_completed(futures):
-                payload = future.result()
-                video_id = payload["video_id"]
-                run = self._begin_recommendation_run(
-                    _watch_url(video_id),
-                    parent_run_id,
-                    "run_bulk",
-                    layer_index=layer_index,
+        completed = 0
+        saved_total = 0
+        failed_total = 0
+        pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="rec")
+        try:
+            pending_futures: dict = {}
+            for video_id in video_ids:
+                pending_futures[
+                    pool.submit(
+                        self._scrape_video_task,
+                        video_id,
+                        parent_run_id,
+                        dedupe_run_ids,
+                        existing_pairs,
+                        throttle,
+                    )
+                ] = video_id
+
+            _FUTURE_TIMEOUT = 120
+            while pending_futures:
+                done, _ = concurrent.futures.wait(
+                    pending_futures, timeout=_FUTURE_TIMEOUT,
                 )
-                run.target_video_id = video_id
-                self._repos.runs.update_run(run)
-                results.append(
-                    self._complete_video_result(
+                if not done:
+                    for fut in list(pending_futures):
+                        fut.cancel()
+                    break
+                for future in done:
+                    video_id = pending_futures.pop(future)
+                    # yt-dlp philosophy: one video's failure must never abort the
+                    # whole batch. Skip-and-continue so a single bad URL / network
+                    # glitch degrades gracefully instead of 500-ing the crawl.
+                    try:
+                        payload = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "recommendation scrape failed for %s, skipping: %s",
+                            video_id,
+                            exc,
+                        )
+                        failed_total += 1
+                        completed += 1
+                        self._report(
+                            reporter,
+                            "recommendation/batch/progress",
+                            discovered=len(video_ids),
+                            succeeded=completed,
+                            failed=failed_total,
+                            message=(
+                                f"Scraped {completed}/{len(video_ids)} video(s), "
+                                f"{saved_total} edge(s) saved (1 failed)"
+                            ),
+                        )
+                        continue
+                    video_id = payload["video_id"]
+                    run = self._begin_recommendation_run(
+                        _watch_url(video_id),
+                        parent_run_id,
+                        "run_bulk",
+                        layer_index=layer_index,
+                    )
+                    run.target_video_id = video_id
+                    self._repos.runs.update_run(run)
+                    result = self._complete_video_result(
                         run,
                         payload,
                         channel_id=channel_id,
@@ -249,24 +290,75 @@ class RecommendationService(CollectionService):
                         reporter=reporter,
                         pending_targets=pending_targets,
                     )
-                )
+                    results.append(result)
+                    completed += 1
+                    saved_total += result.entities_created
+                    failed_total += len(result.errors)
+                    # Aggregate progress: each video's _complete_video_result
+                    # reports its own per-video counts, so we re-assert the
+                    # running totals here. Without this the banner only ever
+                    # reflects a single video's "complete" snapshot.
+                    self._report(
+                        reporter,
+                        "recommendation/batch/progress",
+                        discovered=len(video_ids),
+                        succeeded=completed,
+                        failed=failed_total,
+                        message=(
+                            f"Scraped {completed}/{len(video_ids)} video(s), "
+                            f"{saved_total} edge(s) saved"
+                        ),
+                    )
+        finally:
+            pool.shutdown(wait=False)
 
         # Deep-enrich every newly seen recommended target in ONE concurrent
         # pass (not per-video), so a big network never looks stalled on the
-        # first video: the bulk loop only saved edges + runs above.
+        # first video: the bulk loop only saved edges + runs above. Best-effort:
+        # a failure here must not undo the edges/runs already persisted above.
         if pending_targets:
-            self._enrich_recommended_targets(pending_targets)
+            try:
+                # Bound the heavy per-video enrichment (full stats + comments)
+                # so a fan-out over hundreds of recommendations completes in
+                # predictable time instead of hanging on a degraded yt-dlp.
+                # Edges are already saved for every recommendation; only the
+                # deep enrichment is capped. 0 = unlimited.
+                cap = self._max_enrich_targets()
+                targets = pending_targets
+                if cap and len(targets) > cap:
+                    targets = dict(list(pending_targets.items())[:cap])
+                    logger.info(
+                        "Capping deep-enrichment to %d of %d recommended targets "
+                        "for this scrape (raise max_enrich_targets to enrich more)",
+                        cap,
+                        len(pending_targets),
+                    )
+                self._enrich_recommended_targets(targets)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("deep-enrichment pass failed, continuing: %s", exc)
 
         results.sort(
             key=lambda r: video_ids.index(r.target_id)
             if r.target_id in video_ids
             else len(video_ids)
         )
+        # All per-video edges are persisted by now; invalidate the cached
+        # recommendation graph so the bulk-scraped edges surface in the UI.
+        RecommendationGraphService.clear_graph_cache()
         return results
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+    def _max_enrich_targets(self) -> int:
+        """Cap on deep-enriched target videos for this scrape (0 = unlimited)."""
+        if (
+            self._runtime_config is not None
+            and getattr(self._runtime_config, "max_enrich_targets", None) is not None
+        ):
+            return self._runtime_config.max_enrich_targets
+        return self._settings.scraper.max_enrich_targets
+
     def _scrape_video_task(
         self,
         video_id: str,
@@ -534,6 +626,11 @@ class RecommendationService(CollectionService):
             len(saved),
             video_id,
         )
+        # Invalidate the cached recommendation graph so the freshly scraped
+        # edges become visible to the network-tab UI immediately. Without this,
+        # build_graph() keeps serving the stale (often empty) pre-scrape graph
+        # for the whole corpus (300s TTL) and forever for run-scoped slices.
+        RecommendationGraphService.clear_graph_cache()
         return result
 
     def _begin_recommendation_run(
@@ -835,57 +932,73 @@ class RecommendationService(CollectionService):
         scrape never rewrites which run first observed it. A failed target
         never leaves a broken stub behind.
         """
-        concurrency = max(1, self._settings.scraper.enrichment_concurrency)
-        throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
-        with ThreadPoolExecutor(
+        concurrency = max(1, self._enrichment_concurrency())
+        throttle = _RateLimiter(self._request_delay())
+        pool = ThreadPoolExecutor(
             max_workers=concurrency, thread_name_prefix="rec-enrich"
-        ) as pool:
-            futures = {
-                pool.submit(
-                    self._fetch_target_video, video_id, throttle
-                ): video_id
-                for video_id in targets
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                video_id = result["video_id"]
-                marker = targets[video_id]["_discovery"]
-                run_id = marker.get("run_id")
-                if result["error"] is not None:
-                    logger.warning(
-                        "Failed to deep-enrich recommended target %s (run %s): %s",
-                        video_id,
-                        run_id,
-                        result["error"],
-                    )
-                    self._drop_recommendation_stub(video_id)
-                    continue
-                video = normalize_video(result["info"], run_id)
-                if video is None:
-                    logger.warning(
-                        "Could not resolve a video id for recommended target %s "
-                        "(run %s); dropping any stub",
-                        video_id,
-                        run_id,
-                    )
-                    self._drop_recommendation_stub(video_id)
-                    continue
-                # A target that already exists keeps its original provenance:
-                # the run that FIRST observed it, never the run that re-scraped.
-                existing = self._repos.videos.get_video(video_id)
-                if (
-                    existing is not None
-                    and existing.first_observed_run_id is not None
-                ):
-                    video.first_observed_run_id = existing.first_observed_run_id
-                marker = {**marker, "stub": False}
-                video.raw_json = {**video.raw_json, "_discovery": marker}
-                self._repos.videos.upsert_video(video)
-                obs = normalize_video_observation(
-                    result["info"], run_id, video.video_id
+        )
+        try:
+            pending_futures: dict = {}
+            for video_id in targets:
+                pending_futures[
+                    pool.submit(self._fetch_target_video, video_id, throttle)
+                ] = video_id
+
+            _FUTURE_TIMEOUT = 120
+            while pending_futures:
+                done, _ = concurrent.futures.wait(
+                    pending_futures, timeout=_FUTURE_TIMEOUT,
                 )
-                if obs is not None:
-                    self._repos.videos.save_video_observation(obs)
-                channel = normalize_channel(result["info"], run_id)
-                if channel is not None:
-                    self._repos.channels.upsert_channel(channel)
+                if not done:
+                    for fut in list(pending_futures):
+                        fut.cancel()
+                    break
+                for future in done:
+                    video_id = pending_futures.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception:  # noqa: BLE001
+                        continue
+                    video_id = result["video_id"]
+                    marker = targets[video_id]["_discovery"]
+                    run_id = marker.get("run_id")
+                    if result["error"] is not None:
+                        logger.warning(
+                            "Failed to deep-enrich recommended target %s (run %s): %s",
+                            video_id,
+                            run_id,
+                            result["error"],
+                        )
+                        self._drop_recommendation_stub(video_id)
+                        continue
+                    video = normalize_video(result["info"], run_id)
+                    if video is None:
+                        logger.warning(
+                            "Could not resolve a video id for recommended target %s "
+                            "(run %s); dropping any stub",
+                            video_id,
+                            run_id,
+                        )
+                        self._drop_recommendation_stub(video_id)
+                        continue
+                    # A target that already exists keeps its original provenance:
+                    # the run that FIRST observed it, never the run that re-scraped.
+                    existing = self._repos.videos.get_video(video_id)
+                    if (
+                        existing is not None
+                        and existing.first_observed_run_id is not None
+                    ):
+                        video.first_observed_run_id = existing.first_observed_run_id
+                    marker = {**marker, "stub": False}
+                    video.raw_json = {**video.raw_json, "_discovery": marker}
+                    self._repos.videos.upsert_video(video)
+                    obs = normalize_video_observation(
+                        result["info"], run_id, video.video_id
+                    )
+                    if obs is not None:
+                        self._repos.videos.save_video_observation(obs)
+                    channel = normalize_channel(result["info"], run_id)
+                    if channel is not None:
+                        self._repos.channels.upsert_channel(channel)
+        finally:
+            pool.shutdown(wait=False)

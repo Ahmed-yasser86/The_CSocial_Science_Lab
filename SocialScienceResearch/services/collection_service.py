@@ -280,6 +280,10 @@ class _RateLimiter:
 class CollectionService:
     """High-level orchestration of YouTube data acquisition workflows."""
 
+    # Mutable runtime config override (set via API); falls back to frozen
+    # ``self._settings.scraper`` when not provided.
+    _runtime_config = None
+
     def __init__(
         self,
         provider: AcquisitionProvider,
@@ -289,6 +293,28 @@ class CollectionService:
         self._provider = provider
         self._repos = repos
         self._settings = settings or SocialScienceSettings()
+
+    def set_runtime_config(self, config) -> None:
+        self._runtime_config = config
+
+    def _request_delay(self) -> float:
+        if self._runtime_config is not None:
+            return self._runtime_config.request_delay_seconds
+        return self._settings.scraper.request_delay_seconds
+
+    def _enrichment_concurrency(self) -> int:
+        if self._runtime_config is not None:
+            return self._runtime_config.enrichment_concurrency
+        return self._settings.scraper.enrichment_concurrency
+
+    def _max_enrich_targets(self) -> int:
+        """Cap on deep-enriched target videos per scrape (0 = unlimited)."""
+        if (
+            self._runtime_config is not None
+            and getattr(self._runtime_config, "max_enrich_targets", None) is not None
+        ):
+            return self._runtime_config.max_enrich_targets
+        return self._settings.scraper.max_enrich_targets
 
     # ------------------------------------------------------------------
     # Public workflows (single-target, legacy signatures preserved)

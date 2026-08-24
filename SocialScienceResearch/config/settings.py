@@ -28,6 +28,13 @@ DEFAULT_RETRY_BACKOFF = 2.0
 DEFAULT_SOCKET_TIMEOUT = 30.0
 DEFAULT_REQUEST_DELAY_SECONDS = 0.5
 DEFAULT_ENRICHMENT_CONCURRENCY = 4
+#: Cap on how many recommended/new target videos are deep-enriched (full
+#: stats + comments) per scrape. Bounds the wall-clock cost of a crawl so a
+#: layer crawl over hundreds of recommendations always completes and forms a
+#: layer instead of hanging on slow/degraded yt-dlp. Edges are saved for every
+#: recommendation regardless, so the graph stays complete; targets above the
+#: cap remain lightweight stubs (enrichable later on demand). 0 = unlimited.
+DEFAULT_MAX_ENRICH_TARGETS = 100
 #: Single documented comment cap per video (reconciled from the former
 #: 5000/10000 divergence); a research video cannot legitimately yield more.
 DEFAULT_MAX_COMMENTS_PER_VIDEO = 10000
@@ -57,6 +64,10 @@ DEFAULT_TOP_N = 10  # single canonical default for list/top-N endpoints
 
 # Job defaults
 DEFAULT_JOB_MAX_WORKERS = 2  # concurrent collection jobs
+#: A running job that reports no progress for this many seconds is auto-failed
+#: (treated as a blocked/stalled network/yt-dlp call). 0 disables stall
+#: detection (the hard max_run_seconds cap still applies).
+DEFAULT_JOB_MAX_STALL_SECONDS = 900
 
 # API defaults
 DEFAULT_API_HOST = "127.0.0.1"
@@ -136,6 +147,20 @@ class ScraperSettings:
             "SOCIAL_ENRICHMENT_CONCURRENCY", DEFAULT_ENRICHMENT_CONCURRENCY
         )
     )
+    max_enrich_targets: int = field(
+        default_factory=lambda: _env_int(
+            "SOCIAL_MAX_ENRICH_TARGETS", DEFAULT_MAX_ENRICH_TARGETS
+        )
+    )
+    """Hard cap on deep-enriched target videos per scrape (0 = unlimited).
+
+    A single recommendation scrape can fan out to hundreds of recommended
+    videos; deep-enriching every one (full stats + comments) is the dominant
+    cost and, with a degraded yt-dlp, can take tens of minutes and make a
+    layer crawl appear to hang. The cap bounds that cost: edges are still
+    saved for all recommendations, only the heavy per-video enrichment is
+    limited. Raise it (or set 0) for exhaustive enrichment.
+    """
     """Number of parallel per-video deep-enrichment workers in a channel run.
 
     Tune ``enrichment_concurrency`` and ``request_delay_seconds`` together:
@@ -319,6 +344,17 @@ class JobSettings:
 
     Guards against yt-dlp/network calls that stall indefinitely: a job that
     never returns from its worker would otherwise stay ``running`` forever.
+    """
+
+    max_stall_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "SOCIAL_JOB_MAX_STALL_SECONDS", DEFAULT_JOB_MAX_STALL_SECONDS
+        )
+    )
+    """If a running job reports no progress for this many seconds it is
+    auto-failed and its error explains it stalled (a blocked network call).
+
+    ``0`` disables stall detection and relies only on ``max_run_seconds``.
     """
 
 

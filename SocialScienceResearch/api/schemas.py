@@ -221,6 +221,15 @@ class LayerScrapeRequest(_Base):
     projection: str = "video"
     collect_comments: bool = True
     concurrency: int | None = None
+    max_recommendations_per_video: int | None = Field(
+        None,
+        ge=1,
+        le=2000,
+        description=(
+            "Optional cap on how many recommendations to keep per frontier "
+            "video (speeds up wide crawls). Omit for no per-video limit."
+        ),
+    )
 
 
 class ExpansionScrapeVideoRequest(_Base):
@@ -280,6 +289,13 @@ class NetworkExportToProjectRequest(_Base):
     run_id: str | None = None
     action_id: str | None = None
     video_ids: list[str] = Field(default_factory=list)
+    channel_id: str | None = None
+    channel_ids: list[str] = Field(default_factory=list)
+    channel_scope: str = "source"
+    layer_index: int | None = None
+    connected: str | None = None
+    scraped: str | None = None
+    projection: str = "video"
     name: str | None = None
     description: str | None = None
 

@@ -25,6 +25,15 @@ from SocialScienceResearch.utils.idgen import new_id, utcnow
 ProgressCallback = Callable[[], None] | None
 
 
+def _iso(value: Any) -> str | None:
+    """Best-effort ISO-8601 string for a timestamp; tolerates odd inputs."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
 class _ProgressSink(Protocol):
     def __call__(
         self,
@@ -60,16 +69,18 @@ class Job:
     cancel_requested: bool = False
     result: Any = None
     error: str | None = None
+    last_progress_at: datetime | None = None
+    """When the job last emitted progress (or started). Used by the stall watchdog."""
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe snapshot of the job's live state (no result/error bodies)."""
         return {
             "job_id": self.job_id,
             "kind": self.kind,
-            "status": self.status.value,
-            "created_at": self.created_at,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
+            "status": self.status.value if isinstance(self.status, JobStatus) else str(self.status),
+            "created_at": _iso(self.created_at),
+            "started_at": _iso(self.started_at),
+            "finished_at": _iso(self.finished_at),
             "progress": self.progress,
             "message": self.message,
             "cancel_requested": self.cancel_requested,
@@ -79,13 +90,20 @@ class Job:
 class JobManager:
     """Thread-backed job registry. Safe to call from any thread."""
 
-    def __init__(self, max_workers: int = 2, max_run_seconds: int = 3600) -> None:
+    def __init__(
+        self,
+        max_workers: int = 2,
+        max_run_seconds: int = 3600,
+        max_stall_seconds: int = 900,
+    ) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._max_workers = max_workers
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="collect"
         )
         self._max_run_seconds = max_run_seconds
+        self._max_stall_seconds = max_stall_seconds
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self._watchdog_stop = threading.Event()
         self._watchdog = threading.Thread(
@@ -157,12 +175,14 @@ class JobManager:
         return job
 
     def _watchdog_loop(self) -> None:
-        """Force-fail jobs that exceed the run-time cap.
+        """Force-fail jobs that exceed the run-time or stall caps.
 
         Extraction workers block on yt-dlp which can stall indefinitely; a job
         that never returns would otherwise stay ``running`` forever. The
-        watchdog sweeps periodically and fails any job over the cap so the UI
-        always shows a terminal state.
+        watchdog sweeps periodically and fails any job over the hard cap, or
+        any job that has reported *no progress* for ``max_stall_seconds`` (a
+        sure sign of a blocked network/yt-dlp call). Failing it surfaces a
+        terminal error to the UI instead of an indefinite "running" spinner.
         """
         while not self._watchdog_stop.wait(5):
             now = utcnow()
@@ -181,16 +201,37 @@ class JobManager:
                         )
                         job.message = "job timed out"
                         to_notify.append(job)
+                        continue
+                    if self._max_stall_seconds and self._max_stall_seconds > 0:
+                        last = job.last_progress_at or job.started_at
+                        stalled = (now - last).total_seconds()
+                        if stalled > self._max_stall_seconds:
+                            job.status = JobStatus.FAILED
+                            job.finished_at = now
+                            job.error = (
+                                f"job stalled after {int(stalled)}s with no progress "
+                                "(likely a blocked network/yt-dlp call); auto-failed "
+                                "by the watchdog so it cannot hang indefinitely"
+                            )
+                            job.message = "job stalled"
+                            to_notify.append(job)
 
             for job in to_notify:
                 self._notify(job)
 
     def _run(self, job: Job, fn: Callable[[_ProgressSink], Any]) -> None:
         job.status = JobStatus.RUNNING
-        job.started_at = utcnow()
+        started = utcnow()
+        job.started_at = started
+        job.last_progress_at = started
         self._notify(job)
         try:
             result = fn(self._progress_cb(job))
+            # Only transition if still RUNNING: a concurrent kill/stall action
+            # may have already terminalised this job, and the orphaned worker
+            # thread must not resurrect it.
+            if job.status != JobStatus.RUNNING:
+                return
             if job.cancel_requested:
                 job.status = JobStatus.CANCELLED
                 job.message = "cancelled after the current unit of work finished"
@@ -198,6 +239,8 @@ class JobManager:
                 job.status = JobStatus.SUCCEEDED
                 job.result = result
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
+            if job.status != JobStatus.RUNNING:
+                return
             if job.cancel_requested:
                 job.status = JobStatus.CANCELLED
                 job.message = "cancelled after the current unit of work finished"
@@ -223,6 +266,56 @@ class JobManager:
             self._notify(job)
         return accepted
 
+    def recycle_executor(self) -> None:
+        """Discard the worker pool and start a fresh one.
+
+        Python cannot forcibly kill a worker thread, so a job blocked on a
+        stalled yt-dlp/network call keeps running in the background even after
+        we mark it terminal. Recreating the pool abandons those orphaned
+        threads and immediately frees capacity for new work. In-flight tasks
+        in the old pool are cancelled; already-running ones continue detached.
+        """
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:  # noqa: BLE001 - best-effort; a fresh pool always starts
+            pass
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._max_workers, thread_name_prefix="collect"
+        )
+
+    def kill_stuck(self) -> dict[str, Any]:
+        """Force-terminate every non-terminal (pending/running) job.
+
+        Marks pending jobs cancelled and running jobs failed (with a clear
+        "killed by user" error), then recycles the worker pool so the orphaned
+        threads holding worker slots are abandoned and the queue is unblocked.
+        Returns how many jobs were killed and their ids.
+        """
+        killed: list[Job] = []
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
+                    continue
+                now = utcnow()
+                if job.status == JobStatus.PENDING:
+                    job.status = JobStatus.CANCELLED
+                    job.finished_at = now
+                    job.message = "cancelled by user (kill-all-stuck)"
+                else:
+                    job.status = JobStatus.FAILED
+                    job.finished_at = now
+                    job.error = "killed by user via 'Kill all stuck jobs'"
+                    job.message = "killed by user"
+                killed.append(job)
+        for job in killed:
+            self._notify(job)
+        if killed:
+            self.recycle_executor()
+        return {
+            "killed": len(killed),
+            "job_ids": [j.job_id for j in killed],
+        }
+
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
@@ -232,7 +325,15 @@ class JobManager:
 
     def list(self) -> list[Job]:
         with self._lock:
-            return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)
+            return sorted(
+                self._jobs.values(),
+                key=lambda j: (
+                    j.created_at.isoformat()
+                    if isinstance(j.created_at, datetime)
+                    else str(j.created_at)
+                ),
+                reverse=True,
+            )
 
     def _progress_cb(self, job: Job) -> _ProgressSink:
         def _report(
@@ -253,6 +354,7 @@ class JobManager:
             with self._lock:
                 job.progress = snapshot
                 job.message = message
+                job.last_progress_at = utcnow()
             self._notify(job)
 
         return _report

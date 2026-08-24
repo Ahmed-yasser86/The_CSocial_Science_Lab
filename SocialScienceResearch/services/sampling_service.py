@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from random import Random
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from SocialScienceResearch.domain.enums import SamplingStrategy
 from SocialScienceResearch.domain.models import Comment, Video
@@ -216,6 +216,96 @@ class SamplingService:
             criteria_json=self._criteria(spec, len(comments), 0),
             seed=spec.seed if spec.seed is not None else self._default_seed,
         )
+
+    # ------------------------------------------------------------------
+    # Feasibility (US-32/33): pre-sample planning
+    # ------------------------------------------------------------------
+    _OBS_METRIC_ATTR = {
+        "views": "view_count",
+        "likes": "like_count",
+        "comments": "comment_count",
+    }
+
+    def feasibility(
+        self,
+        entity_type: str,
+        *,
+        channel_id: str | None = None,
+        run_ids: list[str] | None = None,
+        metric: str | None = None,
+        requested_size: int | None = None,
+    ) -> dict[str, Any]:
+        """Estimate whether a requested sample is feasible (US-32/33).
+
+        Returns the population size, how many entities have the ranking metric
+        available (so the researcher knows if a TOP_* strategy will hit missing
+        metrics), coverage, the maximum drawable sample, and a recommended
+        capped size that never exceeds the population or the available metric.
+        """
+        entity_type = entity_type.lower()
+        if entity_type not in ("video", "comment"):
+            raise ValueError("entity_type must be 'video' or 'comment'")
+        if metric is not None and metric not in self._OBS_METRIC_ATTR:
+            raise ValueError(
+                f"metric must be one of {sorted(self._OBS_METRIC_ATTR)}, got {metric!r}"
+            )
+        if requested_size is not None and requested_size < 0:
+            raise ValueError("requested_size must be >= 0")
+
+        attr = self._OBS_METRIC_ATTR.get(metric) if metric else None
+
+        if entity_type == "video":
+            entities = self._repos.videos.list_videos(channel_id=channel_id)
+            latest = self._repos.videos.get_latest_video_observations(
+                [e.video_id for e in entities]
+            )
+            observations = list(latest.values())
+        else:
+            comments = self._repos.comments.list_comments()
+            if channel_id is not None:
+                video_channel = {
+                    v.video_id: v.channel_id
+                    for v in self._repos.videos.list_videos()
+                }
+                comments = [
+                    c for c in comments if video_channel.get(c.video_id) == channel_id
+                ]
+            if run_ids is not None:
+                run_set = set(run_ids)
+                comments = [
+                    c
+                    for c in comments
+                    if c.first_observed_run_id in run_set
+                ]
+            latest = self._repos.comments.get_latest_comment_observations(
+                [c.comment_id for c in comments]
+            )
+            observations = list(latest.values())
+            entities = comments
+
+        population = len(entities)
+        if attr is None:
+            available = population
+        else:
+            available = sum(
+                1 for o in observations if getattr(o, attr, None) is not None
+            )
+        missing = population - available
+        max_size = population
+        recommended = requested_size if requested_size is not None else population
+        recommended = max(0, min(recommended, max_size, available))
+        coverage = StatisticsService.ratio(available, population)
+
+        return {
+            "entity_type": entity_type,
+            "population_size": population,
+            "available_metric": available,
+            "missing_metric": missing,
+            "coverage": coverage,
+            "requested_size": requested_size,
+            "max_sample_size": max_size,
+            "recommended_sample_size": recommended,
+        }
 
     # ------------------------------------------------------------------
     # Strategy internals

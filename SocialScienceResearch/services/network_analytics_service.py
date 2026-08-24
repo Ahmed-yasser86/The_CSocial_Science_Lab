@@ -28,10 +28,9 @@ NetworkX semantics (ADR-0009)
   ``graph.to_undirected()``.
 * ``reciprocity`` and ``degree`` are directed measures and run on the
   ``DiGraph`` as-is.
-* ``greedy_modularity_communities``/``modularity`` accept directed graphs and
-  use directed modularity (``community.modularity`` handles the
-  in/out-degree terms); ``modularity`` is reported as ``None`` for an empty
-  graph.
+* Community detection uses ``louvain_communities`` (seeded for determinism)
+  instead of the much slower ``greedy_modularity_communities``; ``modularity``
+  is reported as ``None`` for an empty graph.
 * ``nx.hits`` is a directed measure; hub/authority scores are returned
   unnormalised (the power iteration may yield small negative weights on
   graphs with zero-score sinks - the top-``n`` ranks remain meaningful).
@@ -49,14 +48,21 @@ for the statistics it has no row for.
 from __future__ import annotations
 
 import csv
+import functools
 import io
 import json
+import time
 from datetime import datetime
 from io import StringIO
+from threading import RLock
 from typing import Any
 
 import networkx as nx
-from networkx.algorithms.community import greedy_modularity_communities, modularity
+from networkx.algorithms.community import (
+    greedy_modularity_communities,
+    louvain_communities,
+    modularity,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from SocialScienceResearch.persistence.base import Repositories
@@ -70,6 +76,52 @@ DEFAULT_PAGE_SIZE = 50
 
 #: Which endpoint of an edge a ``channel_id`` filter matches by default.
 ChannelScope = str  # "source" | "target" | "either"
+
+
+def _hashable(value: Any) -> Any:
+    """Best-effort hashable projection of cache keys (lists/dicts -> tuples)."""
+    if isinstance(value, list):
+        return tuple(_hashable(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _hashable(v)) for k, v in value.items()))
+    return value
+
+
+def _ttl_cache(ttl_seconds: int):
+    """Memoize a method result for ``ttl_seconds`` (per instance).
+
+    Heavy network analytics (metrics / graph) are expensive to recompute on
+    every auto-refresh. Caching keeps the API responsive and stops one slow
+    endpoint from piling up and starving healthy endpoints such as ``/jobs`` -
+    the same "don't let one slow/failed thing break everything" philosophy
+    used elsewhere.
+    """
+
+    def decorator(fn):
+        store: dict[Any, tuple[float, Any]] = {}
+        lock = RLock()
+
+        @functools.wraps(fn)
+        def wrapper(self, *args, **kwargs):
+            key = (
+                id(self),
+                fn.__name__,
+                tuple(sorted((k, _hashable(v)) for k, v in kwargs.items())),
+            )
+            with lock:
+                hit = store.get(key)
+                if hit is not None and (time.time() - hit[0]) < ttl_seconds:
+                    return hit[1]
+            val = fn(self, *args, **kwargs)
+            with lock:
+                if len(store) > 500:
+                    store.clear()
+                store[key] = (time.time(), val)
+            return val
+
+        return wrapper
+
+    return decorator
 
 
 def _jaccard(intersection: int, union: int) -> float | None:
@@ -500,9 +552,21 @@ class NetworkAnalyticsService:
         self._graph_service = RecommendationGraphService(repos)
 
     # ------------------------------------------------------------------
+    @_ttl_cache(300)
     def metrics(self, run_id: str | None = None, top_n: int = 10) -> NetworkMetrics:
-        """Compute aggregate network statistics for one slice."""
-        graph = self._graph_service.build_graph(run_id)
+        """Compute aggregate network statistics for one slice.
+
+        The graph is built from the *same* edge pipeline that drives the
+        interactive graph UI (``edges`` -> ``_raw_edges``), NOT the cached raw
+        ``build_graph``. This guarantees the Metrics panel (density,
+        reciprocity, clustering, components, communities, HITS) always matches
+        what is rendered, and avoids serving a stale cached graph after a layer
+        crawl appends edges.
+        """
+        rows = self.edges(run_id=run_id)
+        graph = nx.DiGraph()
+        for row in rows:
+            graph.add_edge(row.source_video_id, row.recommended_video_id)
         return self._metrics_for_graph(graph, run_id=run_id, top_n=top_n)
 
     def _metrics_for_graph(
@@ -552,7 +616,7 @@ class NetworkAnalyticsService:
             metrics.largest_component_size / metrics.node_count
         )
 
-        communities = list(greedy_modularity_communities(graph))
+        communities = list(louvain_communities(graph.to_undirected(), seed=42))
         metrics.community_count = len(communities)
         metrics.modularity = (
             float(modularity(graph, communities)) if graph.number_of_edges() else None
@@ -603,6 +667,7 @@ class NetworkAnalyticsService:
         run_ids: list[str] | None = None,
         video_ids: list[str] | None = None,
         channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
         channel_scope: ChannelScope = "source",
         layer_index: int | None = None,
     ) -> list[Any]:
@@ -610,16 +675,22 @@ class NetworkAnalyticsService:
 
         ``video_ids`` keeps only the ego edges touching any listed video
         (``source`` or ``target`` in the set); ``run_ids`` limits to a set of
-        runs; the channel filters mirror :meth:`edges`. Used by the enriched
-        ``edges()``/``graph()`` paths and the export/merge machinery so every
-        view of a slice agrees on the same edge set.
+        runs; the channel filters mirror :meth:`edges`. ``channel_id`` is the
+        legacy single-channel filter; ``channel_ids`` is the multi-channel
+        equivalent (an edge matches if its scoped endpoint channel is in the
+        set). Used by the enriched ``edges()``/``graph()`` paths and the
+        export/merge machinery so every view of a slice agrees on the same
+        edge set.
         """
         video_set = set(video_ids or [])
-        channel = channel_id
-        metadata = _MetadataIndex(self._repos) if channel else None
+        channel_set = set(channel_ids) if channel_ids else None
+        if channel_id:
+            channel_set = {channel_id}
+        metadata = _MetadataIndex(self._repos) if channel_set else None
         edges: list[Any] = []
         for edge in self._repos.recommendations.list_recommendation_edges(
-            run_id=run_id
+            run_id=run_id if run_id else None,
+            run_ids=run_ids if not run_id and run_ids else None,
         ):
             if layer_index is not None and edge.layer_index != layer_index:
                 continue
@@ -630,22 +701,49 @@ class NetworkAnalyticsService:
                 and edge.recommended_video_id not in video_set
             ):
                 continue
-            if channel:
+            if channel_set:
                 source_meta = metadata.video(edge.source_video_id)
                 target_meta = metadata.video(edge.recommended_video_id)
                 source_channel = source_meta.get("channel_id")
                 target_channel = target_meta.get("channel_id") or edge.channel_id
                 if channel_scope == "target":
-                    if target_channel != channel:
+                    if target_channel not in channel_set:
                         continue
                 elif channel_scope == "either":
-                    if source_channel != channel and target_channel != channel:
+                    if (
+                        source_channel not in channel_set
+                        and target_channel not in channel_set
+                    ):
                         continue
                 else:  # default "source"
-                    if source_channel != channel:
+                    if source_channel not in channel_set:
                         continue
             edges.append(edge)
         return edges
+
+    # ------------------------------------------------------------------
+    def run_family(self, run_id: str) -> list[str]:
+        """Return ``run_id`` plus the run_ids of every descendant sub-run.
+
+        A sub-run is any ``CollectionRun`` whose ``parent_run_id`` links back
+        to ``run_id`` directly or transitively. Drives the interactive graph's
+        "include sub-runs" toggle so a main run can be visualised together with
+        the entire lineage it spawned, distinct from the graph of a single
+        sub-run.
+        """
+        if not run_id:
+            return []
+        family: list[str] = [run_id]
+        seen: set[str] = {run_id}
+        queue = [run_id]
+        while queue:
+            current = queue.pop()
+            for child in self._repos.runs.list_sub_runs(current):
+                if child.run_id not in seen:
+                    seen.add(child.run_id)
+                    family.append(child.run_id)
+                    queue.append(child.run_id)
+        return family
 
     # ------------------------------------------------------------------
     def edges(
@@ -656,6 +754,7 @@ class NetworkAnalyticsService:
         layer_index: int | None = None,
         run_ids: list[str] | None = None,
         video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
     ) -> list[EdgeRow]:
         """Serialize all observed edges for a slice (export/listing).
 
@@ -678,6 +777,7 @@ class NetworkAnalyticsService:
             run_ids=run_ids,
             video_ids=video_ids,
             channel_id=channel_id,
+            channel_ids=channel_ids,
             channel_scope=channel_scope,
             layer_index=layer_index,
         ):
@@ -723,6 +823,26 @@ class NetworkAnalyticsService:
         )
 
     # ------------------------------------------------------------------
+    def _earliest_layer_by_pair(self) -> dict[tuple[str, str], int]:
+        """Map ``(source, target)`` to the earliest ``layer_index`` observed.
+
+        Used by the layer-scoped graph to attribute each recommendation edge to
+        the layer that first discovered it, so a later layer merely re-observing
+        an already-known edge does not render a duplicate of the previous
+        layer's graph. Observations remain in the data for temporal analysis;
+        this only de-duplicates what the layer graph displays.
+        """
+        min_layer: dict[tuple[str, str], int] = {}
+        for edge in self._repos.recommendations.list_recommendation_edges():
+            li = getattr(edge, "layer_index", None)
+            if li is None:
+                continue
+            key = (edge.source_video_id, edge.recommended_video_id)
+            if key not in min_layer or li < min_layer[key]:
+                min_layer[key] = li
+        return min_layer
+
+    @_ttl_cache(300)
     def graph(
         self,
         run_id: str | None = None,
@@ -731,6 +851,7 @@ class NetworkAnalyticsService:
         layer_index: int | None = None,
         run_ids: list[str] | None = None,
         video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
         connected: str | None = None,
         scraped: str | None = None,
     ) -> NetworkGraph:
@@ -750,11 +871,27 @@ class NetworkAnalyticsService:
         rows = self.edges(
             run_id=run_id,
             channel_id=channel_id,
+            channel_ids=channel_ids,
             channel_scope=channel_scope,
             layer_index=layer_index,
             run_ids=run_ids,
             video_ids=video_ids,
         )
+
+        # Layer-scoped view: attribute each (source, target) pair to the EARLIEST
+        # layer that observed it, so a later layer that merely re-observes an
+        # already-known recommendation edge does not render a duplicate of the
+        # previous layer's graph. Observations are retained in the data (for
+        # temporal analysis); this is purely a de-duplication of what the layer
+        # graph displays.
+        if layer_index is not None:
+            _min_layer = self._earliest_layer_by_pair()
+            rows = [
+                r
+                for r in rows
+                if _min_layer.get((r.source_video_id, r.recommended_video_id))
+                == layer_index
+            ]
 
         in_degree: dict[str, int] = {}
         out_degree: dict[str, int] = {}
@@ -799,14 +936,24 @@ class NetworkAnalyticsService:
         connected_set = set(connected_ids)
 
         # Isolated (non-connected) nodes: videos persisted in the corpus with
-        # no edge in the slice. They render detached. Only included when the
-        # caller explicitly asks for the isolated view (or every node is
-        # isolated because the slice has no edges).
+        # no edge in the slice. They render detached. Included when the caller
+        # explicitly asks for the isolated view, OR - for a *run-scoped* slice
+        # with no edges yet (e.g. a seed Layer 0 that hasn't scraped
+        # recommendations) - the run's own videos, so the graph isn't empty
+        # even before the first crawl. A non-run slice with no edges stays
+        # empty (there is genuinely nothing to show).
         isolated_ids: list[str] = []
-        if connected == "isolated" or not rows:
+        if connected == "isolated":
             corpus = set(self._repos.videos.list_video_metadata())
             isolated_ids = sorted(corpus - connected_set)
-        video_ids = connected_ids if connected != "isolated" else isolated_ids
+        elif not rows and run_id:
+            run_videos = self._repos.videos.list_videos_by_run(run_id)
+            isolated_ids = sorted({v.video_id for v in run_videos} - connected_set)
+        video_ids = (
+            isolated_ids
+            if (connected == "isolated" or (not rows and run_id))
+            else connected_ids
+        )
 
         edge_meta: dict[str, dict[str, Any]] = {}
         for row in rows:
@@ -817,14 +964,16 @@ class NetworkAnalyticsService:
             )
         metadata = _MetadataIndex(self._repos)
 
-        # Community detection over the undirected projection of this slice so
-        # nodes sharing a cluster render with a common color (community_id is
-        # stable per slice: 0..k-1 ordered by community size, largest first).
-        graph = self._graph_service.build_graph(run_id=run_id)
-        if graph.number_of_edges() > 0:
-            undirected = graph.to_undirected()
+        # Community detection over the undirected projection of *this slice's
+        # displayed edges* (not the raw cached build_graph), so community_id is
+        # consistent with the nodes/edges actually rendered and exported.
+        comm_graph = nx.DiGraph()
+        for e in edges:
+            comm_graph.add_edge(e.source, e.target)
+        if comm_graph.number_of_edges() > 0:
+            undirected = comm_graph.to_undirected()
             communities = sorted(
-                greedy_modularity_communities(undirected),
+                louvain_communities(undirected, seed=42),
                 key=len,
                 reverse=True,
             )
@@ -908,6 +1057,68 @@ class NetworkAnalyticsService:
         )
 
     # ------------------------------------------------------------------
+    def centralities(
+        self,
+        *,
+        run_id: str | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        video_ids: list[str] | None = None,
+        projection: str = "video",
+    ) -> dict[str, dict[str, float]]:
+        """Per-node centrality vector for the visible graph (benchmarkable).
+
+        Returns ``{node_id: {"degree", "closeness", "eigenvector",
+        "betweenness", "community_id"}}`` for the same subgraph that
+        ``/network/graph`` would render. Centralities use networkx over the
+        directed slice; ``community_id`` is copied from the graph view so the
+        output doubles as a labelled benchmark fixture (e.g. Zachary's karate
+        club). Empty slices return ``{}``.
+        """
+        if projection == "channel":
+            payload = self.channel_graph(
+                run_id=run_id,
+                layer_index=layer_index,
+                channel_id=channel_id,
+                channel_ids=channel_ids,
+                channel_scope=channel_scope,
+            )
+        else:
+            payload = self.graph(
+                run_id=run_id,
+                channel_id=channel_id,
+                channel_ids=channel_ids,
+                channel_scope=channel_scope,
+                layer_index=layer_index,
+                video_ids=video_ids,
+            )
+        G = nx.DiGraph()
+        for e in payload.edges:
+            G.add_edge(e.source, e.target)
+        if G.number_of_nodes() == 0:
+            return {}
+        degree = nx.degree_centrality(G)
+        closeness = nx.closeness_centrality(G)
+        try:
+            eigenvector = nx.eigenvector_centrality(G, max_iter=1000)
+        except nx.PowerIterationFailedConvergence:
+            eigenvector = {n: 0.0 for n in G.nodes}
+        betweenness = nx.betweenness_centrality(G)
+        result: dict[str, dict[str, float]] = {}
+        for node in payload.nodes:
+            nid = node.channel_id if projection == "channel" else node.video_id
+            result[nid] = {
+                "degree": degree.get(nid, 0.0),
+                "closeness": closeness.get(nid, 0.0),
+                "eigenvector": eigenvector.get(nid, 0.0),
+                "betweenness": betweenness.get(nid, 0.0),
+                "community_id": float(node.community_id if node.community_id is not None else -1),
+            }
+        return result
+
+    # ------------------------------------------------------------------
     def export_edges(
         self, run_id: str | None = None, format: str = "graphml"
     ) -> tuple[str, str, str]:
@@ -926,20 +1137,123 @@ class NetworkAnalyticsService:
         run_id: str | None = None,
         run_ids: list[str] | None = None,
         video_ids: list[str] | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        connected: str | None = None,
+        scraped: str | None = None,
+        projection: str = "video",
     ) -> tuple[str, str | bytes, str]:
-        """Serialize a scoped video network into a file-format payload.
+        """Serialize the *visible* scoped network into a file-format payload.
+
+        The export mirrors exactly what ``/network/graph`` (or ``/network/
+        graph?projection=channel``) would render for the same filters, so the
+        downloaded file always matches the Active Filter View: the same nodes
+        (with ``connected``/``scraped`` pruning), the same edges (with the
+        layer de-duplication that attributes each pair to the layer that first
+        discovered it), and the same channel/run scoping. No out-of-view or
+        orphaned nodes leak in.
 
         Returns ``(suggested_filename, content, media_type)``. Supported
-        formats: ``graphml``, ``edgelist``, ``gexf`` (graph-based, via
-        networkx) and ``csv``/``json`` (edge-row based, labeled via
-        :meth:`edges` so exports carry readable titles/channels - never bare
-        ids) plus ``xlsx`` (a workbook with the same columns). Text formats
-        return ``str`` content; binary formats (``xlsx``) return ``bytes``.
-        ``run_ids`` limits the slice to a set of runs (a network expansion's
-        runs); ``video_ids`` keeps the ego edges touching any listed video.
-        Raises ``ValueError`` for an unsupported ``format``.
+        formats:
+
+        * ``graphml`` / ``edgelist`` / ``gexf`` - networkx serializations with
+          node attributes ``id``, ``label``, ``degree``, ``community_id`` and
+          ``centrality``;
+        * ``json`` - Cytoscape/D3 ``{"nodes": [...], "links": [...]}``;
+        * ``csv`` - edge list ``source,target,weight,relationship_type``;
+        * ``xlsx`` - labeled edge table (readable titles/channels).
+
+        Text formats return ``str``; ``xlsx`` returns ``bytes``. Raises
+        ``ValueError`` for an unsupported ``format`` or ``projection``.
         """
+        if projection not in ("video", "channel"):
+            raise ValueError(
+                f"Unsupported projection '{projection}' (expected video or channel)"
+            )
+
+        # Build the exact subgraph the UI would render for these filters.
+        if projection == "channel":
+            payload = self.channel_graph(
+                run_id=run_id,
+                layer_index=layer_index,
+                run_ids=run_ids,
+                channel_id=channel_id,
+                channel_ids=channel_ids,
+                channel_scope=channel_scope,
+            )
+            return self._serialize_channel_graph(payload, format)
+        payload = self.graph(
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_ids=channel_ids,
+            channel_scope=channel_scope,
+            layer_index=layer_index,
+            run_ids=run_ids,
+            video_ids=video_ids,
+            connected=connected,
+            scraped=scraped,
+        )
+        return self._serialize_video_graph(payload, format)
+
+    # -- export serializers -------------------------------------------------
+    def _aggregated_edges(self, edges):
+        """Collapse observation rows into weighted, de-duplicated edges.
+
+        Returns a dict keyed by ``(source, target)`` -> ``{"weight", "run_ids",
+        "positions", "title", "run_id"}``. Collapsing guarantees the exported
+        edge set is exactly the visible edge set (no parallel edges from
+        repeated observations) and provides the ``weight`` the formats need.
+        """
+        agg: dict[tuple[str, str], dict[str, Any]] = {}
+        for e in edges:
+            key = (e.source, e.target)
+            rec = agg.get(key)
+            if rec is None:
+                rec = {
+                    "weight": 0,
+                    "run_ids": [],
+                    "positions": [],
+                    "title": getattr(e, "title", None),
+                    "run_id": getattr(e, "run_id", None),
+                }
+                agg[key] = rec
+            rec["weight"] += 1
+            rid = getattr(e, "run_id", None)
+            if rid and rid not in rec["run_ids"]:
+                rec["run_ids"].append(rid)
+            pos = getattr(e, "position", None)
+            if pos is not None:
+                rec["positions"].append(pos)
+        return agg
+
+    def _serialize_video_graph(self, payload: "NetworkGraph", format: str):
         fmt = (format or "").strip().lower()
+        nodes = {n.video_id: n for n in payload.nodes}
+        agg = self._aggregated_edges(payload.edges)
+
+        # Graph for centrality + networkx writers.
+        G = nx.DiGraph()
+        for (s, t) in agg:
+            G.add_edge(s, t)
+        centrality = nx.degree_centrality(G) if G.number_of_nodes() else {}
+
+        def _node_attrs(n):
+            degree = (n.in_degree or 0) + (n.out_degree or 0)
+            return {
+                "id": n.video_id,
+                "label": n.title or n.video_id,
+                "kind": n.kind,
+                "degree": degree,
+                "in_degree": n.in_degree or 0,
+                "out_degree": n.out_degree or 0,
+                "community_id": n.community_id if n.community_id is not None else -1,
+                "centrality": round(centrality.get(n.video_id, 0.0), 6),
+                "channel_id": n.channel_id or "",
+                "scraped": bool(n.recommendations_scraped),
+            }
+
         graph_formats = {
             "graphml": ("recommendations.graphml", "application/xml"),
             "edgelist": ("recommendations.edgelist", "text/plain"),
@@ -947,17 +1261,19 @@ class NetworkAnalyticsService:
         }
         if fmt in graph_formats:
             filename, media_type = graph_formats[fmt]
-            graph = self._graph_from_edges(
-                self._raw_edges(run_id=run_id, run_ids=run_ids, video_ids=video_ids)
-            )
-            # GraphML/edgelist cannot serialize ``None`` edge-attrs, so sink
-            # them to empty strings on a copy before writing.
-            export = graph.copy()
-            for _, _, data in export.edges(data=True):
-                for key in ("position", "run_id", "title", "channel_id"):
-                    if data.get(key) is None:
-                        data[key] = ""
-
+            export = nx.DiGraph()
+            for vid, n in nodes.items():
+                attrs = _node_attrs(n)
+                export.add_node(vid, **{k: ("" if v is None else v) for k, v in attrs.items()})
+            for (s, t), rec in agg.items():
+                export.add_edge(
+                    s,
+                    t,
+                    relationship_type="recommendation",
+                    weight=rec["weight"],
+                    position=rec["positions"][0] if rec["positions"] else -1,
+                    run_id=";".join(rec["run_ids"]),
+                )
             buffer = io.BytesIO()
             if fmt == "graphml":
                 nx.write_graphml(export, buffer)
@@ -967,64 +1283,89 @@ class NetworkAnalyticsService:
                 nx.write_gexf(export, buffer)
             return filename, buffer.getvalue().decode("utf-8"), media_type
 
-        rows = self.edges(run_id=run_id, run_ids=run_ids, video_ids=video_ids)
-        columns = [
-            "source_video_id",
-            "recommended_video_id",
-            "position",
-            "run_id",
-            "run_type",
-            "run_name",
-            "source_title",
-            "source_channel_id",
-            "source_channel_name",
-            "title",
-            "channel_id",
-            "channel_name",
-            "views",
-            "likes",
-            "duration",
-        ]
-        if fmt == "csv":
-            buffer = io.StringIO()
-            writer = csv.writer(buffer, dialect="excel")
-            writer.writerow(columns)
-            for row in rows:
-                writer.writerow(
-                    [_csv_cell(getattr(row, column)) for column in columns]
-                )
-            return "recommendations.csv", buffer.getvalue(), "text/csv"
-
         if fmt == "json":
-            payload = {
-                "scope": {
-                    "run_id": run_id,
-                    "run_ids": run_ids or [],
-                    "video_ids": video_ids or [],
-                },
-                "node_count": len({n for row in rows for n in (row.source_video_id, row.recommended_video_id)}),
-                "edge_count": len(rows),
-                "columns": columns,
-                "edges": [row.model_dump(mode="json") for row in rows],
+            out = {
+                "nodes": [
+                    {"data": _node_attrs(n)} for n in payload.nodes
+                ],
+                "links": [
+                    {
+                        "data": {
+                            "id": f"{s}->{t}",
+                            "source": s,
+                            "target": t,
+                            "weight": rec["weight"],
+                            "relationship_type": "recommendation",
+                            "position": (rec["positions"][0] if rec["positions"] else None),
+                            "run_ids": rec["run_ids"],
+                        }
+                    }
+                    for (s, t), rec in agg.items()
+                ],
             }
             return (
                 "recommendations.json",
-                json.dumps(payload, ensure_ascii=False, default=str),
+                json.dumps(out, ensure_ascii=False, default=str),
                 "application/json",
             )
+
+        if fmt == "csv":
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, dialect="excel")
+            writer.writerow(
+                ["source", "target", "weight", "relationship_type"]
+            )
+            for (s, t), rec in agg.items():
+                writer.writerow([s, t, rec["weight"], "recommendation"])
+            return "recommendations.csv", buffer.getvalue(), "text/csv"
 
         if fmt == "xlsx":
             from openpyxl import Workbook
             from openpyxl.styles import Font
 
+            columns = [
+                "source_video_id",
+                "recommended_video_id",
+                "weight",
+                "relationship_type",
+                "source_title",
+                "target_title",
+                "source_channel_id",
+                "source_channel_name",
+                "target_channel_id",
+                "target_channel_name",
+                "positions",
+                "run_ids",
+            ]
             workbook = Workbook()
             sheet = workbook.active
             sheet.title = "Recommendations"
             sheet.append(columns)
             for cell in sheet[1]:
                 cell.font = Font(bold=True)
-            for row in rows:
-                sheet.append([_csv_cell(getattr(row, column)) for column in columns])
+            meta = {
+                n.video_id: n
+                for n in payload.nodes
+            }
+            for (s, t), rec in agg.items():
+                sn = meta.get(s)
+                tn = meta.get(t)
+                sheet.append(
+                    [
+                        s,
+                        t,
+                        rec["weight"],
+                        "recommendation",
+                        sn.title if sn else None,
+                        tn.title if tn else None,
+                        sn.channel_id if sn else None,
+                        sn.channel_name if sn else None,
+                        tn.channel_id if tn else None,
+                        tn.channel_name if tn else None,
+                        ",".join(str(p) for p in rec["positions"]),
+                        ";".join(rec["run_ids"]),
+                    ]
+                )
             buffer = io.BytesIO()
             workbook.save(buffer)
             return "recommendations.xlsx", buffer.getvalue(), (
@@ -1035,6 +1376,90 @@ class NetworkAnalyticsService:
         raise ValueError(
             f"Unsupported export format '{fmt}' (expected one of: "
             f"{', '.join(valid)})"
+        )
+
+    def _serialize_channel_graph(self, payload: "ChannelGraphPayload", format: str):
+        fmt = (format or "").strip().lower()
+        nodes = {n.channel_id: n for n in payload.nodes}
+        G = nx.DiGraph()
+        for e in payload.edges:
+            G.add_edge(e.source, e.target)
+        centrality = nx.degree_centrality(G) if G.number_of_nodes() else {}
+
+        def _node_attrs(n):
+            degree = (n.in_degree or 0) + (n.out_degree or 0)
+            return {
+                "id": n.channel_id,
+                "label": n.channel_name or n.channel_id,
+                "degree": degree,
+                "in_degree": n.in_degree or 0,
+                "out_degree": n.out_degree or 0,
+                "centrality": round(centrality.get(n.channel_id, 0.0), 6),
+            }
+
+        graph_formats = {
+            "graphml": ("channels.graphml", "application/xml"),
+            "edgelist": ("channels.edgelist", "text/plain"),
+            "gexf": ("channels.gexf", "application/gexf+xml"),
+        }
+        if fmt in graph_formats:
+            filename, media_type = graph_formats[fmt]
+            export = nx.DiGraph()
+            for cid, n in nodes.items():
+                attrs = _node_attrs(n)
+                export.add_node(cid, **{k: ("" if v is None else v) for k, v in attrs.items()})
+            for e in payload.edges:
+                export.add_edge(
+                    e.source,
+                    e.target,
+                    relationship_type="co-occurrence",
+                    weight=e.video_edge_count,
+                )
+            buffer = io.BytesIO()
+            if fmt == "graphml":
+                nx.write_graphml(export, buffer)
+            elif fmt == "edgelist":
+                nx.write_edgelist(export, buffer)
+            else:
+                nx.write_gexf(export, buffer)
+            return filename, buffer.getvalue().decode("utf-8"), media_type
+
+        if fmt == "json":
+            out = {
+                "nodes": [{"data": _node_attrs(n)} for n in payload.nodes],
+                "links": [
+                    {
+                        "data": {
+                            "id": f"{e.source}->{e.target}",
+                            "source": e.source,
+                            "target": e.target,
+                            "weight": e.video_edge_count,
+                            "relationship_type": "co-occurrence",
+                        }
+                    }
+                    for e in payload.edges
+                ],
+            }
+            return (
+                "channels.json",
+                json.dumps(out, ensure_ascii=False, default=str),
+                "application/json",
+            )
+
+        if fmt == "csv":
+            buffer = io.StringIO()
+            writer = csv.writer(buffer, dialect="excel")
+            writer.writerow(
+                ["source", "target", "weight", "relationship_type"]
+            )
+            for e in payload.edges:
+                writer.writerow([e.source, e.target, e.video_edge_count, "co-occurrence"])
+            return "channels.csv", buffer.getvalue(), "text/csv"
+
+        valid = sorted(set(graph_formats) | {"csv", "json"})
+        raise ValueError(
+            f"Unsupported export format '{fmt}' for channel projection "
+            f"(expected one of: {', '.join(valid)})"
         )
     # ------------------------------------------------------------------
     def merge_networks(
@@ -1245,7 +1670,7 @@ class NetworkAnalyticsService:
         if union.number_of_edges() > 0:
             undirected = union.to_undirected()
             communities = sorted(
-                greedy_modularity_communities(undirected),
+                louvain_communities(undirected, seed=42),
                 key=len,
                 reverse=True,
             )
@@ -1339,6 +1764,7 @@ class NetworkAnalyticsService:
         layer_index: int | None = None,
         run_ids: list[str] | None = None,
         channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
         channel_scope: ChannelScope = "source",
     ) -> ChannelGraphPayload:
         """Co-occurrence graph of channels over the (layer-scoped) video edges.
@@ -1367,11 +1793,21 @@ class NetworkAnalyticsService:
         pair_runs: dict[tuple[str, str], set[str]] = {}
         pair_samples: dict[tuple[str, str], list[dict[str, Any]]] = {}
         unattributed = 0
+        # When layer-scoped, attribute each video edge to the EARLIEST layer that
+        # observed its (source, target) pair, so re-observations in later layers
+        # don't re-add the same channel-channel co-occurrence there.
+        _min_layer = self._earliest_layer_by_pair() if layer_index is not None else None
 
         for edge in self._repos.recommendations.list_recommendation_edges(
             run_id=run_id
         ):
             if layer_index is not None and edge.layer_index != layer_index:
+                continue
+            if (
+                _min_layer is not None
+                and _min_layer.get((edge.source_video_id, edge.recommended_video_id))
+                != layer_index
+            ):
                 continue
             if run_ids is not None and edge.collection_run_id not in run_ids:
                 continue
@@ -1384,15 +1820,21 @@ class NetworkAnalyticsService:
             if not source_channel or not target_channel:
                 unattributed += 1
                 continue
+            channel_set = set(channel_ids) if channel_ids else None
             if channel_id:
+                channel_set = {channel_id}
+            if channel_set:
                 if channel_scope == "target":
-                    if target_channel != channel_id:
+                    if target_channel not in channel_set:
                         continue
                 elif channel_scope == "either":
-                    if source_channel != channel_id and target_channel != channel_id:
+                    if (
+                        source_channel not in channel_set
+                        and target_channel not in channel_set
+                    ):
                         continue
                 else:  # default "source"
-                    if source_channel != channel_id:
+                    if source_channel not in channel_set:
                         continue
 
             channel_videos.setdefault(source_channel, set()).add(edge.source_video_id)

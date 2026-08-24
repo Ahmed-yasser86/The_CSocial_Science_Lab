@@ -145,6 +145,7 @@ def layer_scrape(request: Request, body: LayerScrapeRequest):
             projection=body.projection,
             collect_comments=body.collect_comments,
             concurrency=body.concurrency,
+            max_recommendations_per_video=body.max_recommendations_per_video,
             reporter=reporter,
         )
 
@@ -161,9 +162,14 @@ def list_layers(
     request: Request,
     cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+    run_id: str | None = Query(None, description="Scope to a run's layer family"),
 ):
-    """Paginated crawl layers, newest layer first (``layer_index`` desc)."""
-    layers = _layer_service(request).list_layers()
+    """Paginated crawl layers, newest layer first (``layer_index`` desc).
+
+    When ``run_id`` is supplied the result is scoped to that run's layer family
+    (the seed layer whose ``parent_run_id`` equals ``run_id`` plus descendants).
+    """
+    layers = _layer_service(request).list_layers(run_id=run_id)
     return paginated(
         layers,
         cursor=cursor,
@@ -213,19 +219,20 @@ def layer_graph(
     """The layer's graph in the requested projection.
 
     Layer 0 (a seed with no scraped edges) is served as the seed run's slice
-    (``run_id`` scoping); deeper layers are scoped by ``layer_index`` so the
-    researcher sees exactly what that crawl added.
+    (``run_id`` scoping); deeper layers are scoped by the layer's ``run_ids``
+    so the researcher sees exactly what that specific crawl added (not all
+    layers with the same ``layer_index``).
     """
     _require_projection(projection)
     layer = _require_layer(_layer_service(request), layer_run_id)
     analytics = _analytics(request)
     if layer.layer_index == 0 and layer.parent_run_id:
-        run_id, layer_index = layer.parent_run_id, None
+        run_id, layer_index, run_ids = layer.parent_run_id, None, None
     else:
-        run_id, layer_index = None, layer.layer_index
+        run_id, layer_index, run_ids = None, None, layer.run_ids or None
     if projection == "channel":
-        return analytics.channel_graph(run_id=run_id, layer_index=layer_index)
-    return analytics.graph(run_id=run_id, layer_index=layer_index)
+        return analytics.channel_graph(run_id=run_id, layer_index=layer_index, run_ids=run_ids)
+    return analytics.graph(run_id=run_id, layer_index=layer_index, run_ids=run_ids)
 
 
 @router.get(

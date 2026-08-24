@@ -89,8 +89,14 @@ def _require_projection(projection: str) -> None:
 
 
 def _action_key(action) -> tuple[str, ...]:
-    """Newest action first (descending ``started_at``)."""
-    return (f"{-int(action.started_at.timestamp()):020d}", action.action_id)
+    """Newest action first (descending ``started_at``).
+
+    Invert the epoch into a fixed-width key so string ordering matches numeric
+    descending order (a plain ``-ts`` zero-padded string sorts incorrectly for
+    negatives, which had been returning the oldest action first).
+    """
+    ts = int(action.started_at.timestamp())
+    return (f"{(999999999999 - ts):020d}", action.action_id)
 
 
 @router.post(

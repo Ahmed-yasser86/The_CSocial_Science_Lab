@@ -798,3 +798,41 @@ def test_recommendations_observed_edges_saved(tmp_path) -> None:
     assert {e.recommended_video_id for e in edges} == {"rec_one", "rec_two"}
     positions = {e.position for e in edges}
     assert positions == {0, 1}  # ordering preserved for ranking research
+
+
+def test_recommendation_scrape_invalidates_graph_cache(tmp_path) -> None:
+    """Regression for the "scrape never reflects in UI" defect.
+
+    build_graph() caches results; for the whole corpus the cache lives 300s and
+    for run-scoped slices it used to live forever. If a recommendation scrape
+    does not invalidate the cache, the network-tab graph keeps serving the
+    stale (empty) pre-scrape graph and the scrape appears to do nothing. This
+    test pre-warms the cache, runs a scrape, and asserts the graph now shows the
+    scraped edges.
+    """
+    from SocialScienceResearch.services.recommendation_graph_service import (
+        RecommendationGraphService,
+    )
+
+    video_raw = _load("video_raw.json")
+    provider = FakeAcquisitionProvider(
+        videos={"v1example0000000000000000001": video_raw},
+        recommendations=[{"id": "rec_one"}, {"id": "rec_two"}],
+    )
+    repos = build_excel_repositories(
+        RepositorySettings(data_dir=str(tmp_path), dataset_name="svc")
+    )
+    service = RecommendationService(provider, repos)
+
+    graph_service = RecommendationGraphService(repos)
+    graph_service.build_graph()  # warm the whole-corpus cache (empty)
+
+    result = service.collect_recommendations(
+        "https://www.youtube.com/watch?v=v1example0000000000000000001"
+    )
+    assert result.status == CollectionStatus.SUCCESS
+
+    # After the scrape the cached graph must be invalidated and rebuilt.
+    graph = graph_service.build_graph()
+    assert graph.has_node("rec_one")
+    assert graph.has_node("rec_two")

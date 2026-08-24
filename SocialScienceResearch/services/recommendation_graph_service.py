@@ -12,6 +12,7 @@ them, so temporal network slices are possible (``run_id``).
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,6 +60,14 @@ class VideoNetworkContext:
 class RecommendationGraphService:
     """Builds and analyzes the recommendation graph from stored edges."""
 
+    # Built graphs are expensive (a full edge scan + DiGraph assembly) and the
+    # underlying runs/observations are immutable once written, so we cache the
+    # result. The whole-corpus slice (no run filter) can only grow when new runs
+    # land, so it uses a short TTL to bound staleness; explicit run sets are
+    # permanently cached because their inputs never change.
+    _graph_cache: dict[tuple[int, bool, tuple[str, ...]], tuple[float, nx.DiGraph]] = {}
+    _GRAPH_TTL_SECONDS = 300.0
+
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
 
@@ -72,9 +81,26 @@ class RecommendationGraphService:
 
         ``run_id`` (single) or ``run_ids`` (list) scope which collection runs
         contribute edges; pass neither for the whole corpus. Pure read: never
-        writes datasets or other state.
+        writes datasets or other state. Results are cached (see class note).
         """
         resolved = run_ids if run_ids is not None else ([run_id] if run_id else None)
+        key = (
+            id(self._repos),
+            resolved is None,
+            tuple(sorted(resolved)) if resolved else (),
+        )
+        cached = self._graph_cache.get(key)
+        if cached is not None:
+            stamp, graph = cached
+            # Both whole-corpus and run-scoped slices expire after the TTL.
+            # Run-scoped graphs are NOT cached forever: expansion/layer crawls
+            # and recommendation scrapes append edges to existing runs, so a
+            # permanent cache would serve a stale graph indefinitely. Writers
+            # also call ``clear_graph_cache()`` to make new edges visible
+            # immediately; the TTL is a safety net against a missed invalidation.
+            if (time.time() - stamp) < self._GRAPH_TTL_SECONDS:
+                return graph
+
         edges = self._repos.recommendations.list_recommendation_edges_graph(
             run_ids=resolved
         )
@@ -89,7 +115,13 @@ class RecommendationGraphService:
                 channel_id=edge.get("channel_id"),
                 channel_name=edge.get("channel_name"),
             )
+        self._graph_cache[key] = (time.time(), graph)
         return graph
+
+    @classmethod
+    def clear_graph_cache(cls) -> None:
+        """Invalidate cached graphs (call after any write that adds edges)."""
+        cls._graph_cache.clear()
 
     def persist_graph_as_dataset(self, run_id: str | None = None) -> None:
         """Explicitly persist the current recommendation graph as a dataset.
@@ -187,7 +219,17 @@ class RecommendationGraphService:
         if graph.number_of_nodes() == 0:
             return context
 
-        node_meta = self._repos.videos.list_video_metadata(list(graph.nodes()))
+        # Compute the ego scope (queried video + everyone who recommends it +
+        # everything it recommends) up front so metadata is fetched only for
+        # the slice's videos instead of the entire corpus.
+        scope: set[str] = {video_id}
+        if video_id in graph:
+            for source, _, _ in graph.in_edges(video_id, data=True):
+                scope.add(source)
+            for _, target, _ in graph.out_edges(video_id, data=True):
+                scope.add(target)
+
+        node_meta = self._repos.videos.list_video_metadata(list(scope))
         context.node_channels = {
             vid: (meta.get("channel_id") or "")
             for vid, meta in node_meta.items()
@@ -218,11 +260,6 @@ class RecommendationGraphService:
         # as its own node with a cross-edge) instead of a star around the
         # queried video. Scope comes from the graph (untruncated) so top_n
         # pagination of the tables never shrinks the rendered network.
-        scope: set[str] = {video_id}
-        for source, _, _ in graph.in_edges(video_id, data=True):
-            scope.add(source)
-        for _, target, _ in graph.out_edges(video_id, data=True):
-            scope.add(target)
 
         slice_edges: list[dict[str, Any]] = []
         for source, target, data in graph.edges(data=True):

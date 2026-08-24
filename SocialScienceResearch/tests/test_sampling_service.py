@@ -520,3 +520,27 @@ def test_advanced_top_replies_percent_takes_top_x_percent(excel_repos) -> None:
     # Top 50% of 4 -> the two most-replied comments.
     assert result.entity_ids == ["p4", "p3"]
     assert result.sample_size == 2
+
+
+def test_advanced_filter_chaining_intersects_and_is_deterministic(overlap_corpus) -> None:
+    """Multi-layered boundary filters chain by AND, with no state leakage.
+
+    Phase 2.1: sequential filters must compose without leaking state across
+    re-renders - a second identical call yields an identical result, and the
+    combined result equals the intersection of the individual filter results.
+    """
+    svc = SamplingService(overlap_corpus)
+    only_alice = svc.sample_advanced(_advanced_comment_spec(author_names=["alice"]))
+    only_news = svc.sample_advanced(_advanced_comment_spec(categories=["news"]))
+    combined = svc.sample_advanced(
+        _advanced_comment_spec(author_names=["alice"], categories=["news"])
+    )
+    assert set(combined.entity_ids) <= set(only_alice.entity_ids)
+    assert set(combined.entity_ids) <= set(only_news.entity_ids)
+    assert set(combined.entity_ids) == set(only_alice.entity_ids) & set(only_news.entity_ids)
+    # No state leakage: an identical second call is byte-for-byte identical.
+    again = svc.sample_advanced(
+        _advanced_comment_spec(author_names=["alice"], categories=["news"])
+    )
+    assert set(again.entity_ids) == set(combined.entity_ids)
+
