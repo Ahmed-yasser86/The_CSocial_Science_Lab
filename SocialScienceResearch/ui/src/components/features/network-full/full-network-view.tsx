@@ -38,7 +38,7 @@ import { ExpansionPanel } from "@/components/features/network-expansion/expansio
 import { ScrapeFiltersDialog } from "@/components/features/network-expansion/scrape-filters-dialog";
 import { useExpansionJob, scrapeExpansionAll, scrapeExpansionVideo } from "@/services/networkExpansion";
 import type { ScrapeFilters as ExpansionFilters } from "@/lib/network-expansion-types";
-import type { ChannelGraphPayload, GraphProjection, NetworkGraphPayload } from "@/lib/network-full-types";
+import type { ChannelFacet, ChannelGraphPayload, GraphProjection, NetworkGraphPayload } from "@/lib/network-full-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Sparkles, FolderPlus } from "lucide-react";
@@ -278,6 +278,23 @@ export function FullNetworkView() {
     graphConnected !== null ||
     graphScraped !== null ||
     graphIncludeSubRuns;
+
+  // The channel facet list must stay stable while channel filters are active:
+  // a filtered graph response only carries facets for its own slice, so
+  // deriving the picker from the filtered payload would shrink it to the
+  // already-selected channel(s) and make multi-select impossible.
+  const [unfilteredChannels, setUnfilteredChannels] = useState<ChannelFacet[]>(
+    [],
+  );
+  useEffect(() => {
+    if (graphChannelIds.length > 0) return;
+    const next = graphQuery.data?.channels ?? [];
+    if (next.length > 0) setUnfilteredChannels(next);
+  }, [graphQuery.data, graphChannelIds]);
+  const channelFacets =
+    graphChannelIds.length > 0 && unfilteredChannels.length > 0
+      ? unfilteredChannels
+      : (graphQuery.data?.channels ?? []);
 
   const clearAllGraphFilters = () => {
     setRunId(null);
@@ -642,11 +659,7 @@ export function FullNetworkView() {
               ) : null}
 
               <ChannelMultiSelect
-                channels={
-                  graphQuery.data
-                    ? (graphQuery.data as NetworkGraphPayload | ChannelGraphPayload).channels
-                    : []
-                }
+                channels={channelFacets}
                 selected={graphChannelIds}
                 onChange={setGraphChannelIds}
               />
@@ -797,7 +810,7 @@ export function FullNetworkView() {
                   nodes={mapChannelGraphPayload(graphQuery.data as ChannelGraphPayload).nodes}
                   links={mapChannelGraphPayload(graphQuery.data as ChannelGraphPayload).links}
                   runs={graphQuery.data.runs}
-                  channels={graphQuery.data.channels}
+                  channels={channelFacets}
                   selectedRun={graphRunId ?? runId ?? undefined}
                   selectedChannel={graphChannelIds[0] ?? undefined}
                   onRunChange={(v) => {
@@ -821,7 +834,7 @@ export function FullNetworkView() {
                   nodes={mapGraphPayload(graphQuery.data as NetworkGraphPayload).nodes}
                   links={mapGraphPayload(graphQuery.data as NetworkGraphPayload).links}
                   runs={graphQuery.data.runs}
-                  channels={graphQuery.data.channels}
+                  channels={channelFacets}
                   selectedRun={graphRunId ?? runId ?? undefined}
                   selectedChannel={graphChannelIds[0] ?? undefined}
                   onRunChange={(v) => {
@@ -1121,7 +1134,12 @@ function NodeListPanel({
               </tr>
             </thead>
             <tbody>
-              {sorted.map((node) => (
+              {/* Cap rendered rows: with corpus-sized graphs (thousands of
+                  nodes) an unvirtualized table made every re-render of the Lab
+                  freeze the main thread for seconds. The badge keeps the true
+                  total; the top-of-list ordering is by degree, so the cap only
+                  trims the tail. */}
+              {sorted.slice(0, NODE_LIST_RENDER_CAP).map((node) => (
                 <tr key={node.id} className="border-t first:border-t-0">
                   <td className="max-w-56 truncate px-2 py-1 font-mono" title={node.title ?? undefined}>
                     {node.id}
@@ -1157,6 +1175,9 @@ function NodeListPanel({
 }
 
 type ChannelFacetLike = { channel_id: string; channel_name?: string | null };
+
+/** Max rows rendered in the (unvirtualized) node list table. */
+const NODE_LIST_RENDER_CAP = 200;
 
 function ChannelMultiSelect({
   channels,

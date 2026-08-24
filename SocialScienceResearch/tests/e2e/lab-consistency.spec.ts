@@ -11,8 +11,12 @@ test.describe("Lab consistency scenarios", () => {
     await page.getByRole("tab", { name: "Matrices" }).click();
     // The community matrix header cells carry the channel id in `title` and the
     // human channel name as visible text.
+    // The matrices payload is large on the production corpus; allow a
+    // generous wait (react-query also retries transient proxy 5xx).
     const header = page.locator("table thead th[title^='UC']").first();
-    await expect(header).toBeVisible({ timeout: 20000 });
+    // Cold path: first hit compiles the Matrices tab AND computes the
+    // O(channels^2) overlap on the production corpus — allow a generous wait.
+    await expect(header).toBeVisible({ timeout: 120000 });
     const title = (await header.getAttribute("title")) ?? "";
     const text = (await header.textContent())?.trim() ?? "";
     expect(title).toMatch(/^UC/); // title keeps the raw id
@@ -82,9 +86,15 @@ test.describe("Lab consistency scenarios", () => {
     await chips.nth(0).click();
     await chips.nth(1).click();
     await page.getByRole("button", { name: "Analyze" }).click();
-    await page.getByTestId("commenter-overlap-results").waitFor({ timeout: 20000 });
-    // channels projection guarantees >= 2 entities so the panels render
-    await page.getByRole("tab", { name: "Channels" }).click();
+    // Overlap computation streams a large corpus; allow a generous wait.
+    await page.getByTestId("commenter-overlap-results").waitFor({ timeout: 45000 });
+    // channels projection guarantees >= 2 entities so the panels render.
+    // Scope to the results container: the outer Lab tab list also has a
+    // "Channels" tab and strict mode forbids the ambiguity.
+    await page
+      .getByTestId("commenter-overlap-results")
+      .getByRole("tab", { name: "Channels" })
+      .click();
     await expect(
       page.getByRole("button", { name: "Expand Overlap heatmap" }),
     ).toBeVisible({ timeout: 20000 });

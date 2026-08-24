@@ -49,9 +49,9 @@ test.describe('Network Layers', () => {
       await page.getByRole('combobox', { name: 'Select seed run' }).click();
       await page.getByRole('option').first().click();
       await page.getByRole('button', { name: 'Bootstrap layer 0' }).click();
-      await expect(page.getByRole('button', { name: /Layer 0/ })).toBeVisible({
-        timeout: 20000,
-      });
+      await expect(
+        page.getByRole('button', { name: /Layer 0/ }).first(),
+      ).toBeVisible({ timeout: 20000 });
     }
   }
 
@@ -76,9 +76,9 @@ test.describe('Network Layers', () => {
 
     // If layers already exist, nothing to bootstrap; assert the seed chip.
     if ((await page.getByText('No crawl layers yet').count()) === 0) {
-      await expect(page.getByRole('button', { name: /Layer 0/ })).toBeVisible({
-        timeout: 20000,
-      });
+      await expect(
+        page.getByRole('button', { name: /Layer 0/ }).first(),
+      ).toBeVisible({ timeout: 20000 });
       return;
     }
 
@@ -86,9 +86,9 @@ test.describe('Network Layers', () => {
     await page.getByRole('option').first().click();
     await page.getByRole('button', { name: 'Bootstrap layer 0' }).click();
 
-    await expect(page.getByRole('button', { name: /Layer 0/ })).toBeVisible({
-      timeout: 20000,
-    });
+    await expect(
+      page.getByRole('button', { name: /Layer 0/ }).first(),
+    ).toBeVisible({ timeout: 20000 });
   });
 
   test('crawls the next layer and renders the relations panel + graph', async ({

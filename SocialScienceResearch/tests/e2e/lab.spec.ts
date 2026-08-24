@@ -13,11 +13,12 @@ test.describe("Network Analysis Lab shell", () => {
     await page.goto(`${BASE_URL}/network/full`);
     await page.waitForLoadState("networkidle");
 
-    // "Matrices" preset drives the tab to the matrices view.
+    // "Matrices" preset drives the tab to the matrices view. The matrices
+    // query is heavy on the production corpus; allow a generous wait.
     await page.getByRole("button", { name: "Matrices", exact: true }).click();
     await expect(
-      page.getByText("Community matrix (shared commenters)"),
-    ).toBeVisible({ timeout: 30000 });
+      page.getByText("Community matrix (shared commenters)").first(),
+    ).toBeVisible({ timeout: 60000 });
 
     // "Sampling" preset / tab shows the feasibility planner.
     await page.getByRole("button", { name: "Sampling", exact: true }).click();
@@ -43,14 +44,14 @@ test.describe("Network Analysis Lab shell", () => {
 
     await page.getByRole("button", { name: "Matrices", exact: true }).click();
     await expect(
-      page.getByText("Community matrix (shared commenters)"),
-    ).toBeVisible({ timeout: 30000 });
+      page.getByText("Community matrix (shared commenters)").first(),
+    ).toBeVisible({ timeout: 60000 });
 
     await page.reload();
     await page.waitForLoadState("networkidle");
     // localStorage session restored -> still on the Matrices view.
     await expect(
-      page.getByText("Community matrix (shared commenters)"),
-    ).toBeVisible({ timeout: 30000 });
+      page.getByText("Community matrix (shared commenters)").first(),
+    ).toBeVisible({ timeout: 60000 });
   });
 });

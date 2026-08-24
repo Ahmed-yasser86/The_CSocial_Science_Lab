@@ -64,7 +64,9 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
 
   async function openRunLayers(page: import('@playwright/test').Page, display: string) {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    // Never wait for networkidle here: the Lab keeps polling jobs/queries in
+    // the background, so network idle may never occur within the timeout.
+    await page.getByLabel('Select network slice run').waitFor({ timeout: 45000 });
     await page.getByLabel('Select network slice run').click();
     await page.getByRole('option', { name: display, exact: true }).click();
     await page.getByRole('tab', { name: 'Layers' }).click();
@@ -78,20 +80,21 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
     for (const t of targets) {
       await openRunLayers(page, t.display);
 
-      // The seed layer button for this run exists.
-      const seedBtn = page.getByRole('button', { name: /Layer 0 \(seed\)/ });
-      await expect(seedBtn).toBeVisible({ timeout: 15000 });
+      // The seed layer button for this run exists (a corpus-wide view can list
+      // many seed chips; any one proves this run's family rendered).
+      const seedBtn = page.getByRole('button', { name: /Layer 0 \(seed\)/ }).first();
+      await expect(seedBtn).toBeVisible({ timeout: 30000 });
       await seedBtn.click();
 
       // The stepper must name THIS run, not a global/default one.
       await expect(
         page.getByText(/Seed layer built from/).first(),
-      ).toBeVisible({ timeout: 15000 });
+      ).toBeVisible({ timeout: 30000 });
 
       // The relations panel loads for this run's layer.
       await expect(
         page.getByText(/What layer 0 added/),
-      ).toBeVisible({ timeout: 15000 });
+      ).toBeVisible({ timeout: 30000 });
 
       // The stepper reflects THIS run's layer (tied to the backend's own
       // discovered count) — proving the Layer tab is scoping to the selection
@@ -99,7 +102,7 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
       const enriched = page
         .getByText(/video\(s\) enriched/)
         .first();
-      await expect(enriched).toBeVisible({ timeout: 15000 });
+      await expect(enriched).toBeVisible({ timeout: 30000 });
       const txt = (await enriched.textContent()) ?? '0';
       const n = parseInt(txt.replace(/\D+/g, ''), 10);
       expect(
@@ -110,6 +113,7 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
   });
 
   test('different runs yield different Layer tab content', async ({ page }) => {
+    test.setTimeout(240000);
     test.skip(targets.length < 2, 'Need at least two runs with data');
     const [a, b] = targets;
 

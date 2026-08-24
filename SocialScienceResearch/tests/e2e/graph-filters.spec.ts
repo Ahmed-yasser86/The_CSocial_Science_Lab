@@ -39,7 +39,7 @@ test.describe("Lab Graph tab — multi-select channels/videos + never lose contr
     await videoInput.fill("ZZZZ_does_not_exist");
     await page.getByRole("button", { name: "Add", exact: true }).click();
 
-    await expect(page.getByText(/No network data for the current filters/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/No network data for the current filters/)).toBeVisible({ timeout: 30000 });
     await expect(page.getByRole("button", { name: "Clear all filters" }).first()).toBeVisible();
     await expect(page.getByText("Projection", { exact: true })).toBeVisible();
 
@@ -51,8 +51,9 @@ test.describe("Lab Graph tab — multi-select channels/videos + never lose contr
   test("Layers and Expansion tabs render without crashing", async ({ page }) => {
     await readyLab(page);
     await page.getByRole("tab", { name: "Layers" }).click();
-    await expect(page.getByText("Layer 0 (seed)")).toBeVisible({ timeout: 20000 });
-    await expect(page.getByText(/Layer .* graph/)).toBeVisible();
+    // Multiple seed layers exist in a populated corpus; any chip proves render.
+    await expect(page.getByText("Layer 0 (seed)").first()).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText(/Layer .* graph/).first()).toBeVisible();
     await page.getByRole("tab", { name: "Expansion" }).click();
     // default selection must be the newest, populated action (ordering fix),
     // not the empty seed -> the populated action shows an auto-project link.

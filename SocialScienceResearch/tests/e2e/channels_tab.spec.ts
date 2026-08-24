@@ -84,9 +84,11 @@ test.describe('Channels tab', () => {
       .first();
     await row.click();
 
+    // NOTE: Base UI renders the Link-wrapped action as an <a> with
+    // role="button", so query by button role (not link).
     await expect
       .poll(
-        async () => page.getByRole('link', { name: 'Analytics' }).count(),
+        async () => page.getByRole('button', { name: 'Analytics' }).count(),
         { timeout: 30000 },
       )
       .toBeGreaterThan(0);

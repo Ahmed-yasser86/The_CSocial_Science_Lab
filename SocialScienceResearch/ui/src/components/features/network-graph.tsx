@@ -117,6 +117,23 @@ const RUN_COLORS = [
   "#e11d48",
 ];
 
+/** Module-level thumbnail cache: images are decoded once and reused across
+ * frames. Creating a fresh Image() inside nodeCanvasObject (called per node
+ * per animation frame) previously stalled the main thread on large graphs.
+ */
+const thumbnailCache = new Map<string, HTMLImageElement>();
+
+function cachedThumbnail(url: string): HTMLImageElement | undefined {
+  let img = thumbnailCache.get(url);
+  if (!img) {
+    img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = url;
+    thumbnailCache.set(url, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : undefined;
+}
+
 function hashString(value: string): number {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -246,8 +263,12 @@ export function NetworkGraph({
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- force-graph's ref type is generics-hostile
   const graphRef = useRef<any>(null);
-  const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(
-    () => new Map(),
+  // Cached layout positions live in a ref (NOT state): feeding them back via
+  // setState re-created `graphData`, which re-heats the simulation, which
+  // fires onEngineStop again — an infinite render/engine loop that froze the
+  // page on graphs with thousands of nodes.
+  const positionsRef = useRef<Map<string, { x: number; y: number }>>(
+    new Map(),
   );
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
@@ -266,6 +287,17 @@ export function NetworkGraph({
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
+  // Content keys: parents re-render frequently (polling, query status flips)
+  // and recreate the nodes/links arrays each time. Keying the expensive memos
+  // on payload CONTENT instead of array identity keeps `graphData` (and thus
+  // the force simulation) stable across irrelevant re-renders — otherwise the
+  // engine re-heats over and over and the page freezes on large graphs.
+  const nodesKey = useMemo(() => nodes.map((n) => n.id).join("\n"), [nodes]);
+  const linksKey = useMemo(
+    () => links.map((l) => `${l.source}\u0000${l.target}`).join("\n"),
+    [links],
+  );
+
   const communities = useMemo(() => {
     const ids = new Set<number>();
     for (const n of nodes) if (n.community_id != null) ids.add(n.community_id);
@@ -283,13 +315,15 @@ export function NetworkGraph({
         kinds,
         communityId,
       }),
-    [nodes, search, minDegree, kinds, communityId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key on content, not array identity
+    [nodesKey, search, minDegree, kinds, communityId],
   );
 
   const visibleLinks = useMemo(() => {
     const visible = new Set(visibleNodes.map((n) => n.id));
     return links.filter((l) => visible.has(l.source) && visible.has(l.target));
-  }, [links, visibleNodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key on content, not array identity
+  }, [linksKey, visibleNodes]);
 
   function resetFilters() {
     setSearch("");
@@ -306,6 +340,7 @@ export function NetworkGraph({
 
   // Re-seed cached positions so toggling filters does not explode the layout.
   const graphData = useMemo(() => {
+    const cached = positionsRef.current;
     const nodeMap = new Map(visibleNodes.map((n) => [n.id, n]));
     // Feed high-degree nodes first so the spiral seed (and thus the settled
     // force layout) keeps the most connected videos near the center.
@@ -314,13 +349,13 @@ export function NetworkGraph({
         b.in_degree + b.out_degree - (a.in_degree + a.out_degree),
     );
     const positioned = ordered.map((n, index) => {
-      const cached = positions.get(n.id);
+      const cachedPos = cached.get(n.id);
       const seed = spiralSeed(index);
       return {
         id: n.id,
         val: Math.max(2, Math.sqrt(n.in_degree + n.out_degree + 1) * 2),
-        x: cached?.x != null ? cached.x : seed.x,
-        y: cached?.y != null ? cached.y : seed.y,
+        x: cachedPos?.x != null ? cachedPos.x : seed.x,
+        y: cachedPos?.y != null ? cachedPos.y : seed.y,
       };
     });
     return {
@@ -333,7 +368,7 @@ export function NetworkGraph({
           run_id: l.run_id ?? null,
         })),
     };
-  }, [visibleNodes, visibleLinks, positions]);
+  }, [visibleNodes, visibleLinks]);
 
   function linkRunId(link: unknown): string | null {
     const runId = (link as { run_id?: string | null }).run_id;
@@ -393,16 +428,7 @@ export function NetworkGraph({
     y?: number;
   }) {
     if (node?.id && node.x != null && node.y != null) {
-      const id = String(node.id);
-      setPositions((prev) => {
-        const current = prev.get(id);
-        if (current && Math.abs(current.x - node.x!) < 0.5 && Math.abs(current.y - node.y!) < 0.5) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(id, { x: node.x!, y: node.y! });
-        return next;
-      });
+      positionsRef.current.set(String(node.id), { x: node.x, y: node.y });
     }
   }
 
@@ -661,9 +687,8 @@ export function NetworkGraph({
               ctx.stroke();
 
               if (meta?.thumbnail) {
-                const img = new Image();
-                img.crossOrigin = "anonymous";
-                img.onload = () => {
+                const img = cachedThumbnail(meta.thumbnail);
+                if (img) {
                   ctx.save();
                   ctx.beginPath();
                   ctx.arc(node.x ?? 0, node.y ?? 0, radius - 1, 0, 2 * Math.PI);
@@ -676,8 +701,7 @@ export function NetworkGraph({
                     (radius - 1) * 2,
                   );
                   ctx.restore();
-                };
-                img.src = meta.thumbnail;
+                }
               }
 
               // Composite label: [ID] + Channel Name + Video Title.
