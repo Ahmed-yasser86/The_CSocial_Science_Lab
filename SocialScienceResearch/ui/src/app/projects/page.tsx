@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,14 +13,31 @@ import { listProjects, deleteProject } from "@/services/datasets";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format";
+import { useActiveSession } from "@/lib/session";
 import type { ResearchProject } from "@/lib/dataset-types";
 
 export default function ProjectsPage() {
+  return (
+    <Suspense fallback={<LoadingState label="Loading projects…" />}>
+      <ProjectsPageInner />
+    </Suspense>
+  );
+}
+
+function ProjectsPageInner() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { setActiveSession } = useActiveSession();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setBuilderOpen(true);
+    }
+  }, [searchParams]);
 
   const query = useQuery({
     queryKey: ["projects"],
@@ -114,6 +131,7 @@ export default function ProjectsPage() {
         onOpenChange={setBuilderOpen}
         onCreated={(project) => {
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          setActiveSession(project.project_id, null);
           router.push(`/projects/${project.project_id}`);
         }}
       />

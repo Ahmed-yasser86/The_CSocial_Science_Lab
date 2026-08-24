@@ -44,6 +44,10 @@ import {
   addDatasetsToItem,
   removeDatasetsFromItem,
 } from "@/services/datasets";
+import {
+  getSessionContext,
+  putSessionContext,
+} from "@/services/session";
 
 export const queryKeys = {
   runs: (runType?: RunType) => ["runs", runType ?? "all"] as const,
@@ -89,6 +93,7 @@ export const queryKeys = {
   projectItems: (projectId: string) => ["project-items", projectId] as const,
   projectItem: (projectId: string, itemId: string) =>
     ["project-items", projectId, itemId] as const,
+  sessionContext: () => ["session", "context"] as const,
 };
 
 export function useRuns(runType?: RunType) {
@@ -513,6 +518,25 @@ export function useCombineDatasets() {
     mutationFn: combineDatasets,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.datasets() });
+    },
+  });
+}
+
+export function useActiveSessionQuery() {
+  return useQuery({
+    queryKey: queryKeys.sessionContext(),
+    queryFn: getSessionContext,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+export function useSaveSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: putSessionContext,
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.sessionContext(), data);
     },
   });
 }
