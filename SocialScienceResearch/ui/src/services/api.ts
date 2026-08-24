@@ -84,10 +84,15 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function toQuery(params: Record<string, string | number | undefined | null>): string {
+export type QueryValue = string | number | boolean | undefined | null | string[];
+
+export function toQuery(params: Record<string, QueryValue>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== "") {
+    if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, String(item));
+    } else {
       search.append(key, String(value));
     }
   }
@@ -95,8 +100,27 @@ export function toQuery(params: Record<string, string | number | undefined | nul
   return qs ? `?${qs}` : "";
 }
 
-function filterToQuery(filter: VideoFilter | undefined): string {
-  const params: Record<string, string | number | undefined> = {};
+// Page through a cursor-paginated endpoint until exhausted, capped at maxPages.
+export async function fetchAllPages<T>(
+  buildPath: (cursor?: string) => string,
+  maxPages = 10,
+): Promise<T[]> {
+  const items: T[] = [];
+  let cursor: string | undefined;
+  let pages = 0;
+  do {
+    const page = await request<Paginated<T>>(buildPath(cursor));
+    items.push(...(page.items ?? []));
+    cursor = page.next_cursor ?? undefined;
+    pages += 1;
+  } while (cursor && pages < maxPages);
+  return items;
+}
+
+function filterToParams(
+  filter: VideoFilter | undefined,
+): Record<string, QueryValue> {
+  const params: Record<string, QueryValue> = {};
   if (filter?.date_from) params.date_from = filter.date_from;
   if (filter?.date_to) params.date_to = filter.date_to;
   if (filter?.video_type) params.video_type = filter.video_type;
@@ -113,18 +137,9 @@ function filterToQuery(filter: VideoFilter | undefined): string {
   if (filter?.upload_weekday !== undefined && filter?.upload_weekday !== null)
     params.upload_weekday = filter.upload_weekday;
   if (filter?.category) params.category = filter.category;
-
-  const parts: string[] = [];
-  for (const [key, value] of Object.entries(params)) {
-    parts.push(`${key}=${encodeURIComponent(String(value))}`);
-  }
-  for (const keyword of filter?.keywords ?? []) {
-    parts.push(`keywords=${encodeURIComponent(keyword)}`);
-  }
-  for (const tag of filter?.tags ?? []) {
-    parts.push(`tags=${encodeURIComponent(tag)}`);
-  }
-  return parts.length ? `?${parts.join("&")}` : "";
+  if (filter?.keywords?.length) params.keywords = filter.keywords;
+  if (filter?.tags?.length) params.tags = filter.tags;
+  return params;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +174,9 @@ export function submitCollect(spec: CollectionSpec): Promise<{ job_id: string }>
 }
 
 export function getJobs(): Promise<Job[]> {
-  return request<Paginated<Job>>("/jobs").then((page) => page.items ?? []);
+  return fetchAllPages<Job>(
+    (cursor) => `/jobs${toQuery({ page_size: 500, cursor })}`,
+  );
 }
 
 export function getJob(jobId: string): Promise<Job> {
@@ -193,8 +210,9 @@ export function getDatasetSummary(): Promise<DatasetSummary> {
 // Corpus extras
 // ---------------------------------------------------------------------------
 export function getVideoObservations(videoId: string): Promise<VideoObservation[]> {
-  return request<Paginated<VideoObservation>>(`/videos/${videoId}/observations`).then(
-    (page) => page.items ?? [],
+  return fetchAllPages<VideoObservation>(
+    (cursor) =>
+      `/videos/${videoId}/observations${toQuery({ page_size: 500, cursor })}`,
   );
 }
 
@@ -204,11 +222,13 @@ export function getVideoRaw(
   return request(`/videos/${videoId}/raw`);
 }
 
-export function getCommentThreads(videoId: string): Promise<{
-  video_id: string;
-  threads: CommentThread[];
-}> {
-  return request(`/videos/${videoId}/comments/threads`);
+export function getCommentThreads(videoId: string): Promise<CommentThread[]> {
+  // GET /videos/{id}/comments/threads returns a Paginated<ThreadPayload>
+  // ({comment, replies}) — the same shape as the existing CommentThread type.
+  return fetchAllPages<CommentThread>(
+    (cursor) =>
+      `/videos/${videoId}/comments/threads${toQuery({ page_size: 500, cursor })}`,
+  );
 }
 
 export function getChannelTopVideos(
@@ -306,9 +326,14 @@ export function getChannelVideos(
   channelId: string,
   filter?: VideoFilter,
 ): Promise<Video[]> {
-  return request<Paginated<Video>>(
-    `/channels/${channelId}/videos${filterToQuery(filter)}`,
-  ).then((page) => page.items ?? []);
+  return fetchAllPages<Video>(
+    (cursor) =>
+      `/channels/${channelId}/videos${toQuery({
+        ...filterToParams(filter),
+        page_size: 500,
+        cursor,
+      })}`,
+  );
 }
 
 export function getChannelVideoCount(channelId: string): Promise<{
@@ -369,8 +394,9 @@ export function getCommentVelocity(
 }
 
 export function getVideoComments(videoId: string): Promise<Comment[]> {
-  return request<Paginated<Comment>>(`/videos/${videoId}/comments`).then(
-    (page) => page.items ?? [],
+  return fetchAllPages<Comment>(
+    (cursor) =>
+      `/videos/${videoId}/comments${toQuery({ page_size: 500, cursor })}`,
   );
 }
 
@@ -378,9 +404,10 @@ export function getVideoComments(videoId: string): Promise<Comment[]> {
 // Recommendation network
 // ---------------------------------------------------------------------------
 export function getVideoRecommendations(videoId: string): Promise<RecommendationEdge[]> {
-  return request<Paginated<RecommendationEdge>>(
-    `/videos/${videoId}/recommendations`,
-  ).then((page) => page.items ?? []);
+  return fetchAllPages<RecommendationEdge>(
+    (cursor) =>
+      `/videos/${videoId}/recommendations${toQuery({ page_size: 500, cursor })}`,
+  );
 }
 
 export function getVideoNetworkContext(
@@ -452,8 +479,8 @@ export function resolveResearchQuery(
 // Run videos
 // ---------------------------------------------------------------------------
 export function getRunVideos(runId: string): Promise<RunVideo[]> {
-  return request<Paginated<RunVideo>>(`/runs/${runId}/videos`).then(
-    (page) => page.items ?? [],
+  return fetchAllPages<RunVideo>(
+    (cursor) => `/runs/${runId}/videos${toQuery({ page_size: 500, cursor })}`,
   );
 }
 

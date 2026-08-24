@@ -87,7 +87,7 @@ function setupDefaultMocks({
     mutate: vi.fn(),
   } as unknown as ReturnType<typeof queries.useSampleComments>);
   mockUseCommentThreads.mockReturnValue(
-    makeQuery({ data: { video_id: "v1", threads } }) as unknown as ReturnType<typeof queries.useCommentThreads>,
+    makeQuery({ data: threads }) as unknown as ReturnType<typeof queries.useCommentThreads>,
   );
 }
 

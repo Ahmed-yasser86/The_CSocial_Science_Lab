@@ -192,7 +192,7 @@ export function CommentsBrowser({ videoId }: { videoId: string }) {
     : `${formatNumber(comments.length)} comments collected · ${formatNumber(rootCount)} roots · ${formatNumber(replyCount)} replies`;
 
   if (threadId) {
-    const threadData = threadsQuery.data?.threads ?? [];
+    const threadData = threadsQuery.data ?? [];
     const thread = threadData.find((t) => t.comment.comment_id === threadId);
 
     if (!thread) {
