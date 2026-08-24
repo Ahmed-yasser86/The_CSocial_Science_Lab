@@ -364,6 +364,16 @@ def create_app(
             content=ErrorPayload(code="invalid_argument", message=str(exc)).model_dump(),
         )
 
+    @app.exception_handler(KeyError)
+    def _key_error_handler(request: Request, exc: KeyError) -> JSONResponse:
+        # Services raise KeyError for an unknown entity id (same convention as
+        # the commenters profile endpoint); bad *input* stays a ValueError.
+        message = str(exc.args[0]) if exc.args else str(exc)
+        return JSONResponse(
+            status_code=404,
+            content=ErrorPayload(code="not_found", message=message).model_dump(),
+        )
+
     prefix = settings.api.prefix
     repos = services["repos"]
 
@@ -386,6 +396,7 @@ def create_app(
         samples,
         scraper_config,
         search,
+        session,
     )
 
     app.include_router(channels.router, prefix=prefix)
@@ -401,6 +412,7 @@ def create_app(
     app.include_router(samples.router, prefix=prefix)
     app.include_router(scraper_config.router, prefix=prefix)
     app.include_router(search.router, prefix=prefix)
+    app.include_router(session.router, prefix=prefix)
 
     # ------------------------------------------------------------------
     # Collection

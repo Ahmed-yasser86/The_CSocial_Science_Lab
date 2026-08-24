@@ -4534,6 +4534,68 @@
         }
       }
     },
+    "/api/v1/social-science/session/context": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Get Session Context",
+        "description": "Return the active project/dataset selection for this data directory.",
+        "operationId": "get_session_context_api_v1_social_science_session_context_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContext"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "session"
+        ],
+        "summary": "Update Session Context",
+        "description": "Update the active project/dataset selection.\n\nAbsent fields stay unchanged; explicit ``null`` clears a field.",
+        "operationId": "update_session_context_api_v1_social_science_session_context_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionContextPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionContext"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/collect/channel": {
       "post": {
         "tags": [
@@ -16609,6 +16671,74 @@
         ],
         "title": "SearchHit",
         "description": "One unified search result row."
+      },
+      "SessionContext": {
+        "properties": {
+          "active_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Project Id"
+          },
+          "active_dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Dataset Id"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "updated_at"
+        ],
+        "title": "SessionContext",
+        "description": "Active project/dataset selection plus its last-update timestamp."
+      },
+      "SessionContextPatch": {
+        "properties": {
+          "active_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Project Id"
+          },
+          "active_dataset_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Dataset Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SessionContextPatch",
+        "description": "Body for ``PUT .../session/context`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; ``{\"active_project_id\": null}``\nclears that field without touching the other one."
       },
       "SharedCommenter": {
         "properties": {
