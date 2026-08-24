@@ -4,7 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { AppShell } from "@/components/layout/app-shell";
 import { ResearchContextProvider } from "@/lib/context";
-import { ActiveSessionProvider } from "@/lib/session";
+import { ActiveSessionProvider, ActiveWorkspaceProvider } from "@/lib/session";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,11 +39,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body className="min-h-full flex flex-col">
         <Providers>
-          <ActiveSessionProvider>
-            <ResearchContextProvider>
-              <AppShell>{children}</AppShell>
-            </ResearchContextProvider>
-          </ActiveSessionProvider>
+          <ActiveWorkspaceProvider>
+            <ActiveSessionProvider>
+              <ResearchContextProvider>
+                <AppShell>{children}</AppShell>
+              </ResearchContextProvider>
+            </ActiveSessionProvider>
+          </ActiveWorkspaceProvider>
         </Providers>
       </body>
     </html>

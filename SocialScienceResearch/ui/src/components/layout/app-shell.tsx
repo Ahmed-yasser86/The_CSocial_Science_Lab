@@ -1,13 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { FlaskConical, Compass, Network, FolderOpen, ListOrdered, Scale, Database, FolderKanban, GitCompare, Table2, Search, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CommandPalette } from "@/components/features/command-palette";
 import { ResearchContextBar } from "@/components/features/research-context-bar";
 import { JobsTray } from "@/components/features/jobs-tray";
 import { ThemeToggle } from "@/components/features/theme-toggle";
+import { useActiveWorkspace } from "@/lib/session";
 import { useResearchContext, withContext } from "@/lib/context";
 
 const NAV_ITEMS = [
@@ -28,7 +30,19 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { context } = useResearchContext();
+  const { hydrated, reconciled, workspaceId } = useActiveWorkspace();
+
+  // Route guard: content routes live INSIDE a workspace. Without an active
+  // workspace the only valid destination is the chooser at `/`. Waits for the
+  // server reconciliation so a fresh browser (empty localStorage, pointer
+  // only on the server) is never bounced before the pointer is restored.
+  useEffect(() => {
+    if (hydrated && reconciled && !workspaceId && pathname !== "/") {
+      router.replace("/");
+    }
+  }, [hydrated, reconciled, workspaceId, pathname, router]);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -44,32 +58,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="hidden sm:inline">Social Science Research</span>
           </Link>
 
-          <nav aria-label="Primary" className="flex items-center gap-1">
-            {NAV_ITEMS.map((item) => {
-              const active =
-                item.href === "/"
-                  ? pathname === "/"
-                  : pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={withContext(item.href, context)}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-                    active && "bg-muted text-foreground",
-                  )}
-                >
-                  <item.icon className="size-4" aria-hidden />
-                  <span className="hidden md:inline">{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
+          {workspaceId ? (
+            <nav aria-label="Primary" className="flex items-center gap-1">
+              {NAV_ITEMS.map((item) => {
+                const active =
+                  item.href === "/"
+                    ? pathname === "/"
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={withContext(item.href, context)}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+                      active && "bg-muted text-foreground",
+                    )}
+                  >
+                    <item.icon className="size-4" aria-hidden />
+                    <span className="hidden md:inline">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+          ) : null}
 
           <div className="ml-auto flex items-center gap-3">
             <ThemeToggle />
-            <JobsTray />
+            {workspaceId ? <JobsTray /> : null}
             <CommandPalette />
           </div>
         </div>

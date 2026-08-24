@@ -48,6 +48,11 @@ import {
   getSessionContext,
   putSessionContext,
 } from "@/services/session";
+import {
+  listWorkspaces,
+  getWorkspace,
+  createWorkspace,
+} from "@/services/workspaces";
 
 export const queryKeys = {
   runs: (runType?: RunType) => ["runs", runType ?? "all"] as const,
@@ -94,6 +99,8 @@ export const queryKeys = {
   projectItem: (projectId: string, itemId: string) =>
     ["project-items", projectId, itemId] as const,
   sessionContext: () => ["session", "context"] as const,
+  workspaces: () => ["workspaces"] as const,
+  workspace: (workspaceId: string) => ["workspaces", workspaceId] as const,
 };
 
 export function useRuns(runType?: RunType) {
@@ -537,6 +544,33 @@ export function useSaveSession() {
     mutationFn: putSessionContext,
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.sessionContext(), data);
+    },
+  });
+}
+
+export function useWorkspaces() {
+  return useQuery({
+    queryKey: queryKeys.workspaces(),
+    queryFn: listWorkspaces,
+    staleTime: 30_000,
+  });
+}
+
+export function useWorkspace(workspaceId: string) {
+  return useQuery({
+    queryKey: queryKeys.workspace(workspaceId),
+    queryFn: () => getWorkspace(workspaceId),
+    enabled: !!workspaceId,
+  });
+}
+
+export function useCreateWorkspace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createWorkspace,
+    onSuccess: (workspace) => {
+      queryClient.setQueryData(queryKeys.workspace(workspace.workspace_id), workspace);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.workspaces() });
     },
   });
 }

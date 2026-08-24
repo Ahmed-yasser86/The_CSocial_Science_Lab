@@ -10,11 +10,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSaveSession, useActiveSessionQuery } from "@/services/queries";
 import type { SessionContext } from "@/services/session";
 
 export const ACTIVE_SESSION_STORAGE_KEY = "ssr-active-session";
 export const ADHOC_SESSION_STORAGE_KEY = "ssr-adhoc-session";
+export const ACTIVE_WORKSPACE_STORAGE_KEY = "ssr-active-workspace";
 
 export interface ActiveSession {
   activeProjectId: string;
@@ -173,6 +175,82 @@ export function clearAdhocFlag(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace pointer persistence (same pattern as the project session: local
+// mirror + server reconciliation; the workspace lives in its own storage key
+// because it is global device-independent state, not per-workspace session)
+// ---------------------------------------------------------------------------
+export interface StoredActiveWorkspace {
+  workspaceId: string;
+  updatedAt: string;
+}
+
+export function parseStoredWorkspace(
+  raw: string | null,
+): StoredActiveWorkspace | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredActiveWorkspace>;
+    if (!parsed || typeof parsed.workspaceId !== "string" || !parsed.workspaceId) {
+      return null;
+    }
+    return {
+      workspaceId: parsed.workspaceId,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeStoredWorkspace(
+  workspaceId: string,
+  updatedAt: string,
+): string {
+  return JSON.stringify({ workspaceId, updatedAt } satisfies StoredActiveWorkspace);
+}
+
+export interface WorkspaceReconcileResult {
+  workspaceId: string | null;
+  pushLocal: boolean;
+}
+
+/** Merge local (localStorage) and server workspace pointers. The newer
+ *  timestamp wins; a winning local state still needs to be pushed. */
+export function reconcileWorkspaces(
+  local: StoredActiveWorkspace | null,
+  server: { active_workspace_id: string | null; updated_at: string } | null
+    | undefined,
+): WorkspaceReconcileResult {
+  const remote = server?.active_workspace_id ?? null;
+  if (!local && !remote) return { workspaceId: null, pushLocal: false };
+  if (!local) return { workspaceId: remote, pushLocal: false };
+  if (!remote) return { workspaceId: local.workspaceId, pushLocal: true };
+  const localTime = Date.parse(local.updatedAt);
+  const serverTime = Date.parse(server?.updated_at ?? "");
+  if (Number.isNaN(serverTime)) {
+    return { workspaceId: local.workspaceId, pushLocal: true };
+  }
+  if (Number.isNaN(localTime)) return { workspaceId: remote, pushLocal: false };
+  if (serverTime > localTime) return { workspaceId: remote, pushLocal: false };
+  return { workspaceId: local.workspaceId, pushLocal: true };
+}
+
+export function loadStoredActiveWorkspace(): StoredActiveWorkspace | null {
+  return parseStoredWorkspace(readRaw(ACTIVE_WORKSPACE_STORAGE_KEY));
+}
+
+export function saveStoredActiveWorkspace(
+  workspaceId: string,
+  updatedAt = new Date().toISOString(),
+): void {
+  writeRaw(ACTIVE_WORKSPACE_STORAGE_KEY, serializeStoredWorkspace(workspaceId, updatedAt));
+}
+
+export function clearStoredActiveWorkspace(): void {
+  removeRaw(ACTIVE_WORKSPACE_STORAGE_KEY);
+}
+
+// ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 export interface ActiveSessionValue {
@@ -259,6 +337,152 @@ export function useActiveSession(): ActiveSessionValue {
       session: null,
       setActiveSession: () => {},
       clearActiveSession: () => {},
+    }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Active workspace provider (outermost ring: WORKSPACE ⊃ active session)
+// ---------------------------------------------------------------------------
+export interface ActiveWorkspaceValue {
+  hydrated: boolean;
+  /** True once the local pointer has been reconciled with the server (or the
+   *  server is unreachable); guards must not act before this settles. */
+  reconciled: boolean;
+  workspaceId: string | null;
+  setActiveWorkspace: (workspaceId: string) => void;
+  clearActiveWorkspace: () => void;
+}
+
+const ActiveWorkspaceContext = createContext<ActiveWorkspaceValue | null>(null);
+
+export function ActiveWorkspaceProvider({ children }: { children: ReactNode }) {
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  const [reconciled, setReconciled] = useState(false);
+  const reconciledRef = useRef(false);
+  // Mirror of workspaceId for synchronous reads inside callbacks (state updates
+  // are async; applySwitch needs the PREVIOUS id at call time for revert).
+  const workspaceIdRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
+  const saveMutation = useSaveSession();
+  const serverQuery = useActiveSessionQuery();
+
+  useEffect(() => {
+    const stored = loadStoredActiveWorkspace();
+    setWorkspaceId(stored?.workspaceId ?? null);
+    workspaceIdRef.current = stored?.workspaceId ?? null;
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    workspaceIdRef.current = workspaceId;
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!hydrated || reconciledRef.current) return;
+    if (serverQuery.isLoading) return;
+    reconciledRef.current = true;
+    if (serverQuery.isError) {
+      // Server unreachable: trust the local pointer as-is.
+      setReconciled(true);
+      return;
+    }
+    const result = reconcileWorkspaces(
+      loadStoredActiveWorkspace(),
+      serverQuery.data ?? null,
+    );
+    setWorkspaceId(result.workspaceId);
+    setReconciled(true);
+    if (!result.workspaceId) {
+      clearStoredActiveWorkspace();
+    } else if (result.pushLocal) {
+      saveMutation.mutate({
+        active_workspace_id: result.workspaceId,
+      });
+    } else {
+      saveStoredActiveWorkspace(result.workspaceId, serverQuery.data?.updated_at);
+    }
+  }, [hydrated, serverQuery.data, serverQuery.isLoading, serverQuery.isError, saveMutation]);
+
+  // Switching workspaces swaps the entire persistence binding server-side,
+  // so every cached query of the previous workspace is invalid.
+  const applySwitch = useCallback(
+    (nextId: string | null, storedUpdatedAt?: string) => {
+      const previousId = workspaceIdRef.current;
+      if (nextId === null) {
+        clearStoredActiveWorkspace();
+      } else {
+        saveStoredActiveWorkspace(nextId, storedUpdatedAt);
+      }
+      queryClient.clear();
+      void saveMutation
+        .mutateAsync({ active_workspace_id: nextId })
+        .catch(() => {
+          // The server refused the switch (e.g. pending/running jobs guard):
+          // revert local state + storage so the UI never claims a workspace
+          // the backend is not actually serving.
+          if (previousId === null) {
+            clearStoredActiveWorkspace();
+          } else {
+            saveStoredActiveWorkspace(previousId);
+          }
+          setWorkspaceId(previousId);
+        })
+        .finally(() => {
+          // Queries refetched during the in-flight PUT may have been served
+          // by the PREVIOUS workspace's database (the server-side pointer
+          // switches when this request lands). CLEAR (not just invalidate)
+          // after settle: invalidation can lose the race against in-flight
+          // refetches, leaving rows of the old workspace rendered.
+          queryClient.clear();
+          queryClient.invalidateQueries();
+        });
+    },
+    [queryClient, saveMutation],
+  );
+
+  const setActiveWorkspace = useCallback(
+    (id: string) => {
+      const updatedAt = new Date().toISOString();
+      setWorkspaceId(id);
+      applySwitch(id, updatedAt);
+    },
+    [applySwitch],
+  );
+
+  const clearActiveWorkspace = useCallback(() => {
+    setWorkspaceId(null);
+    applySwitch(null);
+  }, [applySwitch]);
+
+  const value = useMemo<ActiveWorkspaceValue>(
+    () => ({
+      hydrated,
+      reconciled,
+      workspaceId,
+      setActiveWorkspace,
+      clearActiveWorkspace,
+    }),
+    [hydrated, reconciled, workspaceId, setActiveWorkspace, clearActiveWorkspace],
+  );
+
+  return (
+    <ActiveWorkspaceContext.Provider value={value}>
+      {children}
+    </ActiveWorkspaceContext.Provider>
+  );
+}
+
+export function useActiveWorkspace(): ActiveWorkspaceValue {
+  const value = useContext(ActiveWorkspaceContext);
+  return (
+    value ?? {
+      hydrated: false,
+      reconciled: false,
+      workspaceId: null,
+      setActiveWorkspace: () => {},
+      clearActiveWorkspace: () => {},
     }
   );
 }

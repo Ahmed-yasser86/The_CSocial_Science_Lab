@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   parseStoredSession,
+  parseStoredWorkspace,
   reconcileSessions,
+  reconcileWorkspaces,
   serializeStoredSession,
+  serializeStoredWorkspace,
   type StoredActiveSession,
+  type StoredActiveWorkspace,
 } from "@/lib/session";
 
 const local: StoredActiveSession = {
@@ -18,6 +22,7 @@ function serverSession(
   datasetId: string | null = null,
 ) {
   return {
+    active_workspace_id: null,
     active_project_id: projectId,
     active_dataset_id: datasetId,
     updated_at: updatedAt,
@@ -131,5 +136,59 @@ describe("parseStoredSession / serializeStoredSession", () => {
         JSON.stringify({ activeProjectId: "p1", activeDatasetId: 42 }),
       ),
     ).toMatchObject({ activeProjectId: "p1", activeDatasetId: null });
+  });
+});
+
+describe("workspace pointer persistence", () => {
+  const localWorkspace: StoredActiveWorkspace = {
+    workspaceId: "ws_local",
+    updatedAt: "2026-01-02T00:00:00Z",
+  };
+
+  function serverContext(workspaceId: string | null, updatedAt: string) {
+    return { active_workspace_id: workspaceId, updated_at: updatedAt };
+  }
+
+  it("round-trips a stored workspace pointer", () => {
+    const raw = serializeStoredWorkspace("ws_1", "2026-01-01T12:00:00Z");
+    expect(parseStoredWorkspace(raw)).toEqual({
+      workspaceId: "ws_1",
+      updatedAt: "2026-01-01T12:00:00Z",
+    });
+  });
+
+  it("rejects malformed or empty pointers", () => {
+    expect(parseStoredWorkspace(null)).toBeNull();
+    expect(parseStoredWorkspace("{broken")).toBeNull();
+    expect(parseStoredWorkspace(JSON.stringify({ workspaceId: "" }))).toBeNull();
+  });
+
+  it("reconciles like sessions: newer timestamp wins", () => {
+    // Server wins when newer.
+    expect(
+      reconcileWorkspaces(localWorkspace, serverContext("ws_server", "2026-01-05T00:00:00Z")),
+    ).toEqual({ workspaceId: "ws_server", pushLocal: false });
+    // Local wins (and pushes) when newer.
+    expect(
+      reconcileWorkspaces(localWorkspace, serverContext("ws_server", "2026-01-01T00:00:00Z")),
+    ).toEqual({ workspaceId: "ws_local", pushLocal: true });
+  });
+
+  it("adopts whichever side exists when the other is empty", () => {
+    expect(reconcileWorkspaces(null, null)).toEqual({
+      workspaceId: null,
+      pushLocal: false,
+    });
+    expect(
+      reconcileWorkspaces(null, serverContext("ws_remote", "2026-01-01T00:00:00Z")),
+    ).toEqual({ workspaceId: "ws_remote", pushLocal: false });
+    expect(reconcileWorkspaces(localWorkspace, undefined)).toEqual({
+      workspaceId: "ws_local",
+      pushLocal: true,
+    });
+    expect(reconcileWorkspaces(localWorkspace, serverContext(null, "x"))).toEqual({
+      workspaceId: "ws_local",
+      pushLocal: true,
+    });
   });
 });

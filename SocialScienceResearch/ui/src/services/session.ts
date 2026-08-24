@@ -1,12 +1,14 @@
 import { request } from "@/services/api";
 
 export interface SessionContext {
+  active_workspace_id: string | null;
   active_project_id: string | null;
   active_dataset_id: string | null;
   updated_at: string;
 }
 
 export interface SessionContextPatch {
+  active_workspace_id?: string | null;
   active_project_id?: string | null;
   active_dataset_id?: string | null;
 }
