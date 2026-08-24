@@ -17,10 +17,16 @@ _RESPONSE_CONFIG = ConfigDict(extra="allow")
 
 
 class SessionContext(BaseModel):
-    """Active project/dataset selection plus its last-update timestamp."""
+    """Active workspace + project/dataset selection plus last-update timestamp.
+
+    ``active_workspace_id`` is stored OUTSIDE any per-workspace session file
+    (a workspace cannot contain the pointer to itself): it lives in the root
+    ``workspaces/active.json`` document managed by :class:`WorkspaceService`.
+    """
 
     model_config = _RESPONSE_CONFIG
 
+    active_workspace_id: str | None = None
     active_project_id: str | None = None
     active_dataset_id: str | None = None
     updated_at: datetime
@@ -30,10 +36,13 @@ class SessionContextPatch(BaseModel):
     """Body for ``PUT .../session/context`` (``extra="forbid"``).
 
     Only explicitly provided fields are applied; ``{"active_project_id": null}``
-    clears that field without touching the other one.
+    clears that field without touching the other one. Setting
+    ``active_workspace_id`` performs a full workspace activation (one code
+    path with ``POST /workspaces/{id}/activate`` semantics).
     """
 
     model_config = _REQUEST_CONFIG
 
+    active_workspace_id: str | None = None
     active_project_id: str | None = None
     active_dataset_id: str | None = None

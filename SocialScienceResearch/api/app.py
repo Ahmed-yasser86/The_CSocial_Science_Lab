@@ -139,10 +139,19 @@ class NetworkScrapeChannelRequest(BaseModel):
     dedupe: bool = True
 
 
-def _services(
-    settings: SocialScienceSettings, *, provider=None
+def build_services(
+    settings: SocialScienceSettings,
+    *,
+    provider=None,
+    repository=None,
 ) -> dict[str, Any]:
-    repos = build_repositories(settings.repository)
+    """Build the full service container for one persistence binding.
+
+    ``repository`` overrides ``settings.repository`` so the SAME factory
+    provisions services against a workspace's database + data dir (plan §2.3).
+    """
+    repo_settings = repository or settings.repository
+    repos = build_repositories(repo_settings)
     if provider is None:
         from SocialScienceResearch.acquisition import YtDlpAcquisitionProvider
 
@@ -168,6 +177,164 @@ def _services(
             ),
         "layer_scrape": LayerScrapeService(provider, repos, settings=settings),
     }
+
+
+#: Keys owned by :func:`build_services`; anything else found in the live
+#: container was lazily cached there by a router (``common.get_service``) and
+#: must be dropped on a workspace switch because it closes over stale repos.
+_CORE_SERVICE_KEYS = frozenset({
+    "repos",
+    "collection",
+    "recommendations",
+    "analytics",
+    "query",
+    "sampling",
+    "network",
+    "quality",
+    "jobs",
+    "layer_scrape",
+})
+
+
+class _ActiveRepos:
+    """Attribute-forwarding view of the CURRENT workspace's repositories.
+
+    ``create_app`` exposes ``repos = _ActiveRepos(services)`` to its direct
+    routes, so every ``repos.videos.list_videos(...)`` call site resolves
+    against whichever repository container the active workspace routing last
+    installed - no per-route churn, no stale pool access after a switch.
+    """
+
+    __slots__ = ("_services",)
+
+    def __init__(self, services: dict[str, Any]) -> None:
+        self._services = services
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._services["repos"], name)
+
+
+class WorkspaceRuntime:
+    """Connection routing: binds request handling to the ACTIVE workspace.
+
+    The active pointer lives in ``<root data_dir>/workspaces/active.json``
+    (server-side authoritative state). :meth:`sync` compares it with the
+    currently-bound workspace and, on a switch, rebuilds every persistence-
+    bound service in place (the SAME dict object is mutated so both the
+    closures in :func:`create_app` and the routers reading
+    ``request.app.state.services`` observe the new binding), clears the
+    class-level graph/overlap caches and disposes the previous pool.
+    """
+
+    def __init__(self, settings: SocialScienceSettings, *, provider=None) -> None:
+        self.settings = settings
+        self.provider = provider
+        from SocialScienceResearch.services.workspace_service import WorkspaceService
+
+        self.workspaces = WorkspaceService(settings)
+        # First run registers the existing default DB/data dir as the
+        # renamable Legacy workspace; subsequent runs are no-ops.
+        self.workspaces.bootstrap()
+        self.services: dict[str, Any] = {}
+        # Signature of the persistence binding currently loaded in
+        # ``self.services``; starts as the default (Legacy) configuration.
+        self.active_workspace_id: str | None = None
+        self._bound: tuple[str, str] = (
+            settings.repository.database_url,
+            str(Path(settings.repository.data_dir)),
+        )
+        self._runtime_config: Any = None
+
+    def attach_runtime_config(self, runtime_config: Any) -> None:
+        """Remember the mutable scraper config for post-switch rewiring."""
+        self._runtime_config = runtime_config
+
+    def sync(self, app: FastAPI) -> None:
+        """Ensure ``self.services`` is bound to the active workspace."""
+        try:
+            workspace_id = self.workspaces.active_workspace_id()
+            if workspace_id is not None:
+                self.workspaces.get(workspace_id)  # dangling-pointer check
+            else:
+                workspace_id = None
+        except KeyError:
+            # Registry lost the pointed-at workspace: deactivate instead of
+            # serving requests against an unknown database.
+            self.workspaces.deactivate()
+            workspace_id = None
+
+        if workspace_id == self.active_workspace_id and self._bound is not None:
+            return
+
+        workspace = (
+            self.workspaces.get(workspace_id) if workspace_id is not None else None
+        )
+        repository = (
+            self.workspaces.repository_settings(workspace)
+            if workspace is not None
+            else None
+        )
+        if workspace is not None:
+            signature: tuple[str, str] | None = (
+                workspace.database_url,
+                str(Path(workspace.data_dir)),
+            )
+        else:
+            signature = None
+        if (
+            signature is not None
+            and signature == self._bound
+            and self.services
+        ):
+            # Pointer already matches the loaded binding (e.g. Legacy).
+            self.active_workspace_id = workspace_id
+            return
+
+        old_repos = self.services.get("repos")
+        fresh = build_services(
+            self.settings, provider=self.provider, repository=repository
+        )
+        # The JobManager survives activation by design (its queue must be
+        # empty - activation is guarded while jobs are pending/running).
+        fresh["jobs"] = self.services.get("jobs") or fresh["jobs"]
+        for key in list(self.services):
+            if key not in _CORE_SERVICE_KEYS:
+                del self.services[key]
+        self.services.clear()
+        self.services.update(fresh)
+        if self._runtime_config is not None:
+            self.services["layer_scrape"].set_runtime_config(self._runtime_config)
+            self.services["recommendations"].set_runtime_config(self._runtime_config)
+        # Class-level caches have no workspace dimension: clear them on EVERY
+        # switch (pitfalls R1/A1 defense-in-depth; instance TTL caches die
+        # with the discarded service objects).
+        RecommendationGraphService.clear_graph_cache()
+        from SocialScienceResearch.services.commenter_overlap_service import (
+            CommenterOverlapService,
+        )
+
+        CommenterOverlapService.clear_overlap_cache()
+        if old_repos is not None and old_repos is not self.services["repos"]:
+            old_repos.store.close()
+        self.active_workspace_id = workspace_id
+        self._bound = signature
+
+    def active_jobs(self) -> list[Any]:
+        """Jobs still pending/running (blocks workspace switches)."""
+        manager = self.services.get("jobs")
+        if manager is None:
+            return []
+        active = []
+        for job in manager.list():
+            status = getattr(job.status, "value", str(job.status))
+            if status in ("pending", "running"):
+                active.append(job)
+        return active
+
+
+# Backwards-compatible alias (module was referenced as ``_services`` before the
+# workspace-routing refactor; nothing outside this module should use it).
+_services = build_services
 
 
 def _run_key(run) -> tuple[str, ...]:
@@ -278,7 +445,10 @@ def create_app(
     settings: SocialScienceSettings | None = None, *, provider=None
 ) -> FastAPI:
     settings = settings or SocialScienceSettings()
-    services = _services(settings, provider=provider)
+    runtime = WorkspaceRuntime(settings, provider=provider)
+    services = runtime.services
+    services.update(build_services(settings, provider=provider))
+    runtime.active_workspace_id = None  # synced to the persisted pointer below
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -308,6 +478,17 @@ def create_app(
     )
     app.state.services = services
     app.state.settings = settings
+    app.state.workspace_runtime = runtime
+
+    # Request-scoped workspace routing: every request is served by the
+    # services bound to the ACTIVE workspace's database + data dir. Installed
+    # as HTTP middleware so both these direct routes (whose closures share the
+    # mutated ``services`` dict) and every router reading
+    # ``request.app.state.services`` are covered without per-route churn.
+    @app.middleware("http")
+    async def route_to_active_workspace(request: Request, call_next):
+        runtime.sync(request.app)
+        return await call_next(request)
 
     # Mutable runtime scraper config (UI can update without restart).
     from SocialScienceResearch.config.runtime_config import RuntimeScraperConfig
@@ -375,7 +556,7 @@ def create_app(
         )
 
     prefix = settings.api.prefix
-    repos = services["repos"]
+    repos = _ActiveRepos(services)
 
     # ------------------------------------------------------------------
     # Phase B-D routers (split modules so they build in parallel).
@@ -397,6 +578,7 @@ def create_app(
         scraper_config,
         search,
         session,
+        workspaces,
     )
 
     app.include_router(channels.router, prefix=prefix)
@@ -413,6 +595,12 @@ def create_app(
     app.include_router(scraper_config.router, prefix=prefix)
     app.include_router(search.router, prefix=prefix)
     app.include_router(session.router, prefix=prefix)
+    app.include_router(workspaces.router, prefix=prefix)
+
+    # Align the initial service binding with the persisted active-workspace
+    # pointer (no-op when it still points at the default/Legacy configuration).
+    runtime.sync(app)
+
 
     # ------------------------------------------------------------------
     # Collection

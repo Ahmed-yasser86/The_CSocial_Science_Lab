@@ -4540,7 +4540,7 @@
           "session"
         ],
         "summary": "Get Session Context",
-        "description": "Return the active project/dataset selection for this data directory.",
+        "description": "Return the active workspace + project/dataset selection.",
         "operationId": "get_session_context_api_v1_social_science_session_context_get",
         "responses": {
           "200": {
@@ -4560,7 +4560,7 @@
           "session"
         ],
         "summary": "Update Session Context",
-        "description": "Update the active project/dataset selection.\n\nAbsent fields stay unchanged; explicit ``null`` clears a field.",
+        "description": "Update the active workspace/project/dataset selection.\n\nAbsent fields stay unchanged; explicit ``null`` clears a field.",
         "operationId": "update_session_context_api_v1_social_science_session_context_put",
         "requestBody": {
           "content": {
@@ -4579,6 +4579,166 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SessionContext"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/workspaces": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "List Workspaces",
+        "description": "All registered workspaces with chooser-card stats (Legacy included).",
+        "operationId": "list_workspaces_api_v1_social_science_workspaces_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/WorkspacePayload"
+                  },
+                  "type": "array",
+                  "title": "Response List Workspaces Api V1 Social Science Workspaces Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Create Workspace",
+        "description": "Provision a new fully isolated workspace (fresh DB + data dir).",
+        "operationId": "create_workspace_api_v1_social_science_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkspaceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/workspaces/{workspace_id}": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Get Workspace",
+        "description": "One workspace by id.",
+        "operationId": "get_workspace_api_v1_social_science_workspaces__workspace_id__get",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Update Workspace",
+        "description": "Rename / retitle a workspace. ``is_legacy`` is immutable; Legacy stays\nrenamable like any other workspace.",
+        "operationId": "update_workspace_api_v1_social_science_workspaces__workspace_id__patch",
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Workspace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkspaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspacePayload"
                 }
               }
             }
@@ -9850,6 +10010,35 @@
         ],
         "title": "CreateSampleRequest",
         "description": "Body of ``POST {prefix}/samples`` (mirrors ``SamplingResult`` fields)."
+      },
+      "CreateWorkspaceRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "research_topic": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Topic"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateWorkspaceRequest",
+        "description": "Body for ``POST .../workspaces``."
       },
       "Dataset": {
         "properties": {
@@ -16674,6 +16863,17 @@
       },
       "SessionContext": {
         "properties": {
+          "active_workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Workspace Id"
+          },
           "active_project_id": {
             "anyOf": [
               {
@@ -16708,10 +16908,21 @@
           "updated_at"
         ],
         "title": "SessionContext",
-        "description": "Active project/dataset selection plus its last-update timestamp."
+        "description": "Active workspace + project/dataset selection plus last-update timestamp.\n\n``active_workspace_id`` is stored OUTSIDE any per-workspace session file\n(a workspace cannot contain the pointer to itself): it lives in the root\n``workspaces/active.json`` document managed by :class:`WorkspaceService`."
       },
       "SessionContextPatch": {
         "properties": {
+          "active_workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Workspace Id"
+          },
           "active_project_id": {
             "anyOf": [
               {
@@ -16738,7 +16949,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "SessionContextPatch",
-        "description": "Body for ``PUT .../session/context`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; ``{\"active_project_id\": null}``\nclears that field without touching the other one."
+        "description": "Body for ``PUT .../session/context`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; ``{\"active_project_id\": null}``\nclears that field without touching the other one. Setting\n``active_workspace_id`` performs a full workspace activation (one code\npath with ``POST /workspaces/{id}/activate`` semantics)."
       },
       "SharedCommenter": {
         "properties": {
@@ -17325,6 +17536,39 @@
         "type": "object",
         "title": "UpdateRunRequest",
         "description": "Body for ``PATCH .../runs/{run_id}`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; the primary editable field is\nthe researcher-provided ``name`` label."
+      },
+      "UpdateWorkspaceRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "research_topic": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Topic"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "UpdateWorkspaceRequest",
+        "description": "PATCH body for ``PATCH .../workspaces/{workspace_id}``.\n\n``model_fields_set`` semantics like the session patch: absent fields stay\nunchanged. ``is_legacy`` is immutable by construction (not patchable)."
       },
       "ValidationError": {
         "properties": {
@@ -18388,6 +18632,105 @@
           "first_observed_run_id"
         ],
         "title": "VideoPayload"
+      },
+      "WorkspacePayload": {
+        "properties": {
+          "workspace_id": {
+            "type": "string",
+            "title": "Workspace Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "research_topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Research Topic"
+          },
+          "is_legacy": {
+            "type": "boolean",
+            "title": "Is Legacy",
+            "default": false
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_opened_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Opened At"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/WorkspaceStats"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "workspace_id",
+          "name",
+          "created_at",
+          "last_opened_at"
+        ],
+        "title": "WorkspacePayload",
+        "description": "API projection of a workspace (no paths / connection strings)."
+      },
+      "WorkspaceStats": {
+        "properties": {
+          "runs": {
+            "type": "integer",
+            "title": "Runs",
+            "default": 0
+          },
+          "videos": {
+            "type": "integer",
+            "title": "Videos",
+            "default": 0
+          },
+          "channels": {
+            "type": "integer",
+            "title": "Channels",
+            "default": 0
+          },
+          "comments": {
+            "type": "integer",
+            "title": "Comments",
+            "default": 0
+          },
+          "datasets": {
+            "type": "integer",
+            "title": "Datasets",
+            "default": 0
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples",
+            "default": 0
+          },
+          "projects": {
+            "type": "integer",
+            "title": "Projects",
+            "default": 0
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "WorkspaceStats",
+        "description": "Volume counters shown on a chooser card (observed, never estimated)."
       }
     }
   }
