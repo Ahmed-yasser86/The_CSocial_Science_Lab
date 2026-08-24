@@ -334,7 +334,12 @@ class CommenterOverlapService:
         if not video_ids and not channel_ids:
             raise ValueError("Provide at least one of video_ids or channel_ids")
 
+        # The leading repos identity keeps workspaces (each with its own
+        # repository binding) from reading each other's cached overlaps;
+        # activation additionally clears this class-level cache wholesale
+        # (workspace_isolation_plan §2.3 step 4, pitfall R1/A1).
         cache_key = (
+            id(self._repos),
             tuple(sorted(video_ids)),
             tuple(sorted(channel_ids)),
             metric,

@@ -466,3 +466,50 @@ def test_comment_write_invalidates_overlap_cache(excel_repos) -> None:
         p for p in second.videos.pairs if p.entity_b == "v2"
     )
     assert pair2.set_size_b == 3  # frank joined v2
+
+
+# ----------------------------------------------------------------------
+# Workspace isolation (class-level cache safety)
+# ----------------------------------------------------------------------
+def test_overlap_cache_keys_carry_their_owning_repositories(excel_repos, tmp_path) -> None:
+    """Regression guard (workspace isolation plan §5.3 / pitfall R1-A1).
+
+    The class-level ``_overlap_cache`` has no TTL-long workspace dimension of
+    its own, so every entry MUST be keyed by the repository container that
+    produced it; activation additionally clears the whole cache on every
+    workspace switch (asserted in ``test_workspace_service.py``).
+    """
+    svc_a = _service(excel_repos)
+    result = svc_a.overlap(video_ids=["v1", "v2"])
+    assert result.videos is not None
+    # The entry svc_a just created is keyed by ITS repository container.
+    owned = [
+        key
+        for key in CommenterOverlapService._overlap_cache
+        if key[0] == id(svc_a._repos) and key[1] == ("v1", "v2")
+    ]
+    assert owned
+
+    from SocialScienceResearch.config.settings import RepositorySettings
+    from SocialScienceResearch.persistence.excel_repository import (
+        build_excel_repositories,
+    )
+
+    repos_b = build_excel_repositories(
+        RepositorySettings(data_dir=str(tmp_path), dataset_name="overlap_b")
+    )
+    try:
+        before_b = set(CommenterOverlapService._overlap_cache)
+        svc_b = CommenterOverlapService(repos_b)
+        cached_b = svc_b.overlap(video_ids=["v1", "v2"])
+        new_keys = set(CommenterOverlapService._overlap_cache) - before_b
+        # B computed its OWN entry under its own owner id - it never read
+        # (or overwrote) A's cache line despite identical scope arguments.
+        assert new_keys
+        assert all(key[0] == id(repos_b) for key in new_keys)
+        assert cached_b.videos is not None
+        again_b = svc_b.overlap(video_ids=["v1", "v2"])
+        assert again_b is cached_b  # B's own entry now serves B
+    finally:
+        repos_b.store.close()
+    CommenterOverlapService.clear_overlap_cache()
