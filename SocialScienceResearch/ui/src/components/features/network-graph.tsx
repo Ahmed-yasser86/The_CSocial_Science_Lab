@@ -39,6 +39,14 @@ import type {
   GraphNodeKind,
   RunFacet,
 } from "@/lib/network-full-types";
+import {
+  loadLabSession,
+  normalizeGraphNodeSize,
+  saveLabSession,
+  GRAPH_NODE_SIZE_DEFAULT,
+  GRAPH_NODE_SIZE_MAX,
+  GRAPH_NODE_SIZE_MIN,
+} from "@/lib/lab-session";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
@@ -92,6 +100,8 @@ export interface NetworkGraphProps {
   onScrapeClick?: (videoId: string) => Promise<void>;
   /** Opens the commenter-overlap view scoped to a single video (drawer action only). */
   onOverlapClick?: (videoId: string) => void;
+  /** Increment to re-fit the layout into view (used by fullscreen focus mode). */
+  zoomResetSignal?: number;
 }
 
 const roleColors: Record<GraphNodeKind, string> = {
@@ -216,6 +226,42 @@ export interface GraphNodeFilter {
   communityId?: number | "all";
 }
 
+/** Label rendering policy: hover-only (default) or always-on. */
+export type GraphLabelsMode = "hover" | "always";
+
+const MIN_HIT_RADIUS = 7;
+
+/** Decide whether a node's composite text label is drawn this frame.
+ * Labels are hidden by default to declutter dense graphs; they appear for the
+ * hovered node, for search-matched/selected nodes, and for every node when
+ * the user opts into always-on labels. */
+export function shouldDrawLabel(
+  nodeId: string,
+  opts: {
+    mode?: GraphLabelsMode;
+    hoveredId?: string | null;
+    matchedIds?: ReadonlySet<string>;
+  },
+): boolean {
+  if ((opts.mode ?? "hover") === "always") return true;
+  if (opts.hoveredId != null && opts.hoveredId === nodeId) return true;
+  return opts.matchedIds?.has(nodeId) ?? false;
+}
+
+/** Visual radius (canvas px at zoom 1) for a node of the given total degree.
+ * `sizeScale` derives from the user's node-size preference; a scale of 1
+ * reproduces the historical 6..18px radius band exactly. */
+export function nodeVisualRadius(totalDegree: number, sizeScale = 1): number {
+  const band = 6 + Math.min(12, Math.sqrt(Math.max(0, totalDegree)) * 2.5);
+  return Math.max(2.5, band * sizeScale);
+}
+
+/** Pointer-area radius so small/overlapping nodes stay clickable: the effective
+ * hit target is never narrower than ~14px regardless of rendered node size. */
+export function nodeHitRadius(totalDegree: number, sizeScale = 1): number {
+  return Math.max(MIN_HIT_RADIUS, nodeVisualRadius(totalDegree, sizeScale));
+}
+
 export function filterGraphNodes(
   nodes: GraphNode[],
   filter: GraphNodeFilter,
@@ -258,6 +304,7 @@ export function NetworkGraph({
   onNavigate,
   onScrapeClick,
   onOverlapClick,
+  zoomResetSignal,
 }: NetworkGraphProps) {
   const { theme } = useTheme();
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
@@ -276,6 +323,30 @@ export function NetworkGraph({
   );
   const [inspectId, setInspectId] = useState<string | null>(null);
   const [scraping, setScraping] = useState(false);
+
+  // Display preferences: node size is persisted in the lab session so it
+  // survives reloads across Lab/ego/channel views; labels default to
+  // hover-only. Restored post-mount to avoid a hydration mismatch.
+  const [nodeSize, setNodeSize] = useState(GRAPH_NODE_SIZE_DEFAULT);
+  const [labelsMode, setLabelsMode] = useState<GraphLabelsMode>("hover");
+
+  useEffect(() => {
+    const s = loadLabSession();
+    if (s.graphNodeSize !== undefined) {
+      setNodeSize(normalizeGraphNodeSize(s.graphNodeSize));
+    }
+  }, []);
+
+  function updateNodeSize(value: number) {
+    const next = Math.max(
+      GRAPH_NODE_SIZE_MIN,
+      Math.min(GRAPH_NODE_SIZE_MAX, value),
+    );
+    setNodeSize(next);
+    saveLabSession({ graphNodeSize: next });
+  }
+
+  const nodeSizeScale = nodeSize / GRAPH_NODE_SIZE_DEFAULT;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- theme intentionally forces a canvas recolor on toggle
   const canvasColors = useMemo(() => resolveChartColors(), [theme]);
@@ -297,6 +368,18 @@ export function NetworkGraph({
     () => links.map((l) => `${l.source}\u0000${l.target}`).join("\n"),
     [links],
   );
+
+  // Nodes whose labels are always drawn in hover mode: the inspected (clicked)
+  // node plus every node matching the active search term.
+  const matchedLabelIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (inspectId) ids.add(inspectId);
+    if (search.trim()) {
+      for (const n of filterGraphNodes(nodes, { search })) ids.add(n.id);
+    }
+    return ids;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key on content, not array identity
+  }, [nodesKey, search, inspectId]);
 
   const communities = useMemo(() => {
     const ids = new Set<number>();
@@ -442,6 +525,11 @@ export function NetworkGraph({
     if (link?.distance) link.distance(110);
     if (link?.strength) link.strength(0.2);
   }, [graphData]);
+
+  useEffect(() => {
+    if (!zoomResetSignal) return;
+    graphRef.current?.zoomToFit?.(350, 48);
+  }, [zoomResetSignal]);
 
   async function handleScrape(videoId: string) {
     if (!onScrapeClick || scraping) return;
@@ -597,6 +685,32 @@ export function NetworkGraph({
                 aria-label="Minimum degree"
               />
             </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Node size
+              <Input
+                type="range"
+                min={GRAPH_NODE_SIZE_MIN}
+                max={GRAPH_NODE_SIZE_MAX}
+                step={1}
+                value={nodeSize}
+                onChange={(e) => {
+                  const v = Number.parseInt(e.target.value, 10);
+                  if (!Number.isNaN(v)) updateNodeSize(v);
+                }}
+                className="w-24"
+                aria-label="Node size in pixels"
+              />
+              <span className="tabular-nums">{nodeSize}px</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+              <Checkbox
+                checked={labelsMode === "always"}
+                onCheckedChange={(v) =>
+                  setLabelsMode(v === true ? "always" : "hover")
+                }
+              />
+              Labels
+            </label>
             <div
               className="flex flex-wrap items-center gap-x-3 gap-y-1"
               role="group"
@@ -673,8 +787,10 @@ export function NetworkGraph({
               const id = String(node.id ?? "");
               const meta = nodeById.get(id);
               const base = nodeColor({ id });
-              const radius =
-                6 + Math.min(12, Math.sqrt((meta?.in_degree ?? 0) + (meta?.out_degree ?? 0)) * 2.5);
+              const radius = nodeVisualRadius(
+                (meta?.in_degree ?? 0) + (meta?.out_degree ?? 0),
+                nodeSizeScale,
+              );
 
               ctx.beginPath();
               ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
@@ -704,8 +820,17 @@ export function NetworkGraph({
                 }
               }
 
-              // Composite label: [ID] + Channel Name + Video Title.
-              if (globalScale >= 1.1) {
+              // Composite label: [ID] + Channel Name + Video Title. Drawn only
+              // for the hovered/search-matched nodes unless labels are pinned
+              // always-on via the Labels toggle.
+              if (
+                globalScale >= 1.1 &&
+                shouldDrawLabel(id, {
+                  mode: labelsMode,
+                  hoveredId,
+                  matchedIds: matchedLabelIds,
+                })
+              ) {
                 const label = [
                   `[${id}]`,
                   meta?.channel ?? "",
@@ -744,7 +869,11 @@ export function NetworkGraph({
               ctx.arc(
                 node.x ?? 0,
                 node.y ?? 0,
-                6 + Math.min(12, Math.sqrt((nodeById.get(id)?.in_degree ?? 0) + (nodeById.get(id)?.out_degree ?? 0)) * 2.5),
+                nodeHitRadius(
+                  (nodeById.get(id)?.in_degree ?? 0) +
+                    (nodeById.get(id)?.out_degree ?? 0),
+                  nodeSizeScale,
+                ),
                 0,
                 2 * Math.PI,
               );

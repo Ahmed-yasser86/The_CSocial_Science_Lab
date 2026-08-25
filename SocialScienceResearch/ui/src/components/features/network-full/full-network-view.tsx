@@ -31,7 +31,7 @@ import { EdgeTable } from "@/components/features/network-full/edge-table";
 import { useNetworkMetrics, getNetworkExportUrl, useNetworkGraph, useScrapeNetwork } from "@/services/networkFull";
 import { EXPORT_FORMATS } from "@/lib/network-full-types";
 import { exportVideoMetadata, type ExportNode } from "@/lib/export-graph";
-import { NetworkGraph, type GraphLink, type GraphNode } from "@/components/features/network-graph";
+import { NetworkGraph, type GraphLink, type GraphNode, type NetworkGraphProps } from "@/components/features/network-graph";
 import { LayerPanel } from "@/components/features/network-layer/layer-panel";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
 import { ExpansionPanel } from "@/components/features/network-expansion/expansion-panel";
@@ -41,7 +41,7 @@ import type { ScrapeFilters as ExpansionFilters } from "@/lib/network-expansion-
 import type { ChannelFacet, ChannelGraphPayload, GraphProjection, NetworkGraphPayload } from "@/lib/network-full-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, Sparkles, FolderPlus } from "lucide-react";
+import { Loader2, Sparkles, FolderPlus, Maximize2, Minimize2, RotateCcw } from "lucide-react";
 import { Toast } from "@/components/features/state";
 import { JobProgressCard } from "@/components/features/job-progress-card";
 import { AddToProjectDialog } from "@/components/features/network-full/add-to-project-dialog";
@@ -183,6 +183,9 @@ export function FullNetworkView() {
   const [scrapeAllOpen, setScrapeAllOpen] = useState(false);
   const [scrapeVideoTarget, setScrapeVideoTarget] = useState<string | null>(null);
   const [selectedExpansionId, setSelectedExpansionId] = useState<string | null>(null);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [focusZoomSignal, setFocusZoomSignal] = useState(0);
+  const [focusHeight, setFocusHeight] = useState(600);
   const expansionJob = useExpansionJob();
 
   const runs = useMemo(() => {
@@ -231,6 +234,27 @@ export function FullNetworkView() {
       setGraphRunId(null);
     }
   }, [runs, runId]);
+
+  // Fullscreen focus mode: lock body scroll while open, exit on Escape, and
+  // keep the embedded graph sized to the viewport.
+  useEffect(() => {
+    if (!focusOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFocusOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const measure = () =>
+      setFocusHeight(Math.max(320, window.innerHeight - 190));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("resize", measure);
+    };
+  }, [focusOpen]);
 
   const applyPreset = (preset: (typeof LAB_PRESETS)[number]) => {
     const p = preset.patch;
@@ -399,6 +423,50 @@ export function FullNetworkView() {
       return [...prev, id];
     });
   }
+
+  // Single source of truth for the graph's props so the inline tab view and
+  // the fullscreen focus overlay always render the exact same slice with the
+  // same handlers (state carries over between the two).
+  const activeGraphProps = (): NetworkGraphProps | null => {
+    if (!graphQuery.data) return null;
+    const shared = {
+      runs: graphQuery.data.runs,
+      channels: channelFacets,
+      selectedRun: graphRunId ?? runId ?? undefined,
+      selectedChannel: graphChannelIds[0] ?? undefined,
+      onRunChange: (v: string) => {
+        setGraphRunId(v === "__all" ? null : v);
+        if (v && v !== "__all") setRunId(v);
+      },
+      onChannelChange: (v: string) =>
+        setGraphChannelIds((prev) =>
+          v && v !== "__all"
+            ? prev.includes(v)
+              ? prev.filter((c) => c !== v)
+              : [...prev, v]
+            : [],
+        ),
+      onClearFilters: clearAllGraphFilters,
+      onScrapeClick: (id: string) => openVideoScrapeDialog(id),
+    };
+    if (graphProjection === "channel") {
+      const mapped = mapChannelGraphPayload(
+        graphQuery.data as ChannelGraphPayload,
+      );
+      return { ...shared, nodes: mapped.nodes, links: mapped.links };
+    }
+    const mapped = mapGraphPayload(graphQuery.data as NetworkGraphPayload);
+    return {
+      ...shared,
+      nodes: mapped.nodes,
+      links: mapped.links,
+      onOverlapClick: () => {
+        setGraphVideoIds(mapped.nodes.map((n) => n.id));
+        setTab("commenters");
+      },
+    };
+  };
+  const graphProps = activeGraphProps();
 
   // All video metadata for the currently visible network slice (client-side
   // export, independent of the server-side /network/export endpoint).
@@ -778,6 +846,17 @@ export function FullNetworkView() {
                   Clear all filters
                 </Button>
               ) : null}
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setFocusOpen(true)}
+                disabled={!graphProps}
+                aria-label="Open fullscreen focus mode"
+              >
+                <Maximize2 aria-hidden />
+                Focus
+              </Button>
             </div>
             {graphQuery.data &&
             (
@@ -804,63 +883,8 @@ export function FullNetworkView() {
                 }
                 retry={() => graphQuery.refetch()}
               />
-            ) : graphQuery.data ? (
-              graphProjection === "channel" ? (
-                <NetworkGraph
-                  nodes={mapChannelGraphPayload(graphQuery.data as ChannelGraphPayload).nodes}
-                  links={mapChannelGraphPayload(graphQuery.data as ChannelGraphPayload).links}
-                  runs={graphQuery.data.runs}
-                  channels={channelFacets}
-                  selectedRun={graphRunId ?? runId ?? undefined}
-                  selectedChannel={graphChannelIds[0] ?? undefined}
-                  onRunChange={(v) => {
-                    setGraphRunId(v === "__all" ? null : v);
-                    if (v && v !== "__all") setRunId(v);
-                  }}
-                  onChannelChange={(v) =>
-                    setGraphChannelIds((prev) =>
-                      v && v !== "__all"
-                        ? prev.includes(v)
-                          ? prev.filter((c) => c !== v)
-                          : [...prev, v]
-                        : [],
-                    )
-                  }
-                  onClearFilters={clearAllGraphFilters}
-                  onScrapeClick={(channelId) => openVideoScrapeDialog(channelId)}
-                />
-              ) : (
-                <NetworkGraph
-                  nodes={mapGraphPayload(graphQuery.data as NetworkGraphPayload).nodes}
-                  links={mapGraphPayload(graphQuery.data as NetworkGraphPayload).links}
-                  runs={graphQuery.data.runs}
-                  channels={channelFacets}
-                  selectedRun={graphRunId ?? runId ?? undefined}
-                  selectedChannel={graphChannelIds[0] ?? undefined}
-                  onRunChange={(v) => {
-                    setGraphRunId(v === "__all" ? null : v);
-                    if (v && v !== "__all") setRunId(v);
-                  }}
-                  onChannelChange={(v) =>
-                    setGraphChannelIds((prev) =>
-                      v && v !== "__all"
-                        ? prev.includes(v)
-                          ? prev.filter((c) => c !== v)
-                          : [...prev, v]
-                        : [],
-                    )
-                  }
-                  onClearFilters={clearAllGraphFilters}
-                  onScrapeClick={(videoId) => openVideoScrapeDialog(videoId)}
-                  onOverlapClick={(_videoId) => {
-                    const allVideoIds = (
-                      mapGraphPayload(graphQuery.data as NetworkGraphPayload).nodes
-                    ).map((n) => n.id);
-                    setGraphVideoIds(allVideoIds);
-                    setTab("commenters");
-                  }}
-                />
-              )
+            ) : graphProps ? (
+              <NetworkGraph {...graphProps} />
             ) : (
               <LoadingState label="Loading network graph…" />
             )}
@@ -987,6 +1011,55 @@ export function FullNetworkView() {
           <ChannelsPanel />
         </TabsContent>
       </Tabs>
+
+      {focusOpen && graphProps ? (
+        <div
+          data-testid="network-focus-overlay"
+          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background"
+          role="dialog"
+          aria-label="Fullscreen network focus mode"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-2">
+            <div className="space-y-0.5">
+              <p className="text-sm font-medium">Network focus</p>
+              <p className="text-xs text-muted-foreground">
+                {graphProjection === "channel"
+                  ? "Channel projection"
+                  : "Video projection"}
+                {graphRunId
+                  ? ` · ${runNames.get(graphRunId) ?? graphRunId}`
+                  : ""}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFocusZoomSignal((s) => s + 1)}
+              >
+                <RotateCcw aria-hidden />
+                Zoom reset
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setFocusOpen(false)}
+                autoFocus
+              >
+                <Minimize2 aria-hidden />
+                Exit focus (Esc)
+              </Button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-4">
+            <NetworkGraph
+              {...graphProps}
+              height={focusHeight}
+              zoomResetSignal={focusZoomSignal}
+            />
+          </div>
+        </div>
+      ) : null}
 
       <ScrapeFiltersDialog
         open={scrapeAllOpen}

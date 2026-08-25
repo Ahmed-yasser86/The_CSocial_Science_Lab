@@ -20,6 +20,23 @@ export interface LabSession {
   graphLayerIndex: number | null;
   identity: string;
   annotation: string;
+  /** Nominal canvas node diameter preference in px (bounded 5..40). */
+  graphNodeSize: number;
+}
+
+export const GRAPH_NODE_SIZE_MIN = 5;
+export const GRAPH_NODE_SIZE_MAX = 40;
+/** Default reproduces the historical node radius band (6..18px). */
+export const GRAPH_NODE_SIZE_DEFAULT = 24;
+
+/** Clamp an arbitrary stored value into the supported node-size range. */
+export function normalizeGraphNodeSize(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return GRAPH_NODE_SIZE_DEFAULT;
+  return Math.min(
+    GRAPH_NODE_SIZE_MAX,
+    Math.max(GRAPH_NODE_SIZE_MIN, Math.round(n)),
+  );
 }
 
 const STORAGE_KEY = "ssr-lab-session";
@@ -105,6 +122,7 @@ export function defaultLabSession(): LabSession {
     graphLayerIndex: null,
     identity: "",
     annotation: "",
+    graphNodeSize: GRAPH_NODE_SIZE_DEFAULT,
   };
 }
 
