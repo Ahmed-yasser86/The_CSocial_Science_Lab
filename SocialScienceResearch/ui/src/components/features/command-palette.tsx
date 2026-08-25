@@ -10,13 +10,18 @@ import {
   Network,
   Play,
   Search,
-  Scale,
+  GitCompare,
   Share2,
   Database,
   FolderOpen,
+  FolderKanban,
+  BookOpen,
   Boxes,
+  Microscope,
+  Table2,
   Tv,
   User,
+  Users,
 } from "lucide-react";
 import {
   CommandDialog,
@@ -31,6 +36,7 @@ import { useGlobalSearch, useRuns } from "@/services/queries";
 import { formatDateTime } from "@/lib/format";
 import { RunStatusBadge } from "@/components/features/run-status-badge";
 import { LoadingState } from "@/components/features/state";
+import { useResearchContext, withContext } from "@/lib/context";
 import type { SearchHit } from "@/lib/types";
 
 const SEARCH_ENTITIES: {
@@ -63,6 +69,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const router = useRouter();
+  const { context } = useResearchContext();
   const { data: runs } = useRuns();
   const debouncedQuery = useDebouncedValue(query);
   const search = useGlobalSearch(debouncedQuery);
@@ -128,42 +135,73 @@ export function CommandPalette() {
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
 
-          <CommandGroup heading="Quick actions">
-            <CommandItem onSelect={() => runAction("/collect")}>
+          <CommandGroup heading="Workspace">
+            <CommandItem onSelect={() => runAction(withContext("/", context))}>
+              <FlaskConical aria-hidden />
+              Back to workspace
+            </CommandItem>
+            <CommandItem onSelect={() => runAction(withContext("/collect", context))}>
               <Compass aria-hidden />
               Collect data
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/explore")}>
-              <Boxes aria-hidden />
-              Record explorer
-            </CommandItem>
-            <CommandItem onSelect={() => runAction("/compare")}>
-              <Scale aria-hidden />
-              Comparison workspace
-            </CommandItem>
-            <CommandItem onSelect={() => runAction("/network")}>
+          </CommandGroup>
+
+          <CommandGroup heading="Analyze">
+            <CommandItem onSelect={() => runAction(withContext("/network", context))}>
               <Network aria-hidden />
               Recommendation network
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/network/full")}>
-              <Network aria-hidden />
+            <CommandItem onSelect={() => runAction(withContext("/network/full", context))}>
+              <Microscope aria-hidden />
               Full network analytics
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/samples")}>
-              <Database aria-hidden />
-              Research samples
+            <CommandItem
+              onSelect={() => runAction(withContext("/network/commenters", context))}
+            >
+              <Users aria-hidden />
+              Commenters
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/datasets")}>
+            <CommandItem onSelect={() => runAction(withContext("/compare", context))}>
+              <GitCompare aria-hidden />
+              Comparison workspace
+            </CommandItem>
+            <CommandItem onSelect={() => runAction(withContext("/query", context))}>
+              <Search aria-hidden />
+              Query console
+            </CommandItem>
+            <CommandItem onSelect={() => runAction(withContext("/explore", context))}>
+              <Boxes aria-hidden />
+              Record explorer
+            </CommandItem>
+          </CommandGroup>
+
+          <CommandGroup heading="Data">
+            <CommandItem onSelect={() => runAction(withContext("/data", context))}>
+              <Table2 aria-hidden />
+              Data coverage
+            </CommandItem>
+            <CommandItem onSelect={() => runAction(withContext("/datasets", context))}>
               <FolderOpen aria-hidden />
               Datasets
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/projects")}>
-              <FolderOpen aria-hidden />
+            <CommandItem onSelect={() => runAction(withContext("/samples", context))}>
+              <Database aria-hidden />
+              Research samples
+            </CommandItem>
+            <CommandItem onSelect={() => runAction(withContext("/projects", context))}>
+              <FolderKanban aria-hidden />
               Projects
             </CommandItem>
-            <CommandItem onSelect={() => runAction("/runs")}>
+            <CommandItem onSelect={() => runAction(withContext("/runs", context))}>
               <ListOrdered aria-hidden />
               Provenance ledger
+            </CommandItem>
+          </CommandGroup>
+
+          <CommandGroup heading="Docs">
+            <CommandItem onSelect={() => runAction(withContext("/docs", context))}>
+              <BookOpen aria-hidden />
+              Documentation
             </CommandItem>
           </CommandGroup>
 
@@ -211,7 +249,7 @@ export function CommandPalette() {
               <CommandItem
                 key={run.run_id}
                 value={`${run.run_id} ${run.target_url} ${run.target_channel_id ?? ""} ${run.target_video_id ?? ""}`}
-                onSelect={() => runAction(`/runs/${run.run_id}`)}
+                onSelect={() => runAction(withContext(`/runs/${run.run_id}`, context))}
               >
                 <Play className="size-3.5 text-muted-foreground" aria-hidden />
                 <span className="truncate">
@@ -225,15 +263,6 @@ export function CommandPalette() {
                 </span>
               </CommandItem>
             ))}
-          </CommandGroup>
-
-          <CommandSeparator />
-
-          <CommandGroup heading="Where am I?">
-            <CommandItem onSelect={() => runAction("/")}>
-              <FlaskConical aria-hidden />
-              Back to workspace
-            </CommandItem>
           </CommandGroup>
         </CommandList>
       </CommandDialog>

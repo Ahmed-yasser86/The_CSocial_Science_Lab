@@ -12,20 +12,24 @@ const API = process.env.API_URL ?? "http://127.0.0.1:8000/api/v1/social-science"
 test.describe("Unified journey connectors", () => {
   test.setTimeout(180_000);
 
-  const connectors: Array<[string, string]> = [
-    ["Lab", "/network/full"],
-    ["Compare", "/compare"],
-    ["Query", "/query"],
-    ["Data", "/data"],
+  // The navbar groups its links into hub dropdowns (Analyze ▾ / Data ▾), so
+  // each connector opens the hub menu first, then clicks the child item.
+  const connectors: Array<[string, string, string]> = [
+    ["Analyze", "Lab", "/network/full"],
+    ["Analyze", "Compare", "/compare"],
+    ["Analyze", "Query", "/query"],
+    ["Data", "Coverage", "/data"],
   ];
 
-  for (const [label, path] of connectors) {
-    test(`top-nav "${label}" opens ${path} without a 404`, async ({ page }) => {
+  for (const [hub, item, path] of connectors) {
+    test(`top-nav ${hub} ▾ "${item}" opens ${path} without a 404`, async ({ page }) => {
       await page.goto(`${BASE_URL}/network/full`);
       await page.waitForLoadState("networkidle");
 
-      const nav = page.getByRole("navigation");
-      await nav.getByRole("link", { name: label, exact: true }).click();
+      await page.getByRole("button", { name: hub, exact: true }).click();
+      const menuItem = page.getByRole("menuitem", { name: item });
+      await menuItem.waitFor({ state: "visible", timeout: 30_000 });
+      await menuItem.click();
       await page.waitForLoadState("networkidle");
 
       await expect(page).toHaveURL(new RegExp(`${path.replace(/\//g, "\\/")}(\\/|$)`));
@@ -43,7 +47,7 @@ test.describe("Unified journey connectors", () => {
       const created = await request.post(`${API}/projects`, {
         data: {
           name: "e2e export project",
-          targets: [{ kind: "channel", value: "UC_e2e" }],
+          targets: [{ kind: "channel", url: "https://www.youtube.com/@UC_e2e" }],
         },
       });
       expect(created.ok()).toBeTruthy();
