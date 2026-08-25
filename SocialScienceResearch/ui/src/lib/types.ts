@@ -152,6 +152,19 @@ export interface JobProgress {
   succeeded: number;
   failed: number;
   message: string | null;
+  /** Honest completion percentage over known units; null when unknown. */
+  percent_complete?: number | null;
+  /** Rolling estimate from completed items; null until observable. */
+  eta_seconds?: number | null;
+  /** True only when eta_seconds is a real estimate. */
+  eta_available?: boolean;
+  edges_saved?: number | null;
+  current_target?: {
+    video_id: string;
+    title?: string | null;
+    url?: string | null;
+  } | null;
+  failures?: { video_id: string; error: string }[] | null;
 }
 
 export interface Job {

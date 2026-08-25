@@ -78,6 +78,9 @@ class ProgressReporter(Protocol):
         succeeded: int = 0,
         failed: int = 0,
         message: str | None = None,
+        edges_saved: int | None = None,
+        current_target: dict[str, Any] | None = None,
+        failures: list[dict[str, Any]] | None = None,
     ) -> None: ...
 
 
@@ -1206,6 +1209,9 @@ class CollectionService:
         succeeded: int = 0,
         failed: int = 0,
         message: str | None = None,
+        edges_saved: int | None = None,
+        current_target: dict[str, Any] | None = None,
+        failures: list[dict[str, Any]] | None = None,
     ) -> None:
         if reporter is not None:
             reporter(
@@ -1214,4 +1220,7 @@ class CollectionService:
                 succeeded=succeeded,
                 failed=failed,
                 message=message,
+                edges_saved=edges_saved,
+                current_target=current_target,
+                failures=failures,
             )

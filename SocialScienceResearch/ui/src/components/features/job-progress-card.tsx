@@ -31,6 +31,16 @@ export function formatJobStage(stage?: string): string {
   return map[stage] ?? stage.replace(/_/g, " ");
 }
 
+/** Human ETA text from a rolling estimate; null renders nothing. */
+export function formatEta(etaSeconds?: number | null): string | null {
+  if (etaSeconds == null || etaSeconds < 0) return null;
+  if (etaSeconds === 0) return "finishing…";
+  if (etaSeconds < 60) return `~${Math.round(etaSeconds)}s remaining`;
+  const minutes = etaSeconds / 60;
+  if (minutes < 60) return `~${Math.round(minutes)}m remaining`;
+  return `~${Math.round(minutes / 60)}h remaining`;
+}
+
 export function JobProgressCard({
   jobId,
   title,
@@ -59,8 +69,16 @@ export function JobProgressCard({
   const succeeded = progress?.succeeded ?? 0;
   const failed = progress?.failed ?? 0;
   const discovered = progress?.discovered ?? 0;
+  // Prefer the server's honest percentage; fall back to the local computation.
   const pct =
-    discovered > 0 ? Math.round(((succeeded + failed) / discovered) * 100) : 0;
+    progress?.percent_complete ??
+    (discovered > 0
+      ? Math.round(((succeeded + failed) / discovered) * 100)
+      : 0);
+  const eta = formatEta(progress?.eta_seconds);
+  const edgesSaved = progress?.edges_saved ?? null;
+  const currentTarget = progress?.current_target ?? null;
+  const failures = progress?.failures ?? [];
 
   if (status === "succeeded") {
     return (
@@ -135,8 +153,39 @@ export function JobProgressCard({
           <p className="text-xs text-muted-foreground">
             {formatNumber(succeeded)} succeeded, {formatNumber(failed)} failed
             of {formatNumber(discovered)} discovered
+            {edgesSaved != null ? ` · ${formatNumber(edgesSaved)} edge(s) saved` : ""}
           </p>
+          {eta ? (
+            <p className="text-xs text-muted-foreground">
+              <span title="Estimated from recently completed items (may be inaccurate)">
+                {eta}
+              </span>
+            </p>
+          ) : null}
         </div>
+      ) : null}
+      {running && currentTarget?.video_id ? (
+        <p className="text-xs text-muted-foreground">
+          Now:{" "}
+          <span className="font-medium text-foreground">
+            {currentTarget.title ?? currentTarget.video_id}
+          </span>
+        </p>
+      ) : null}
+      {running && failures.length > 0 ? (
+        <details className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">
+            {failures.length} failed item{failures.length === 1 ? "" : "s"}
+          </summary>
+          <ul className="mt-1 space-y-0.5">
+            {failures.map((failure) => (
+              <li key={failure.video_id} className="truncate">
+                <span className="font-mono">{failure.video_id}</span>:{" "}
+                {failure.error}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
       {job?.message ? (
         <p className="text-xs text-muted-foreground">{job.message}</p>

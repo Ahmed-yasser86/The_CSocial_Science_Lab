@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -23,6 +24,12 @@ from SocialScienceResearch.utils.idgen import new_id, utcnow
 
 #: Signature of the progress callback handed to a worker function.
 ProgressCallback = Callable[[], None] | None
+
+#: Number of (timestamp, completed) samples kept for the rolling ETA window.
+_ETA_SAMPLE_WINDOW = 20
+#: Minimum wall-clock span between the oldest/newest ETA sample before an
+#: estimate is trusted (below this the rate is noise).
+_MIN_ETA_SPAN_SECONDS = 1.0
 
 
 def _iso(value: Any) -> str | None:
@@ -43,7 +50,20 @@ class _ProgressSink(Protocol):
         succeeded: int = 0,
         failed: int = 0,
         message: str | None = None,
+        edges_saved: int | None = None,
+        current_target: dict[str, Any] | None = None,
+        failures: list[dict[str, Any]] | None = None,
     ) -> None: ...
+
+
+def _percent_complete(
+    discovered: int, succeeded: int, failed: int
+) -> float | None:
+    """Honest completion percentage over known units, or ``None`` when unknown."""
+    if discovered <= 0:
+        return None
+    done = succeeded + failed
+    return round(min(100.0, max(0.0, done / discovered * 100.0)), 1)
 
 
 class JobStatus(StrEnum):
@@ -336,6 +356,13 @@ class JobManager:
             )
 
     def _progress_cb(self, job: Job) -> _ProgressSink:
+        # Rolling-ETA state: (timestamp, completed) samples for the current
+        # stage/total epoch. Reset whenever the stage or the discovered total
+        # changes, because the denominator then means something different and
+        # mixing epochs would fabricate a rate.
+        eta_samples: list[tuple[float, int]] = []
+        eta_epoch: tuple[str, int] | None = None
+
         def _report(
             *,
             stage: str = "",
@@ -343,13 +370,48 @@ class JobManager:
             succeeded: int = 0,
             failed: int = 0,
             message: str | None = None,
+            edges_saved: int | None = None,
+            current_target: dict[str, Any] | None = None,
+            failures: list[dict[str, Any]] | None = None,
         ) -> None:
+            nonlocal eta_epoch
+            completed = succeeded + failed
+            epoch = (stage, discovered)
+            if epoch != eta_epoch:
+                eta_samples.clear()
+                eta_epoch = epoch
+            now = time.monotonic()
+            if not eta_samples or eta_samples[-1][1] != completed:
+                # Only real completions advance the sample window, so the
+                # rolling rate is computed from observed progress, never from
+                # idle time.
+                eta_samples.append((now, completed))
+                del eta_samples[:-_ETA_SAMPLE_WINDOW]
+
+            eta_seconds: float | None = None
+            if discovered > 0 and len(eta_samples) >= 2:
+                oldest_t, oldest_c = eta_samples[0]
+                span = now - oldest_t
+                progressed = completed - oldest_c
+                if span >= _MIN_ETA_SPAN_SECONDS and progressed > 0:
+                    remaining = max(0, discovered - completed)
+                    if remaining == 0:
+                        eta_seconds = 0.0
+                    else:
+                        eta_seconds = round(remaining / (progressed / span), 1)
+
             snapshot = {
                 "stage": stage,
                 "discovered": discovered,
                 "succeeded": succeeded,
                 "failed": failed,
                 "message": message,
+                "percent_complete": _percent_complete(discovered, succeeded, failed),
+                "eta_seconds": eta_seconds,
+                "eta_available": eta_seconds is not None,
+                "edges_saved": edges_saved,
+                "current_target": current_target,
+                "failures": failures,
             }
             with self._lock:
                 job.progress = snapshot

@@ -123,7 +123,8 @@ def layer_scrape(request: Request, body: LayerScrapeRequest):
 
     Mirrors the other ``/network/scrape/*`` endpoints: submit to the job
     manager, poll ``GET /jobs/{job_id}``, fetch the layer + relations on
-    success.
+    success. ``discovery_mode`` picks frontier-only expansion vs re-scraping
+    known frontier feeds (default, the historical behaviour).
     """
     _require_projection(body.projection)
     service = _layer_service(request)
@@ -146,6 +147,7 @@ def layer_scrape(request: Request, body: LayerScrapeRequest):
             collect_comments=body.collect_comments,
             concurrency=body.concurrency,
             max_recommendations_per_video=body.max_recommendations_per_video,
+            discovery_mode=body.discovery_mode,
             reporter=reporter,
         )
 

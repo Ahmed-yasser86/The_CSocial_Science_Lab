@@ -173,6 +173,7 @@ class RecommendationService(CollectionService):
         layer_index: int | None = None,
         concurrency: int | None = None,
         max_recommendations_per_video: int | None = None,
+        enrich_targets: bool = True,
         reporter: ProgressReporter | None = None,
     ) -> list[CollectionResult]:
         """Bulk depth-1 recommendation scrape for a set of source videos.
@@ -183,7 +184,9 @@ class RecommendationService(CollectionService):
         A single video's failure never aborts its siblings. ``layer_index``
         stamps each run (and its edges) with a crawl layer, or ``None`` for
         layer-agnostic scrapes. ``max_recommendations_per_video`` keeps only
-        the top-N observed edges per source feed.
+        the top-N observed edges per source feed. ``enrich_targets=False``
+        skips the trailing deep-enrichment pass (callers that enrich
+        themselves, e.g. the layer crawl, avoid fetching every target twice).
 
         ``dedupe_run_ids`` skips edges already observed in those runs. When
         ``dedupe_all_history`` is set, edges already observed in ANY previous
@@ -316,7 +319,10 @@ class RecommendationService(CollectionService):
         # pass (not per-video), so a big network never looks stalled on the
         # first video: the bulk loop only saved edges + runs above. Best-effort:
         # a failure here must not undo the edges/runs already persisted above.
-        if pending_targets:
+        # Callers that run their own enrichment pass right after (the layer
+        # crawl, which also collects comments) set ``enrich_targets=False`` so
+        # targets are fetched exactly once instead of twice.
+        if pending_targets and enrich_targets:
             try:
                 # Bound the heavy per-video enrichment (full stats + comments)
                 # so a fan-out over hundreds of recommendations completes in

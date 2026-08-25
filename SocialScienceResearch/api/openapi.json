@@ -2245,7 +2245,7 @@
           "network"
         ],
         "summary": "Layer Scrape",
-        "description": "Queue the next crawl layer as a background job.\n\nMirrors the other ``/network/scrape/*`` endpoints: submit to the job\nmanager, poll ``GET /jobs/{job_id}``, fetch the layer + relations on\nsuccess.",
+        "description": "Queue the next crawl layer as a background job.\n\nMirrors the other ``/network/scrape/*`` endpoints: submit to the job\nmanager, poll ``GET /jobs/{job_id}``, fetch the layer + relations on\nsuccess. ``discovery_mode`` picks frontier-only expansion vs re-scraping\nknown frontier feeds (default, the historical behaviour).",
         "operationId": "layer_scrape_api_v1_social_science_network_layer_scrape_post",
         "requestBody": {
           "content": {
@@ -11901,6 +11901,16 @@
             ],
             "title": "Max Recommendations Per Video",
             "description": "Optional cap on how many recommendations to keep per frontier video (speeds up wide crawls). Omit for no per-video limit."
+          },
+          "discovery_mode": {
+            "type": "string",
+            "enum": [
+              "frontier",
+              "rescrape_known"
+            ],
+            "title": "Discovery Mode",
+            "description": "How the resolved frontier is crawled. 'rescrape_known' (default, the historical behaviour) re-observes every resolved frontier video's recommendations even if that feed was already scraped earlier in this crawl family. 'frontier' skips videos whose recommendations were already observed anywhere and only scrapes genuinely unexplored nodes.",
+            "default": "rescrape_known"
           }
         },
         "additionalProperties": false,

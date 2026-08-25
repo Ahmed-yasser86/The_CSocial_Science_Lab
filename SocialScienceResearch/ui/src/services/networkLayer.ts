@@ -71,6 +71,8 @@ export function bootstrapLayer(
   });
 }
 
+export type LayerDiscoveryMode = "frontier" | "rescrape_known";
+
 export function crawlNextLayer(body: {
   parent_layer_run_id?: string;
   parent_run_id?: string;
@@ -78,6 +80,7 @@ export function crawlNextLayer(body: {
   collect_comments?: boolean;
   concurrency?: number;
   max_recommendations_per_video?: number;
+  discovery_mode?: LayerDiscoveryMode;
 }): Promise<{ job_id: string }> {
   return request("/network/layer/scrape", {
     method: "POST",

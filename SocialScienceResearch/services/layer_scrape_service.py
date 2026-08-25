@@ -198,6 +198,7 @@ class LayerScrapeService(RecommendationService):
         collect_comments: bool = True,
         concurrency: int | None = None,
         max_recommendations_per_video: int | None = None,
+        discovery_mode: str = "rescrape_known",
         reporter: ProgressReporter | None = None,
     ) -> list[CollectionResult]:
         """Scrape the next crawl layer (job worker entry point).
@@ -215,26 +216,51 @@ class LayerScrapeService(RecommendationService):
            the ``LayerRun`` anchor (with the counts in ``summary``) plus a
            layer-scoped aggregate dataset.
 
+        ``discovery_mode`` selects how the frontier is crawled:
+
+        * ``rescrape_known`` (default, matches the historical behaviour): the
+          resolved frontier is re-scraped as-is, even when a frontier video's
+          recommendations were already observed earlier in this family
+          (re-crawls, fallback frontiers, pre-scraped seeds).
+        * ``frontier``: frontier videos whose recommendations have already
+          been observed anywhere (the ``recommendations_scraped`` flag or an
+          outgoing edge from a same-family run) are skipped, so the crawl only
+          spends network calls on genuinely unexplored nodes. Raises
+          ``ValueError`` when nothing unexplored remains.
+
         Returns the per-video ``CollectionResult`` list (keeps the existing
         ``GET /jobs/{id}/result`` contract unchanged).
         """
+        if discovery_mode not in ("frontier", "rescrape_known"):
+            raise ValueError(
+                f"Unknown discovery_mode {discovery_mode!r}; "
+                "expected 'frontier' or 'rescrape_known'"
+            )
         parent_layer, parent_layer_run_id = self._resolve_parent(
             parent_layer_run_id=parent_layer_run_id,
             parent_run_id=parent_run_id,
         )
         if parent_layer is not None:
             layer_index = parent_layer.layer_index + 1
-            frontier = list(parent_layer.discovered_video_ids)
-            # If no videos were newly discovered (e.g. all targets already
-            # exist in the DB), fall back to the target videos from the
-            # parent layer's edges so the crawl can expand deeper.
-            if not frontier and parent_layer.run_ids:
-                seen = set()
-                for rid in parent_layer.run_ids:
-                    for e in self._repos.recommendations.list_recommendation_edges(run_id=rid):
-                        if e.recommended_video_id not in seen:
-                            seen.add(e.recommended_video_id)
-                            frontier.append(e.recommended_video_id)
+            # The frontier is EVERY video that makes up the parent layer -
+            # i.e. all of its edge targets - not merely the subset that was
+            # newly enriched by it. Pre-existing videos are full layer
+            # members too: they joined the layer through its edges and must
+            # get their own recommendations crawled like any other member
+            # (skipping them silently starved parts of earlier layers).
+            frontier: list[str] = []
+            seen_frontier: set[str] = set()
+            for rid in parent_layer.run_ids or []:
+                for e in self._repos.recommendations.list_recommendation_edges(
+                    run_id=rid,
+                ):
+                    if e.recommended_video_id not in seen_frontier:
+                        seen_frontier.add(e.recommended_video_id)
+                        frontier.append(e.recommended_video_id)
+            # Degenerate fallback: a layer with no edges contributes nothing;
+            # fall back to its discovered set so the crawl can still proceed.
+            if not frontier:
+                frontier = list(parent_layer.discovered_video_ids)
             parent_run_id = parent_layer.parent_run_id or parent_run_id
         else:
             layer_index = 1
@@ -247,6 +273,15 @@ class LayerScrapeService(RecommendationService):
         if not frontier:
             raise ValueError("Frontier is empty; nothing to scrape")
 
+        if discovery_mode == "frontier":
+            already_scraped = self._already_scraped_ids(parent_run_id)
+            frontier = [v for v in frontier if v not in already_scraped]
+            if not frontier:
+                raise ValueError(
+                    "Frontier discovery mode found no unscraped videos: every "
+                    "frontier node has had its recommendations observed already"
+                )
+
         started_at = utcnow()
         snapshot = self._snapshot()
 
@@ -258,12 +293,27 @@ class LayerScrapeService(RecommendationService):
                 f"Scraping layer {layer_index}: {len(frontier)} frontier video(s)"
             ),
         )
+        # Snapshot BEFORE the bulk crawl: frontier members that are stubs or
+        # missing rows pre-crawl (e.g. their earlier enrichment failed). They
+        # are full layer members, so this crawl must deep-enrich them and the
+        # report must classify them even when the bulk phase materializes them
+        # as a side effect of resolving their recommendations.
+        incomplete_frontier = {
+            video_id
+            for video_id in frontier
+            if self._is_incomplete_video(video_id)
+        }
         results = self.collect_recommendations_for_videos(
             frontier,
             parent_run_id=parent_run_id,
             layer_index=layer_index,
             concurrency=concurrency,
             max_recommendations_per_video=max_recommendations_per_video,
+            # The layer's own enrichment pass below deep-enriches every new
+            # target (and collects comments, which the bulk pass never does);
+            # disabling the bulk pass here means each target is fetched over
+            # the network exactly once instead of twice.
+            enrich_targets=False,
             reporter=reporter,
         )
         run_ids = [r.run_id for r in results]
@@ -281,19 +331,34 @@ class LayerScrapeService(RecommendationService):
             throttle=throttle,
             errors=errors,
             reporter=reporter,
+            extra_target_ids=incomplete_frontier,
         )
         comments_collected = sum(v["comments"] for v in discovered)
 
+        # Frontier members that were incomplete pre-crawl and got materialized
+        # by this crawl's bulk phase count as discovered by it too.
+        materialized_members = {
+            video_id
+            for video_id in incomplete_frontier
+            if not self._is_incomplete_video(video_id)
+        }
+
         # ``discovered_video_ids`` = the videos deep-enriched *by this layer*
-        # (newly seen targets). Pre-existing targets can still add edges/channels
-        # without being "discovered" again, which is why a layer may report
-        # "0 discovered" yet several new edges - that is consistent, not a bug.
+        # (newly seen targets) plus frontier members it fully materialized.
+        # Pre-existing complete targets can still add edges/channels without
+        # being "discovered" again, which is why a layer may report fewer
+        # discoveries than edges - that is consistent, not a bug.
         discovered_video_ids = [v["video"].video_id for v in discovered]
+        discovered_video_ids += sorted(
+            video_id for video_id in materialized_members
+            if video_id not in set(discovered_video_ids)
+        )
 
         self._report(
             reporter,
             "layer/classify",
             succeeded=len(discovered),
+            edges_saved=len(new_edges),
             message=f"Classifying {len(new_edges)} edge(s) and {len(discovered)} enriched video(s)",
         )
 
@@ -304,6 +369,7 @@ class LayerScrapeService(RecommendationService):
             layer_index,
             layer_run_id=new_id("lyr"),
             projection=projection,
+            materialized_members=materialized_members,
         )
 
         layer = LayerRun(
@@ -323,6 +389,7 @@ class LayerScrapeService(RecommendationService):
             config_json={
                 "collect_comments": collect_comments,
                 "concurrency": concurrency,
+                "discovery_mode": discovery_mode,
             },
         )
         self._repos.layers.save_layer_run(layer)
@@ -342,6 +409,7 @@ class LayerScrapeService(RecommendationService):
             reporter,
             "layer/complete",
             succeeded=len(run_ids),
+            edges_saved=len(new_edges),
             message=(
                 f"Layer {layer_index} complete: {len(run_ids)} run(s), "
                 f"{len(new_edges)} edge(s), {len(discovered)} video(s) enriched"
@@ -583,6 +651,10 @@ class LayerScrapeService(RecommendationService):
             ),
             max_recommendations_per_video=filters.max_recommendations_per_video,
             concurrency=filters.concurrency,
+            # The enrichment pass below applies the expansion's comment
+            # filters; disabling the bulk pass avoids fetching every target
+            # twice (same single-fetch contract as scrape_next_layer).
+            enrich_targets=False,
             reporter=reporter,
         )
         run_ids = [result.run_id for result in results]
@@ -889,6 +961,29 @@ class LayerScrapeService(RecommendationService):
             }
         )
 
+    def _already_scraped_ids(self, family_root: str | None) -> set[str]:
+        """Videos whose recommendations have already been observed somewhere.
+
+        A video counts as scraped when its ``recommendations_scraped`` flag is
+        set (any scrape observed its feed, layer-crawl or not) or when it is a
+        source of an edge from a run in this crawl family. Used by the
+        ``frontier`` discovery mode to spend network calls only on unexplored
+        nodes.
+        """
+        scraped = {
+            v.video_id
+            for v in self._repos.videos.list_videos()
+            if v.recommendations_scraped
+        }
+        if family_root:
+            for layer in self.list_layers(family_root):
+                for rid in layer.run_ids:
+                    for e in self._repos.recommendations.list_recommendation_edges(
+                        run_id=rid
+                    ):
+                        scraped.add(e.source_video_id)
+        return scraped
+
     def _snapshot(
         self, exclude_run_ids: set[str] | None = None
     ) -> _LayerSnapshot:
@@ -922,17 +1017,31 @@ class LayerScrapeService(RecommendationService):
             old_nodes=set(old_graph.nodes),
         )
 
-    def _is_recommendation_stub(self, video) -> bool:
-        """True when a Video row is a recommendation-stub placeholder.
+    def _is_incomplete_video(self, video_id: str) -> bool:
+        """True when a frontier member still lacks a fully materialized row.
 
-        Recommended targets are persisted as minimal ``Video`` rows (marked in
-        ``raw_json`` with ``_discovery.kind == "recommendation"``) so they are
-        visible in the corpus. They are still considered *new* targets for
-        deep-enrichment: enrichment overwrites the stub with the full metadata
-        and the marker disappears, so the classification stays correct.
+        A video whose enrichment previously failed (no Video row) or that
+        exists only as a recommendation stub is an incomplete layer member:
+        this crawl must deep-enrich it like any new target.
+        """
+        video = self._repos.videos.get_video(video_id)
+        return video is None or self._is_recommendation_stub(video)
+
+    def _is_recommendation_stub(self, video) -> bool:
+        """True when a Video row is a *true* recommendation-stub placeholder.
+
+        Deliberately uses the base-class strict semantics (``_discovery
+        {"kind": "recommendation", "stub": True}``): rows already deep-enriched
+        by an earlier scrape carry ``stub: False`` and must never be re-fetched
+        by the layer's enrichment pass. Re-scraping them doubled every network
+        call a layer crawl made (the R7 "stuck after edges saved" stall).
         """
         discovery = (video.raw_json or {}).get("_discovery")
-        return isinstance(discovery, dict) and discovery.get("kind") == "recommendation"
+        return (
+            isinstance(discovery, dict)
+            and discovery.get("kind") == "recommendation"
+            and discovery.get("stub") is True
+        )
 
     def _drop_failed_stub(self, video_id: str) -> None:
         """Delete a recommendation stub whose deep-enrichment failed.
@@ -965,6 +1074,7 @@ class LayerScrapeService(RecommendationService):
         throttle: _RateLimiter,
         errors: list,
         reporter: ProgressReporter | None,
+        extra_target_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Deep-enrich newly seen target videos (doc §2.3/§3 step 4).
 
@@ -978,10 +1088,15 @@ class LayerScrapeService(RecommendationService):
         stalled.
 
         ``include_existing`` expands the target set to videos already in the
-        corpus (network-expansion refresh); ``comment_config`` overrides the
-        module-default comment criteria (network-expansion filters).
+        corpus (network-expansion refresh); ``extra_target_ids`` adds frontier
+        members that are still stubs/missing so a layer fully materializes its
+        own node set even when the bulk pass already resolved them partially;
+        ``comment_config`` overrides the module-default comment criteria
+        (network-expansion filters).
         """
         target_ids = {e.recommended_video_id for e in new_edges}
+        if extra_target_ids:
+            target_ids |= extra_target_ids
         existing = {
             v.video_id
             for v in self._repos.videos.list_videos()
@@ -1023,11 +1138,42 @@ class LayerScrapeService(RecommendationService):
 
         enriched: list[dict[str, Any]] = []
         completed = 0
+        recent_failures: list[dict[str, Any]] = []
         order = {video_id: index for index, video_id in enumerate(new_targets)}
         pending_futures: dict = {}
         pool = ThreadPoolExecutor(
             max_workers=concurrency, thread_name_prefix="layer-enrich"
         )
+
+        def _note_progress(
+            item_video_id: str | None = None, title: str | None = None
+        ) -> None:
+            """Per-target progress with the current item + recent failures."""
+            self._report(
+                reporter,
+                "layer/enrich",
+                succeeded=completed,
+                message=f"Enriched {completed}/{total} target video(s)",
+                current_target=(
+                    {
+                        "video_id": item_video_id,
+                        "title": title,
+                        "url": (
+                            f"https://www.youtube.com/watch?v={item_video_id}"
+                            if item_video_id
+                            else None
+                        ),
+                    }
+                    if item_video_id
+                    else None
+                ),
+                failures=list(recent_failures) if recent_failures else None,
+            )
+
+        def _note_failure(video_id: str, exc: Exception | str) -> None:
+            recent_failures.append({"video_id": video_id, "error": str(exc)[:300]})
+            del recent_failures[:-10]
+
         try:
             for video_id in new_targets:
                 pending_futures[
@@ -1047,12 +1193,7 @@ class LayerScrapeService(RecommendationService):
                         fut.cancel()
                     for vid in pending_futures.values():
                         completed += 1
-                        self._report(
-                            reporter,
-                            "layer/enrich",
-                            succeeded=completed,
-                            message=f"Enriched {completed}/{total} target video(s) (stalled videos skipped)",
-                        )
+                        _note_progress(vid)
                     break
                 for future in done:
                     video_id = pending_futures.pop(future)
@@ -1060,23 +1201,14 @@ class LayerScrapeService(RecommendationService):
                         result = future.result()
                     except Exception as exc:  # noqa: BLE001
                         completed += 1
-                        self._report(
-                            reporter,
-                            "layer/enrich",
-                            succeeded=completed,
-                            message=f"Enriched {completed}/{total} target video(s)",
-                        )
+                        _note_failure(video_id, exc)
+                        _note_progress(video_id)
                         continue
                     run_id = target_run.get(video_id) or first_run_id
                     run = self._repos.runs.get_run(run_id) if run_id else None
                     if run is None:
                         completed += 1
-                        self._report(
-                            reporter,
-                            "layer/enrich",
-                            succeeded=completed,
-                            message=f"Enriched {completed}/{total} target video(s)",
-                        )
+                        _note_progress(video_id)
                         continue
                     if result["error"] is not None:
                         exc = result["error"]
@@ -1090,12 +1222,8 @@ class LayerScrapeService(RecommendationService):
                         errors.append(exc)
                         self._drop_failed_stub(video_id)
                         completed += 1
-                        self._report(
-                            reporter,
-                            "layer/enrich",
-                            succeeded=completed,
-                            message=f"Enriched {completed}/{total} target video(s)",
-                        )
+                        _note_failure(video_id, exc)
+                        _note_progress(video_id)
                         continue
                     info = result["info"]
                     video = normalize_video(info, run.run_id)
@@ -1109,12 +1237,8 @@ class LayerScrapeService(RecommendationService):
                         )
                         self._drop_failed_stub(video_id)
                         completed += 1
-                        self._report(
-                            reporter,
-                            "layer/enrich",
-                            succeeded=completed,
-                            message=f"Enriched {completed}/{total} target video(s)",
-                        )
+                        _note_failure(video_id, "could not resolve a video id")
+                        _note_progress(video_id)
                         continue
 
                     # A target that already exists keeps its original provenance:
@@ -1152,11 +1276,13 @@ class LayerScrapeService(RecommendationService):
                         }
                     )
                     completed += 1
+                    _note_progress(video.video_id, video.title)
             self._report(
                 reporter,
                 "layer/enrich",
                 succeeded=completed,
                 message=f"Enriched {completed}/{total} target video(s)",
+                failures=list(recent_failures) if recent_failures else None,
             )
         finally:
             pool.shutdown(wait=False)
@@ -1173,6 +1299,7 @@ class LayerScrapeService(RecommendationService):
         *,
         layer_run_id: str = "",
         projection: str = "video",
+        materialized_members: set[str] | None = None,
     ) -> NewRelationsReport:
         """Classify nodes/edges/components against the pre-crawl snapshot.
 
@@ -1199,8 +1326,49 @@ class LayerScrapeService(RecommendationService):
         existing_video_entries: list[ExistingVideoEntry] = []
         new_count = 0
         existing_count = 0
+        classified_ids: set[str] = set()
         for item in discovered:
             video = item["video"]
+            classified_ids.add(video.video_id)
+            is_existing = (
+                video.video_id in snapshot.preexisting_video_ids
+                or video.video_id in snapshot.old_nodes
+            )
+            channel = channel_rows.get(video.channel_id) if video.channel_id else None
+            if is_existing:
+                existing_count += 1
+                if len(existing_video_entries) < 200:
+                    existing_video_entries.append(
+                        ExistingVideoEntry(
+                            video_id=video.video_id,
+                            title=video.title,
+                            channel_id=video.channel_id,
+                        )
+                    )
+            else:
+                new_count += 1
+                if len(new_video_entries) < 200:
+                    new_video_entries.append(
+                        NewVideoEntry(
+                            video_id=video.video_id,
+                            title=video.title,
+                            channel_id=video.channel_id,
+                            channel_name=channel.title if channel else None,
+                            thumbnail_url=video.thumbnail_url,
+                            classification="new_video",
+                        )
+                    )
+
+        # Frontier members materialized by this crawl's bulk phase (rather
+        # than the enrichment pass) are full layer members and must be
+        # classified too - otherwise the report undercounts them.
+        for video_id in sorted(materialized_members or set()):
+            if video_id in classified_ids:
+                continue
+            video = video_rows.get(video_id)
+            if video is None:
+                continue
+            classified_ids.add(video_id)
             is_existing = (
                 video.video_id in snapshot.preexisting_video_ids
                 or video.video_id in snapshot.old_nodes
@@ -1239,6 +1407,15 @@ class LayerScrapeService(RecommendationService):
             for item in discovered
             for video in [item["video"]]
             if video.channel_id
+        }
+        seen_channels |= {
+            channel_id
+            for channel_id in (
+                video_rows.get(video_id).channel_id
+                for video_id in (materialized_members or set())
+                if video_rows.get(video_id) is not None
+            )
+            if channel_id
         }
         new_channel_entries: list[NewChannelEntry] = []
         new_channel_count = 0

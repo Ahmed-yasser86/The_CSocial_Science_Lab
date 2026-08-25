@@ -9,7 +9,7 @@ fixed (e.g. ``/top`` now annotates MISSING rows with ``availability``).
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -228,6 +228,17 @@ class LayerScrapeRequest(_Base):
         description=(
             "Optional cap on how many recommendations to keep per frontier "
             "video (speeds up wide crawls). Omit for no per-video limit."
+        ),
+    )
+    discovery_mode: Literal["frontier", "rescrape_known"] = Field(
+        "rescrape_known",
+        description=(
+            "How the resolved frontier is crawled. 'rescrape_known' (default, "
+            "the historical behaviour) re-observes every resolved frontier "
+            "video's recommendations even if that feed was already scraped "
+            "earlier in this crawl family. 'frontier' skips videos whose "
+            "recommendations were already observed anywhere and only scrapes "
+            "genuinely unexplored nodes."
         ),
     )
 

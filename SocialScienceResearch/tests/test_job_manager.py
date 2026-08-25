@@ -92,3 +92,70 @@ def test_killed_job_is_not_resurrected_by_orphaned_worker():
         assert mgr.get(job.job_id).status == JobStatus.FAILED
     finally:
         mgr.shutdown()
+
+
+# ----------------------------------------------------------------------
+# Structured progress payload (percent + rolling ETA, observed-only)
+# ----------------------------------------------------------------------
+def test_progress_cb_computes_percent_and_eta():
+    from SocialScienceResearch.services.jobs import Job
+
+    mgr = JobManager(max_workers=1, max_stall_seconds=900)
+    try:
+        job = Job(job_id="job_progress", kind="layer")
+        cb = mgr._progress_cb(job)
+
+        cb(stage="layer/scrape", discovered=4)
+        first = job.progress
+        assert first["percent_complete"] == 0.0
+        # A single sample is not a rate: ETA stays unknown, never fabricated.
+        assert first["eta_seconds"] is None
+        assert first["eta_available"] is False
+        assert first["edges_saved"] is None
+        assert first["current_target"] is None
+        assert first["failures"] is None
+
+        time.sleep(1.1)
+        cb(
+            stage="layer/scrape",
+            discovered=4,
+            succeeded=2,
+            edges_saved=5,
+            current_target={"video_id": "t3", "title": "T3", "url": None},
+        )
+        mid = job.progress
+        assert mid["percent_complete"] == 50.0
+        assert mid["edges_saved"] == 5
+        assert mid["current_target"]["video_id"] == "t3"
+        assert mid["eta_available"] is True
+        assert 0 < mid["eta_seconds"] <= 2.5
+
+        cb(stage="layer/scrape", discovered=4, succeeded=3, failed=1)
+        done = job.progress
+        assert done["percent_complete"] == 100.0
+        assert done["eta_seconds"] == 0.0
+        assert done["eta_available"] is True
+    finally:
+        mgr.shutdown()
+
+
+def test_progress_cb_eta_resets_when_stage_or_total_changes():
+    from SocialScienceResearch.services.jobs import Job
+
+    mgr = JobManager(max_workers=1, max_stall_seconds=900)
+    try:
+        job = Job(job_id="job_epoch", kind="layer")
+        cb = mgr._progress_cb(job)
+
+        cb(stage="layer/scrape", discovered=10, succeeded=5)
+        time.sleep(1.1)
+        cb(stage="layer/scrape", discovered=10, succeeded=6)
+        assert job.progress["eta_available"] is True
+
+        # A stage change restarts the denominator: the old rate must not leak.
+        cb(stage="layer/enrich", discovered=3, succeeded=0)
+        reset = job.progress
+        assert reset["percent_complete"] == 0.0
+        assert reset["eta_available"] is False
+    finally:
+        mgr.shutdown()

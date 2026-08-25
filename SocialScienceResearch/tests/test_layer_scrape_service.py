@@ -8,6 +8,7 @@ NEW/EXISTING + CONNECTED/DISCONNECTED classification algorithm.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -24,13 +25,18 @@ from SocialScienceResearch.config.settings import (
     SocialScienceSettings,
 )
 from SocialScienceResearch.domain.enums import CollectionStatus, RunType
-from SocialScienceResearch.domain.models import CollectionRun, Video
+from SocialScienceResearch.domain.enums import RecommendationStatus
+from SocialScienceResearch.domain.models import (
+    CollectionRun,
+    RecommendationObservation,
+    Video,
+)
 from SocialScienceResearch.persistence.excel_repository import build_excel_repositories
 from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
 from SocialScienceResearch.services.network_analytics_service import (
     NetworkAnalyticsService,
 )
-from SocialScienceResearch.utils.idgen import new_run_id, utcnow
+from SocialScienceResearch.utils.idgen import new_id, new_run_id, utcnow
 
 CH1 = "UCsource0000000000000000000"
 CH2 = "UCtarget0000000000000000000"
@@ -85,6 +91,7 @@ class LayerFakeProvider(AcquisitionProvider):
         self.recs = recs or {}
         self.comments = comments or {}
         self.fail_videos = fail_videos or set()
+        self.rec_calls: list[str] = []
 
     def extract_channel(self, channel_url: str) -> ChannelExtract:
         raise InvalidURLError("not used in layer tests")
@@ -100,6 +107,7 @@ class LayerFakeProvider(AcquisitionProvider):
 
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
         video_id = video_url.rsplit("v=", 1)[-1]
+        self.rec_calls.append(video_id)
         if video_id not in self.recs:
             raise RecommendationUnsupportedError(
                 "yt-dlp cannot provide recommendations"
@@ -758,3 +766,217 @@ def test_crawl_layer2_fallback_frontier_from_edges(tmp_path) -> None:
     layer1b = all_layers[-1]
     # Frontier should be t1,t2 (from seed layer's edges, not discovered)
     assert sorted(layer1b.frontier_video_ids) == sorted(["t1", "t2"])
+
+
+# ======================================================================
+# Discovery modes (frontier vs rescrape_known) — issue 1
+# ======================================================================
+
+
+def _mark_feed_scraped(repos, video_id: str, run_id: str) -> None:
+    """Persist one observed edge from ``video_id`` + set its scraped flag."""
+    repos.recommendations.save_recommendation(
+        RecommendationObservation(
+            observation_id=new_id("rec"),
+            collection_run_id=run_id,
+            source_video_id=video_id,
+            recommended_video_id="already_known_target",
+            position=0,
+            status=RecommendationStatus.OBSERVED,
+        )
+    )
+    repos.videos.mark_recommendations_scraped(video_id)
+
+
+def test_discovery_mode_frontier_skips_already_scraped(tmp_path) -> None:
+    """frontier mode only scrapes frontier videos never scraped before."""
+    provider = LayerFakeProvider(
+        recs={
+            SEED_A: [_rec("x1", channel_id=CH2)],
+            SEED_B: [_rec("t1", channel_id=CH2)],
+        },
+    )
+    service, repos = _build_service(tmp_path, provider)
+    run = _seed_channel_run(repos)
+    _mark_feed_scraped(repos, SEED_A, run.run_id)
+
+    results = service.scrape_next_layer(
+        parent_run_id=run.run_id, discovery_mode="frontier"
+    )
+
+    # Only SEED_B was unexplored; SEED_A's feed was skipped entirely.
+    assert len(results) == 1
+    assert provider.rec_calls == [SEED_B]
+    layer = service.list_layers()[-1]
+    assert sorted(layer.frontier_video_ids) == [SEED_B]
+    assert sorted(layer.discovered_video_ids) == ["t1"]
+    assert layer.config_json["discovery_mode"] == "frontier"
+
+
+def test_discovery_mode_frontier_all_scraped_raises(tmp_path) -> None:
+    provider = LayerFakeProvider(recs={SEED_A: [_rec("t1", channel_id=CH2)]})
+    service, repos = _build_service(tmp_path, provider)
+    run = _seed_channel_run(repos)
+    for video_id in (SEED_A, SEED_B):
+        _mark_feed_scraped(repos, video_id, run.run_id)
+
+    with pytest.raises(ValueError, match="no unscraped videos"):
+        service.scrape_next_layer(parent_run_id=run.run_id, discovery_mode="frontier")
+
+
+def test_discovery_mode_rescrape_known_is_the_default(tmp_path) -> None:
+    """Default mode re-scrapes known feeds (the historical behaviour)."""
+    provider = LayerFakeProvider(
+        recs={
+            SEED_A: [_rec("t1", channel_id=CH2)],
+            SEED_B: [_rec("t2", channel_id=CH2)],
+        },
+    )
+    service, repos = _build_service(tmp_path, provider)
+    run = _seed_channel_run(repos)
+    for video_id in (SEED_A, SEED_B):
+        _mark_feed_scraped(repos, video_id, run.run_id)
+
+    service.scrape_next_layer(parent_run_id=run.run_id)
+
+    # Both seeds were re-observed despite already-known feeds.
+    assert sorted(provider.rec_calls) == [SEED_A, SEED_B]
+    layer = service.list_layers()[-1]
+    assert layer.config_json["discovery_mode"] == "rescrape_known"
+
+
+def test_discovery_mode_invalid_raises(tmp_path) -> None:
+    service, _ = _build_service(tmp_path, LayerFakeProvider())
+    with pytest.raises(ValueError, match="discovery_mode"):
+        service.scrape_next_layer(parent_run_id="r", discovery_mode="bogus")
+
+
+# ======================================================================
+# Structured job progress payload — issue 3
+# =======================================================================
+
+
+class RecordingReporter:
+    """Captures every progress-report kwarg dict for assertions."""
+
+    def __init__(self) -> None:
+        self.reports: list[dict[str, Any]] = []
+
+    def __call__(self, **kwargs: Any) -> None:
+        self.reports.append(kwargs)
+
+
+def test_progress_payload_fields_present_and_monotonic(tmp_path) -> None:
+    provider = LayerFakeProvider(
+        recs={
+            SEED_A: [
+                _rec(f"a{i}", channel_id=CH2) for i in range(3)
+            ],
+            SEED_B: [
+                _rec(f"b{i}", channel_id=CH2) for i in range(3)
+            ],
+        },
+    )
+    service, _ = _build_service(tmp_path, provider)
+    run = _seed_channel_run(repos := service._repos)
+    reporter = RecordingReporter()
+
+    service.scrape_next_layer(parent_run_id=run.run_id, reporter=reporter)
+
+    assert reporter.reports, "crawl emitted no progress"
+    for report in reporter.reports:
+        # Additive structured fields supplied by the emission points.
+        assert "edges_saved" in report
+        assert "current_target" in report
+        assert "failures" in report
+
+    # Aggregate counters stay monotonic within each stage.
+    last_by_stage: dict[str, int] = {}
+    for report in reporter.reports:
+        stage = report["stage"]
+        if stage in last_by_stage:
+            assert report["succeeded"] >= last_by_stage[stage]
+        last_by_stage[stage] = report["succeeded"]
+
+    # The enrichment stage reports the item being processed.
+    enrich_targets = {
+        r["current_target"]["video_id"]
+        for r in reporter.reports
+        if r["stage"] == "layer/enrich" and r["current_target"]
+    }
+    assert len(enrich_targets) == 6
+
+    # The completion report carries the aggregate edge count.
+    complete = [
+        r for r in reporter.reports if r["stage"] == "layer/complete"
+    ]
+    assert complete and complete[-1]["edges_saved"] == 6
+
+
+# ======================================================================
+# Capped enrichment completes promptly (slow-enricher simulation) — issue 2
+# =======================================================================
+
+
+class SlowEnrichProvider(LayerFakeProvider):
+    """Adds a per-extraction latency so deep enrichment dominates runtime."""
+
+    def __init__(self, delay: float, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.delay = delay
+        self.extract_video_calls = 0
+
+    def extract_video(self, video_url: str) -> dict[str, Any]:
+        self.extract_video_calls += 1
+        time.sleep(self.delay)
+        return super().extract_video(video_url)
+
+
+def test_capped_enrichment_single_pass_and_prompt_completion(tmp_path) -> None:
+    """R7 cap bounds the heavy pass; each target is fetched exactly once."""
+    provider = SlowEnrichProvider(
+        0.2,
+        recs={
+            SEED_A: [_rec(f"sa{i}", channel_id=CH2) for i in range(5)],
+            SEED_B: [_rec(f"sb{i}", channel_id=CH2) for i in range(5)],
+        },
+    )
+    settings = SocialScienceSettings(
+        repository=RepositorySettings(data_dir=str(tmp_path), dataset_name="layer_cap"),
+        scraper=ScraperSettings(
+            retries=1,
+            retry_backoff=0.0,
+            request_delay_seconds=0,
+            max_enrich_targets=4,
+            enrichment_concurrency=4,
+        ),
+    )
+    repos = build_excel_repositories(settings.repository)
+    service = LayerScrapeService(provider, repos, settings=settings)
+    run = _seed_channel_run(repos)
+
+    started = time.monotonic()
+    reporter = RecordingReporter()
+    service.scrape_next_layer(parent_run_id=run.run_id, reporter=reporter)
+    elapsed = time.monotonic() - started
+
+    # R7: edges saved for ALL recommendations even though enrichment is capped.
+    edges = repos.recommendations.list_recommendation_edges()
+    assert len(edges) == 10
+
+    # Single enrichment pass bounded by the cap: exactly 4 network fetches.
+    # (The historical double pass fetched the bulk cap AND the layer cap.)
+    assert provider.extract_video_calls == 4
+
+    # Prompt completion: capped work must finish well inside the stall budget.
+    assert elapsed < 30
+
+    # Progress honestly reports the capped denominator and completion.
+    enrich_reports = [
+        r for r in reporter.reports if r["stage"] == "layer/enrich"
+    ]
+    assert enrich_reports[0]["discovered"] == 4
+    final_enrich = [
+        r for r in enrich_reports if r["message"] and r["message"].startswith("Enriched")
+    ][-1]
+    assert final_enrich["succeeded"] == 4

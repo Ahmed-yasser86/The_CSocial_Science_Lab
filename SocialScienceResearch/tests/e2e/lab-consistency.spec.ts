@@ -54,9 +54,11 @@ test.describe("Lab consistency scenarios", () => {
   }) => {
     await openLab(page);
     await page.getByRole("tab", { name: "Matrices" }).click();
+    // Cold path on the production corpus: first hit compiles the tab and
+    // computes the O(channels^2) overlap before the expand buttons mount.
     await expect(
       page.getByRole("button", { name: "Expand community matrix" }),
-    ).toBeVisible({ timeout: 20000 });
+    ).toBeVisible({ timeout: 120000 });
     await page.getByRole("button", { name: "Expand community matrix" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible({ timeout: 20000 });
@@ -85,7 +87,12 @@ test.describe("Lab consistency scenarios", () => {
     await chips.first().waitFor({ timeout: 20000 });
     await chips.nth(0).click();
     await chips.nth(1).click();
-    await page.getByRole("button", { name: "Analyze" }).click();
+    // Scope to <main>: the top nav now also has an "Analyze" hub trigger and
+    // strict mode forbids the ambiguity.
+    await page
+      .locator("main")
+      .getByRole("button", { name: "Analyze" })
+      .click();
     // Overlap computation streams a large corpus; allow a generous wait.
     await page.getByTestId("commenter-overlap-results").waitFor({ timeout: 45000 });
     // channels projection guarantees >= 2 entities so the panels render.

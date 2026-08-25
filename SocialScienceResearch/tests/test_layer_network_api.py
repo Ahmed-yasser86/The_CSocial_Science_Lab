@@ -215,3 +215,64 @@ def test_layer_0_graph_is_seed_scoped(client) -> None:
     graph = client.get(f"{PREFIX}/network/layer/{layer0['layer_run_id']}/graph").json()
     # Layer 0 has no scraped edges; it serves the seed run slice (no edges).
     assert graph["edge_count"] == 0
+
+
+def test_layer_scrape_accepts_discovery_mode_and_reports_progress(client) -> None:
+    resp = client.post(f"{PREFIX}/network/layer", json={"run_id": SEED_RUN})
+    assert resp.status_code == 200, resp.text
+    layer0 = resp.json()
+
+    # Explicit frontier mode is accepted end-to-end.
+    resp = client.post(
+        f"{PREFIX}/network/layer/scrape",
+        json={
+            "parent_layer_run_id": layer0["layer_run_id"],
+            "discovery_mode": "frontier",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    job = _wait_for_terminal(client, resp.json()["job_id"])
+    assert job["status"] == "succeeded"
+
+    progress = job["progress"]
+    # Additive structured fields are present in the job payload (SSE shape
+    # stays backward compatible: stage/discovered/succeeded/failed/message
+    # unchanged).
+    for key in (
+        "stage",
+        "discovered",
+        "succeeded",
+        "failed",
+        "message",
+        "percent_complete",
+        "eta_seconds",
+        "eta_available",
+        "edges_saved",
+        "current_target",
+        "failures",
+    ):
+        assert key in progress, f"missing progress field {key}"
+    assert progress["percent_complete"] is None or 0 <= progress["percent_complete"] <= 100
+    if progress["eta_seconds"] is None:
+        assert progress["eta_available"] is False
+    # The final report carries the aggregate edge count.
+    assert progress["edges_saved"] == 2
+
+    # The layer anchor records the mode.
+    layers = client.get(f"{PREFIX}/network/layers").json()
+    layer1 = [l for l in layers["items"] if l["layer_index"] == 1][0]
+    detail = client.get(f"{PREFIX}/network/layer/{layer1['layer_run_id']}").json()
+    assert detail["config_json"]["discovery_mode"] == "frontier"
+
+
+def test_layer_scrape_rejects_unknown_discovery_mode(client) -> None:
+    resp = client.post(f"{PREFIX}/network/layer", json={"run_id": SEED_RUN})
+    layer0 = resp.json()
+    resp = client.post(
+        f"{PREFIX}/network/layer/scrape",
+        json={
+            "parent_layer_run_id": layer0["layer_run_id"],
+            "discovery_mode": "bogus",
+        },
+    )
+    assert resp.status_code == 422

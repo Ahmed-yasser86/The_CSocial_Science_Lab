@@ -5,15 +5,33 @@ import { Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { LayerStepper } from "@/components/features/network-layer/layer-stepper";
 import { NewRelationsPanel } from "@/components/features/network-layer/new-relations-panel";
 import { LayerGraph } from "@/components/features/network-layer/layer-graph";
 import { ScraperConfigPanel } from "@/components/features/network-layer/scraper-config-panel";
 import { NetworkGraph, type GraphLink, type GraphNode } from "@/components/features/network-graph";
-import { useCrawlNextLayer, useLayers } from "@/services/networkLayer";
+import {
+  useCrawlNextLayer,
+  useLayers,
+  type LayerDiscoveryMode,
+} from "@/services/networkLayer";
 import { useNetworkGraph } from "@/services/networkFull";
 import type { LayerProjection } from "@/lib/network-layer-types";
 import type { NetworkGraphPayload } from "@/lib/network-full-types";
+
+const DISCOVERY_MODE_HELP: Record<LayerDiscoveryMode, string> = {
+  frontier:
+    "Only scrape videos whose recommendations have never been observed — every network call expands to genuinely new nodes. Fails if everything is already explored.",
+  rescrape_known:
+    "Re-observes the resolved frontier even when a video's recommendations were already scraped earlier (the historical behaviour). Slower for repeat crawls, but captures feeds that changed.",
+};
 
 function mapVideoPayload(payload: NetworkGraphPayload): {
   nodes: GraphNode[];
@@ -53,6 +71,7 @@ export function LayerPanel({ runId }: { runId?: string | null }) {
   const [selectedLayerRunId, setSelectedLayerRunId] = useState<string | null>(null);
   const [projection, setProjection] = useState<LayerProjection>("video");
   const [collectComments, setCollectComments] = useState(true);
+  const [discoveryMode, setDiscoveryMode] = useState<LayerDiscoveryMode>("rescrape_known");
   const [highlightVideoIds, setHighlightVideoIds] = useState<string[] | null>(null);
   const [showFullNetwork, setShowFullNetwork] = useState(false);
 
@@ -79,18 +98,21 @@ export function LayerPanel({ runId }: { runId?: string | null }) {
   }) {
     setSelectedLayerRunId(null);
     setShowFullNetwork(false);
-    crawl.mutate(body, {
-      onSuccess: (_data) => {
-        layersQuery.refetch().then(({ data }) => {
-          const sorted = [...(data ?? [])].sort(
-            (a, b) => a.layer_index - b.layer_index,
-          );
-          if (sorted.length > 0) {
-            setSelectedLayerRunId(sorted[sorted.length - 1].layer_run_id);
-          }
-        });
+    crawl.mutate(
+      { ...body, discovery_mode: discoveryMode },
+      {
+        onSuccess: (_data) => {
+          layersQuery.refetch().then(({ data }) => {
+            const sorted = [...(data ?? [])].sort(
+              (a, b) => a.layer_index - b.layer_index,
+            );
+            if (sorted.length > 0) {
+              setSelectedLayerRunId(sorted[sorted.length - 1].layer_run_id);
+            }
+          });
+        },
       },
-    });
+    );
   }
 
   return (
@@ -111,6 +133,35 @@ export function LayerPanel({ runId }: { runId?: string | null }) {
       />
 
       <ScraperConfigPanel />
+
+      <Card className="space-y-2 p-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Discovery mode
+          </Label>
+          <Select
+            value={discoveryMode}
+            onValueChange={(next) =>
+              setDiscoveryMode((next ?? "rescrape_known") as LayerDiscoveryMode)
+            }
+          >
+            <SelectTrigger className="w-64" aria-label="Select discovery mode">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="frontier">
+                New frontier only (skip already-scraped)
+              </SelectItem>
+              <SelectItem value="rescrape_known">
+                Re-scrape known frontier (default)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {DISCOVERY_MODE_HELP[discoveryMode]}
+        </p>
+      </Card>
 
       <Card className="p-3">
         <label className="flex items-center gap-2 text-sm">
