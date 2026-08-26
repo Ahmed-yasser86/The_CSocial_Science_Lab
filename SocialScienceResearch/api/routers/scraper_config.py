@@ -21,6 +21,7 @@ class ScraperConfigPayload(BaseModel):
     retries: int | None = Field(None, ge=0, le=10)
     retry_backoff: float | None = Field(None, ge=0, le=30)
     max_enrich_targets: int | None = Field(None, ge=0, le=2000)
+    transcript_provider: str | None = Field(None, pattern="^(ytdlp|freetranscriptapi)$")
 
 
 class PresetRequest(BaseModel):

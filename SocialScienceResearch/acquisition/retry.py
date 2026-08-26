@@ -9,6 +9,7 @@ immediately.
 from __future__ import annotations
 
 import logging
+import random
 from typing import Any, Callable
 
 from tenacity import (
@@ -31,19 +32,36 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 def retry_policy(
-    retries: int = 3,
-    backoff: float = 2.0,
-    max_wait: float = 60.0,
+    retries: int = 10,
+    backoff: float = 5.0,
+    max_wait: float = 120.0,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Return a tenacity retry decorator for transient acquisition failures.
 
     Uses exponential backoff starting at ``backoff`` seconds, capped at
-    ``max_wait``. Retries only ``NetworkError``/``RateLimitError``.
+    ``max_wait``, with jitter. A rate-limit error carrying a ``retry_after``
+    (e.g. from a ``Retry-After`` header) is obeyed exactly. Retries only
+    ``NetworkError``/``RateLimitError``.
     """
+
+    def _wait_for(retry_state: object) -> float:
+        """Backoff that honors a server ``Retry-After`` on rate-limit errors.
+
+        A ``RateLimitError.retry_after`` (seconds) is obeyed exactly;
+        otherwise exponential backoff (with jitter) capped at ``max_wait``.
+        """
+        attempt = getattr(retry_state, "attempt_number", 1)
+        outcome = getattr(retry_state, "outcome", None)
+        exc = outcome.exception() if outcome is not None else None
+        if isinstance(exc, RateLimitError) and exc.retry_after:
+            return float(exc.retry_after)
+        base = min(backoff * (2 ** (attempt - 1)), max_wait)
+        return base + random.uniform(0, min(base, 2.0))
+
     return retry(
         retry=retry_if_exception(_is_retryable),
         stop=stop_after_attempt(max(retries, 1)),
-        wait=wait_exponential(multiplier=backoff, min=backoff, max=max_wait),
+        wait=_wait_for,
         reraise=True,
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )

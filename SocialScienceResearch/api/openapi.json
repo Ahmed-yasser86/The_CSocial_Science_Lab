@@ -18249,6 +18249,18 @@
               }
             ],
             "title": "Max Enrich Targets"
+          },
+          "transcript_provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(ytdlp|freetranscriptapi)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Provider"
           }
         },
         "type": "object",

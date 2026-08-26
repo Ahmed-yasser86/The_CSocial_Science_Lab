@@ -38,6 +38,7 @@ from .errors import (
     InvalidURLError,
     LiveEventSkipError,
     NetworkError,
+    RateLimitError,
     RecommendationUnsupportedError,
     TranscriptUnsupportedError,
     build_error,
@@ -613,7 +614,20 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         try:
             raw = self._fetch_caption(track_url)
         except urllib.error.HTTPError as exc:
-            raise NetworkError(f"caption download failed: {exc}") from exc
+            # 429 (and other rate-limit statuses) must be retried with the
+            # server's own Retry-After so transcript collection survives
+            # YouTube throttling instead of failing outright.
+            if getattr(exc, "code", None) == 429:
+                raise RateLimitError(
+                    f"caption download rate limited (429): {exc}",
+                    retry_after=self._parse_retry_after(exc),
+                ) from exc
+            if getattr(exc, "code", None) and 500 <= exc.code < 600:
+                raise NetworkError(f"caption download failed: {exc}") from exc
+            # Other 4xx (403/404/…): the track is genuinely unobtainable.
+            raise TranscriptUnsupportedError(
+                f"caption download failed: {exc}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise NetworkError(f"caption download failed: {exc}") from exc
 
@@ -650,6 +664,21 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             if entries:
                 return entries[-1].get("url"), name
         return None, None
+
+    @staticmethod
+    def _parse_retry_after(exc: "urllib.error.HTTPError") -> float | None:
+        """Extract a ``Retry-After`` value (seconds) from an HTTP 429, if any."""
+        try:
+            headers = getattr(exc, "headers", None)
+            raw = headers.get("Retry-After") if headers else None
+        except Exception:  # noqa: BLE001
+            return None
+        if raw is None:
+            return None
+        raw = str(raw).strip()
+        if raw.isdigit():
+            return float(raw)
+        return None
 
     def _fetch_caption(self, url: str) -> str:
         if self._settings.proxy:

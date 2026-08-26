@@ -23,8 +23,8 @@ DEFAULT_DATA_DIR = str(DEFAULT_PROJECT_ROOT / "data" / "social_science")
 DEFAULT_DATASET_NAME = "youtube_research"
 
 # Acquisition defaults
-DEFAULT_RETRIES = 3
-DEFAULT_RETRY_BACKOFF = 2.0
+DEFAULT_RETRIES = 10
+DEFAULT_RETRY_BACKOFF = 5.0
 DEFAULT_SOCKET_TIMEOUT = 30.0
 DEFAULT_REQUEST_DELAY_SECONDS = 0.25
 DEFAULT_ENRICHMENT_CONCURRENCY = 6
@@ -138,6 +138,14 @@ class ScraperSettings:
     )
     retry_backoff: float = field(
         default_factory=lambda: _env_float("SOCIAL_RETRY_BACKOFF", DEFAULT_RETRY_BACKOFF)
+    )
+    # Which backend handles transcript extraction: "ytdlp" or "freetranscriptapi".
+    transcript_provider: str = field(
+        default_factory=lambda: os.environ.get("SOCIAL_TRANSCRIPT_PROVIDER", "ytdlp").lower()
+    )
+    # Optional API key for the FreeTranscriptAPI transcript backend.
+    freetranscriptapi_key: str | None = field(
+        default_factory=lambda: os.environ.get("FREETRANSCRIPTAPI_KEY")
     )
     socket_timeout: float = field(
         default_factory=lambda: _env_float(

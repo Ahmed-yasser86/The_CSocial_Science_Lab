@@ -32,6 +32,18 @@ class RateLimitError(AcquisitionError):
     error_type = ErrorType.RATE_LIMIT
     retryable = True
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        entity_id: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(message, entity_id=entity_id)
+        # Seconds the caller should wait before retrying (e.g. from a
+        # Retry-After header). Consumed by the retry policy.
+        self.retry_after = retry_after
+
 
 class InvalidURLError(AcquisitionError):
     error_type = ErrorType.INVALID_URL

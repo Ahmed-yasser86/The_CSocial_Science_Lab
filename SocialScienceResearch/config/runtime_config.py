@@ -20,6 +20,7 @@ class RuntimeScraperConfig:
     retries: int = 3
     retry_backoff: float = 2.0
     max_enrich_targets: int = 100
+    transcript_provider: str = "ytdlp"
 
     def to_dict(self) -> dict:
         return {
@@ -29,6 +30,7 @@ class RuntimeScraperConfig:
             "retries": self.retries,
             "retry_backoff": self.retry_backoff,
             "max_enrich_targets": self.max_enrich_targets,
+            "transcript_provider": self.transcript_provider,
         }
 
     def update(self, **kwargs) -> None:

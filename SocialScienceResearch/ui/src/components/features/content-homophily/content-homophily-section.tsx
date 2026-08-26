@@ -294,6 +294,28 @@ export function ContentHomophilySection() {
 
   const running = record?.status === "pending" || record?.status === "running";
 
+  const [transcriptProvider, setTranscriptProvider] = useState<string>("ytdlp");
+  useEffect(() => {
+    fetch("/api/v1/social-science/scraper/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.transcript_provider) setTranscriptProvider(d.transcript_provider);
+      })
+      .catch(() => {});
+  }, []);
+  const updateProvider = async (value: string) => {
+    setTranscriptProvider(value);
+    try {
+      await fetch("/api/v1/social-science/scraper/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript_provider: value }),
+      });
+    } catch {
+      /* best-effort; selector still reflects local choice */
+    }
+  };
+
   return (
     <div className="space-y-4" data-testid="content-homophily-section">
       <Card>
@@ -364,6 +386,20 @@ export function ContentHomophilySection() {
                 className="w-24"
                 data-testid="chh-seed"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="chh-provider">Transcript source</Label>
+              <select
+                id="chh-provider"
+                value={transcriptProvider}
+                onChange={(e) => updateProvider(e.target.value)}
+                disabled={running}
+                className="h-9 rounded-md border bg-background px-2 text-sm"
+                data-testid="chh-provider"
+              >
+                <option value="ytdlp">yt-dlp (YouTube captions)</option>
+                <option value="freetranscriptapi">FreeTranscriptAPI</option>
+              </select>
             </div>
             <Button
               onClick={() => start.mutate()}

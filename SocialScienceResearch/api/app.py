@@ -626,6 +626,43 @@ def create_app(
     settings: SocialScienceSettings | None = None, *, provider=None
 ) -> FastAPI:
     settings = settings or SocialScienceSettings()
+    # Mutable runtime scraper config (UI can update without restart). Built
+    # first so the transcript-provider selector can read it live.
+    from SocialScienceResearch.config.runtime_config import RuntimeScraperConfig
+
+    runtime_scraper_config = RuntimeScraperConfig(
+        request_delay_seconds=settings.scraper.request_delay_seconds,
+        enrichment_concurrency=settings.scraper.enrichment_concurrency,
+        socket_timeout=settings.scraper.socket_timeout,
+        retries=settings.scraper.retries,
+        retry_backoff=settings.scraper.retry_backoff,
+        transcript_provider=settings.scraper.transcript_provider,
+    )
+    if provider is None:
+        from SocialScienceResearch.acquisition import YtDlpAcquisitionProvider
+        from SocialScienceResearch.acquisition.freetranscriptapi_provider import (
+            FreeTranscriptApiProvider,
+        )
+        from SocialScienceResearch.acquisition.routing_provider import (
+            RoutingAcquisitionProvider,
+        )
+
+        _ytdlp = YtDlpAcquisitionProvider(
+            settings=settings.scraper, collection=settings.collection
+        )
+        _free = (
+            FreeTranscriptApiProvider(
+                api_key=settings.scraper.freetranscriptapi_key,
+                lang=settings.scraper.transcript_lang,
+            )
+            if settings.scraper.freetranscriptapi_key
+            else None
+        )
+        provider = RoutingAcquisitionProvider(
+            _ytdlp,
+            _free,
+            lambda: runtime_scraper_config.transcript_provider,
+        )
     runtime = WorkspaceRuntime(settings, provider=provider)
     services = runtime.services
     services.update(build_services(settings, provider=provider))
@@ -672,14 +709,7 @@ def create_app(
         return await call_next(request)
 
     # Mutable runtime scraper config (UI can update without restart).
-    from SocialScienceResearch.config.runtime_config import RuntimeScraperConfig
-    app.state.runtime_scraper_config = RuntimeScraperConfig(
-        request_delay_seconds=settings.scraper.request_delay_seconds,
-        enrichment_concurrency=settings.scraper.enrichment_concurrency,
-        socket_timeout=settings.scraper.socket_timeout,
-        retries=settings.scraper.retries,
-        retry_backoff=settings.scraper.retry_backoff,
-    )
+    app.state.runtime_scraper_config = runtime_scraper_config
     # Wire runtime config into services so they read mutable settings
     # instead of frozen ones.
     services["layer_scrape"].set_runtime_config(app.state.runtime_scraper_config)
