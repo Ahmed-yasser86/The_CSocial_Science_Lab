@@ -1012,6 +1012,151 @@
         }
       }
     },
+    "/api/v1/social-science/network/content-homophily": {
+      "post": {
+        "tags": [
+          "content_homophily"
+        ],
+        "summary": "Start Analysis",
+        "description": "Start an opt-in Content Homophily analysis job.\n\nTargeted transcript collection + embeddings + seeded pair sampling +\ncommunity-label permutation null. Runs in the background; poll\n``GET /network/content-homophily/{analysis_id}`` for stage progress and\nresults. Nothing about this endpoint runs automatically.",
+        "operationId": "start_analysis_api_v1_social_science_network_content_homophily_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentHomophilyStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentHomophilyStartPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "content_homophily"
+        ],
+        "summary": "List Analyses",
+        "description": "Persisted Content Homophily analyses, newest first.",
+        "operationId": "list_analyses_api_v1_social_science_network_content_homophily_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from the previous page",
+              "title": "Cursor"
+            },
+            "description": "Opaque cursor from the previous page"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/content-homophily/{analysis_id}": {
+      "get": {
+        "tags": [
+          "content_homophily"
+        ],
+        "summary": "Get Analysis",
+        "description": "Full analysis record: status, per-stage checklist progress (with\nembedding observability), execution log, and CONTENT EVIDENCE results.",
+        "operationId": "get_analysis_api_v1_social_science_network_content_homophily__analysis_id__get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/projects": {
       "post": {
         "tags": [
@@ -10186,6 +10331,120 @@
         "title": "ComponentSummary",
         "description": "One connected component of a layer's new-edge subgraph."
       },
+      "ContentHomophilyStartPayload": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "analysis_id"
+        ],
+        "title": "ContentHomophilyStartPayload",
+        "description": "Response of ``POST .../network/content-homophily``."
+      },
+      "ContentHomophilyStartRequest": {
+        "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "video_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Video Ids"
+          },
+          "sampling_fraction": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Sampling Fraction",
+            "description": "Computational pair-sampling fraction (5%/10%/20% typical). NOT a claim of statistical representativeness.",
+            "default": 0.1
+          },
+          "max_pair_cap": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Max Pair Cap",
+            "description": "Hard cap on sampled pairs per pair-selection operation (never exceeded).",
+            "default": 10000
+          },
+          "random_seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Random Seed",
+            "description": "Seeded sampling; recorded for reproducibility."
+          },
+          "num_permutations": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Num Permutations",
+            "description": "Community-label permutation count for the null model.",
+            "default": 1000
+          },
+          "max_videos_per_community": {
+            "type": "integer",
+            "maximum": 2000.0,
+            "minimum": 2.0,
+            "title": "Max Videos Per Community",
+            "description": "Replacement-sampling limit per community when transcripts are missing.",
+            "default": 40
+          },
+          "include_edge_similarity": {
+            "type": "boolean",
+            "title": "Include Edge Similarity",
+            "description": "Optional separate recommendation-edge semantic similarity (kept distinct from community-level homophily).",
+            "default": false
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ContentHomophilyStartRequest",
+        "description": "Body for ``POST .../network/content-homophily`` (``extra=\"forbid\"``).\n\nOpt-in, on-demand CONTENT evidence over ANY network scope: ``run_id``\npins the analysis to one run's slice, ``video_ids`` to an explicit set;\nwith neither, the whole persisted recommendation network is analyzed.\nTranscript collection is targeted at the sampled videos only."
+      },
       "CoverageReport": {
         "properties": {
           "generated_at": {
@@ -15264,6 +15523,51 @@
           "items"
         ],
         "title": "Paginated[VideoPayload]"
+      },
+      "Paginated_dict_": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "default": false
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "Paginated[dict]"
       },
       "Paginated_str_": {
         "properties": {

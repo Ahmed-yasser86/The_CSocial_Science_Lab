@@ -870,6 +870,9 @@ class EchoChamberService(LayerScrapeService):
             )
             total_edges += edge.video_edge_count
         names = {n.channel_id: n.channel_name for n in projection.nodes}
+        stored_titles = self._repos.channels.list_channel_titles()
+        for channel_id, title in stored_titles.items():
+            names.setdefault(channel_id, title)
         ranked = sorted(weighted_in.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
         return [
             {
@@ -1075,7 +1078,15 @@ class EchoChamberService(LayerScrapeService):
                             layer_edges, seed_video_id=detection.seed_video_id
                         ),
                     },
-                    "centrality": sm.centrality_metrics(graph),
+                    "centrality": sm.centrality_metrics(
+                        graph,
+                        titles={
+                            v: m.get("title")
+                            for v, m in self._repos.videos.list_video_metadata(
+                                list(graph.nodes)
+                            ).items()
+                        },
+                    ),
                 },
                 "channel_lens": {
                     "lens": "channel",
@@ -1225,10 +1236,20 @@ class EchoChamberService(LayerScrapeService):
     # Score
     # ------------------------------------------------------------------
     def _score_for(self, detection: EchoDetection) -> dict[str, Any] | None:
-        """Composite score from the LATEST value of every signal."""
-        latest_signals = (
-            detection.layers[-1].get("signals") if detection.layers else None
-        )
+        """Composite score from the LATEST value of every signal.
+
+        Always recomputed from the newest non-empty layer signals: older
+        stored score rows predate the value_raw/value_normalized component
+        fields and would serialize as nulls forever.
+        """
+        latest_signals = None
+        for layer in reversed(detection.layers or []):
+            if (layer.get("signals") or {}).get("s1", {}).get("value") is not None or any(
+                (layer.get("signals") or {}).get(k, {}).get("value") is not None
+                for k in ("s2", "s3", "s4")
+            ):
+                latest_signals = layer.get("signals")
+                break
         keys = ("s1", "s2", "s3", "s4", "s5")
         if latest_signals is None:
             signals = {key: None for key in keys}

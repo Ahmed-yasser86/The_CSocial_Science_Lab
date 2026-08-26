@@ -39,6 +39,13 @@ DEFAULT_MAX_ENRICH_TARGETS = 100
 #: 5000/10000 divergence); a research video cannot legitimately yield more.
 DEFAULT_MAX_COMMENTS_PER_VIDEO = 10000
 DEFAULT_COLLECT_COMMENTS = True
+#: Transcripts are NEVER auto-collected. The default (and the shipped UI) is
+#: strictly opt-in: transcript/script fetching only happens when a collection
+#: spec explicitly sets ``collect_transcripts=True`` or when a researcher
+#: starts an on-demand Content Homophily analysis (which targets only sampled
+#: videos). This env flag exists so a deployment could flip the *default* for
+#: explicit spec runs, but it stays False by default everywhere.
+DEFAULT_COLLECT_TRANSCRIPTS = False
 DEFAULT_MAX_VIDEOS_PER_CHANNEL = 100000  # safety ceiling; channel pagination is incremental anyway
 #: Deep per-video enrichment (full stats + comments) for channel runs is on by
 #: default so likes/comments are collected. Bound it with ``max_videos_to_enrich``.
@@ -199,6 +206,14 @@ class CollectionSettings:
             "SOCIAL_MAX_COMMENTS_PER_VIDEO", DEFAULT_MAX_COMMENTS_PER_VIDEO
         )
     )
+    collect_transcripts: bool = field(
+        default_factory=lambda: _env_bool(
+            "SOCIAL_COLLECT_TRANSCRIPTS", DEFAULT_COLLECT_TRANSCRIPTS
+        )
+    )
+    """Default for ``CollectionSpec.collect_transcripts`` when a spec leaves it
+    unset. Strictly False (opt-in) by default so no scrape path ever fetches
+    transcripts/scripts unless the request explicitly asked for them."""
     max_videos_per_channel: int = field(
         default_factory=lambda: _env_int(
             "SOCIAL_MAX_VIDEOS_PER_CHANNEL", DEFAULT_MAX_VIDEOS_PER_CHANNEL

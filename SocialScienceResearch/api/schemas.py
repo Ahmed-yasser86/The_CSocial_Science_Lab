@@ -264,6 +264,74 @@ class LayerScrapeRequest(_Base):
     )
 
 
+class ContentHomophilyStartRequest(_Base):
+    """Body for ``POST .../network/content-homophily`` (``extra="forbid"``).
+
+    Opt-in, on-demand CONTENT evidence over ANY network scope: ``run_id``
+    pins the analysis to one run's slice, ``video_ids`` to an explicit set;
+    with neither, the whole persisted recommendation network is analyzed.
+    Transcript collection is targeted at the sampled videos only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str | None = None
+    video_ids: list[str] = Field(default_factory=list)
+    sampling_fraction: float = Field(
+        0.10,
+        gt=0,
+        le=1.0,
+        description=(
+            "Computational pair-sampling fraction (5%/10%/20% typical). NOT "
+            "a claim of statistical representativeness."
+        ),
+    )
+    max_pair_cap: int = Field(
+        10_000,
+        ge=1,
+        le=10_000,
+        description=(
+            "Hard cap on sampled pairs per pair-selection operation "
+            "(never exceeded)."
+        ),
+    )
+    random_seed: int | None = Field(
+        None,
+        description="Seeded sampling; recorded for reproducibility.",
+    )
+    num_permutations: int = Field(
+        1000,
+        ge=0,
+        le=10_000,
+        description="Community-label permutation count for the null model.",
+    )
+    max_videos_per_community: int = Field(
+        40,
+        ge=2,
+        le=2000,
+        description=(
+            "Replacement-sampling limit per community when transcripts are "
+            "missing."
+        ),
+    )
+    include_edge_similarity: bool = Field(
+        False,
+        description=(
+            "Optional separate recommendation-edge semantic similarity "
+            "(kept distinct from community-level homophily)."
+        ),
+    )
+    tags: list[str] = Field(default_factory=list)
+
+
+class ContentHomophilyStartPayload(_Base):
+    """Response of ``POST .../network/content-homophily``."""
+
+    analysis_id: str
+    job_id: str | None = None
+    status: str = "pending"
+
+
 class EchoDetectRequest(_Base):
     """Body for ``POST .../echo-chamber/detect`` (``extra="forbid"``).
 

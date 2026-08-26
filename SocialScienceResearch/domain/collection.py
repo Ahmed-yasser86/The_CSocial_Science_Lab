@@ -146,7 +146,11 @@ class CollectionSpec(BaseModel):
             "comment_date_to": (
                 self.comment_date_to.isoformat() if self.comment_date_to else None
             ),
-            "collect_transcripts": bool(self.collect_transcripts),
+            "collect_transcripts": (
+                self.collect_transcripts
+                if self.collect_transcripts is not None
+                else bool(getattr(collection, "collect_transcripts", False))
+            ),
             "enrich_video_stats": (
                 self.enrich_video_stats
                 if self.enrich_video_stats is not None

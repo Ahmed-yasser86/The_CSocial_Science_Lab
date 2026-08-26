@@ -34,6 +34,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { JobProgressCard } from "@/components/features/job-progress-card";
+import { ContentHomophilySection } from "@/components/features/content-homophily/content-homophily-section";
 import {
   canContinue,
   ECHO_DISCLAIMERS,
@@ -378,7 +379,16 @@ function S3SharesTable({ shares }: { shares: EchoChannelShare[] }) {
           {shares.map((c) => (
             <TableRow key={c.channel_id}>
               <TableCell className="max-w-72 truncate text-sm">
-                {c.channel_name ?? c.channel_id}
+                <a
+                  className="hover:underline"
+                  href={`/channels/${c.channel_id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.location.assign(`/channels/${c.channel_id}`);
+                  }}
+                >
+                  {c.channel_name ?? c.channel_id}
+                </a>
               </TableCell>
               <TableCell className="font-mono text-xs">{c.weight}</TableCell>
               <TableCell>
@@ -698,6 +708,7 @@ function CentralitySection({
                 const top = (env?.detail?.top ?? []) as {
                   id: string;
                   score: number;
+                  title?: string | null;
                 }[];
                 return (
                   <div key={key}>
@@ -709,13 +720,16 @@ function CentralitySection({
                     {env && top.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {top.slice(0, 5).map((item) => (
-                          <span
+                          <Link
                             key={item.id}
-                            className="rounded bg-muted px-2 py-0.5 font-mono text-xs"
-                            title={`score ${item.score}`}
+                            href={`/videos/${item.id}`}
+                            className="rounded bg-muted px-2 py-0.5 font-mono text-xs hover:underline"
+                            title={item.title ?? item.id}
                           >
-                            {item.id.slice(0, 12)}… ({item.score.toFixed(4)})
-                          </span>
+                            {(item.title ?? item.id).slice(0, 24)}
+                            {" "}
+                            ({item.score.toFixed(4)})
+                          </Link>
                         ))}
                       </div>
                     ) : (
@@ -1107,7 +1121,16 @@ function TopChannelsTable({
           {channels.map((c) => (
             <TableRow key={c.channel_id}>
               <TableCell className="max-w-72 truncate">
-                {c.channel_name ?? c.channel_id}
+                <a
+                  className="hover:underline"
+                  href={`/channels/${c.channel_id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.location.assign(`/channels/${c.channel_id}`);
+                  }}
+                >
+                  {c.channel_name ?? c.channel_id}
+                </a>
               </TableCell>
               <TableCell className="font-mono text-xs">
                 {c.weighted_in_degree}
@@ -1138,6 +1161,92 @@ function TopTablesSection({
     return <TopVideosTable videos={lensVideo.data?.top_videos ?? []} />;
   }
   return <TopChannelsTable channels={lensChannel.data?.top_channels ?? []} />;
+}
+
+function downloadBlob(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function toCsv(rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return "";
+  const headers = Array.from(
+    rows.reduce<Set<string>>((acc, r) => {
+      Object.keys(r).forEach((k) => acc.add(k));
+      return acc;
+    }, new Set()),
+  );
+  const esc = (v: unknown) =>
+    `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [headers.join(",")];
+  for (const r of rows) {
+    lines.push(headers.map((h) => esc((r as any)[h])).join(","));
+  }
+  return lines.join("\n");
+}
+
+function EchoExportMenu({ detection }: { detection: any }) {
+  const base = detection?.detection_id ?? "echo";
+  const exportJson = () =>
+    downloadBlob(`${base}.json`, JSON.stringify(detection, null, 2), "application/json");
+  const exportTimeline = () => {
+    const rows = (detection?.layers ?? []).map((l: any) => ({
+      layer_index: l.layer_index,
+      status: l.status,
+      s1_frontier_collapse: l.signals?.s1?.value,
+      s2_seed_reinforcement: l.signals?.s2?.value,
+      s3_top_channel_share: l.signals?.s3?.value,
+      s4_cross_layer_repetition: l.signals?.s4?.value,
+      new_edges: l.new_edges,
+    }));
+    downloadBlob(`${base}_timeline.csv`, toCsv(rows), "text/csv");
+  };
+  const exportChannels = () => {
+    const rows = (detection?.top_channels ?? []).map((c: any) => ({
+      channel_id: c.channel_id,
+      channel_name: c.channel_name,
+      weighted_in_degree: c.weighted_in_degree,
+      share: c.share,
+    }));
+    downloadBlob(`${base}_channels.csv`, toCsv(rows), "text/csv");
+  };
+  const exportVideos = () => {
+    const rows = (detection?.top_videos ?? []).map((v: any) => ({
+      video_id: v.video_id,
+      title: v.title,
+      in_degree: v.in_degree,
+      out_degree: v.out_degree,
+    }));
+    downloadBlob(`${base}_videos.csv`, toCsv(rows), "text/csv");
+  };
+  return (
+    <details className="relative inline-block" data-testid="echo-export">
+      <summary className="cursor-pointer select-none rounded-md border px-3 py-1.5 text-sm">
+        Export
+      </summary>
+      <div className="absolute right-0 z-10 mt-1 w-48 space-y-1 rounded-md border bg-background p-2 shadow">
+        <button className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted" onClick={exportJson}>
+          JSON (full record)
+        </button>
+        <button className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted" onClick={exportTimeline}>
+          CSV (timeline)
+        </button>
+        <button className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted" onClick={exportChannels}>
+          CSV (channels)
+        </button>
+        <button className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted" onClick={exportVideos}>
+          CSV (videos)
+        </button>
+      </div>
+    </details>
+  );
 }
 
 export function EchoChamberView() {
@@ -1399,11 +1508,18 @@ export function EchoChamberView() {
             seed={lensVideo.data?.seed ?? lensChannel.data?.seed ?? null}
           />
 
+          <div className="flex justify-end">
+            <EchoExportMenu detection={detection} />
+          </div>
+
           <Tabs defaultValue="video">
             <TabsList>
               <TabsTrigger value="video">Videos</TabsTrigger>
               <TabsTrigger value="channel">Channels</TabsTrigger>
               <TabsTrigger value="audience">Audience</TabsTrigger>
+              <TabsTrigger value="content" data-testid="echo-tab-content">
+                Content
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="video" className="mt-4 space-y-4">
               <StructureSections detectionId={detection.detection_id} projection="video" />
@@ -1421,6 +1537,15 @@ export function EchoChamberView() {
             </TabsContent>
             <TabsContent value="audience" className="mt-4 space-y-4">
               <AudienceSection audience={audienceQuery.data} />
+            </TabsContent>
+            <TabsContent value="content" className="mt-4 space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Content Homophily is an independent, opt-in CONTENT evidence
+                layer (usable from any supported network). It is kept separate
+                from the structural signals above and never merged into a
+                composite score.
+              </p>
+              <ContentHomophilySection />
             </TabsContent>
           </Tabs>
 

@@ -655,8 +655,10 @@ def community_persistence(
 # §16/§17 - Centrality
 # ---------------------------------------------------------------------------
 
-def centrality_metrics(graph: nx.DiGraph, top_n: int = 10) -> dict[str, Any]:
+def centrality_metrics(graph: nx.DiGraph, top_n: int = 10, titles: dict[str, str | None] | None = None) -> dict[str, Any]:
     """PageRank + HITS top lists (§16/§17), strictly structural labels."""
+    if titles is None:
+        titles = {}
     out: dict[str, Any] = {
         "pagerank": unavailable("pagerank_top", "no edges", category="centrality", lens="video"),
         "hits_hubs": unavailable("hits_hubs_top", "no edges", category="centrality", lens="video"),
@@ -669,7 +671,10 @@ def centrality_metrics(graph: nx.DiGraph, top_n: int = 10) -> dict[str, Any]:
 
     def _top(scores: dict[str, float]) -> list[dict[str, Any]]:
         ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
-        return [{"id": node, "score": round(float(score), 8)} for node, score in ranked]
+        return [
+            {"id": node, "score": round(float(score), 8), "title": titles.get(node)}
+            for node, score in ranked
+        ]
 
     out["pagerank"] = envelope(
         "pagerank_top",

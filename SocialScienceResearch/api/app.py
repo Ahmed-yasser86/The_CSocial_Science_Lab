@@ -749,6 +749,7 @@ def create_app(
         commenters,
         comments,
         comparison,
+        content_homophily,
         datasets,
         echo_chamber,
         explorer,
@@ -767,6 +768,7 @@ def create_app(
     app.include_router(commenters.router, prefix=prefix)
     app.include_router(comments.router, prefix=prefix)
     app.include_router(comparison.router, prefix=prefix)
+    app.include_router(content_homophily.router, prefix=prefix)
     app.include_router(datasets.router, prefix=prefix)
     app.include_router(echo_chamber.router, prefix=prefix)
     app.include_router(explorer.router, prefix=prefix)

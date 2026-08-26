@@ -45,8 +45,19 @@ def _echo_service(request: Request) -> EchoChamberService:
     )
 
 
-def _detection_payload(detection: EchoDetection) -> dict:
-    return detection.model_dump(mode="json")
+def _detection_payload(detection: EchoDetection, service=None) -> dict:
+    payload = detection.model_dump(mode="json")
+    # Always recompute the composite score from the newest layer signals:
+    # stored rows written by older code versions lack the component value
+    # fields and would serialize as nulls forever.
+    if service is not None:
+        try:
+            fresh = service._score_for(detection)
+            if fresh is not None:
+                payload["score"] = fresh
+        except Exception:
+            pass
+    return payload
 
 
 @router.post(
@@ -93,8 +104,9 @@ def list_detections(
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
 ):
     """Paginated detections, newest first."""
-    detections = _echo_service(request).list_detections()
-    payloads = [_detection_payload(d) for d in detections]
+    service = _echo_service(request)
+    detections = service.list_detections()
+    payloads = [_detection_payload(d, service) for d in detections]
     full = sorted(payloads, key=lambda d: (d.get("created_at") or "", d["detection_id"]))
     page = page_sorted(
         full,
@@ -124,7 +136,7 @@ def get_detection(request: Request, detection_id: str):
         raise HTTPException(
             status_code=404, detail=f"Echo detection {detection_id} not found"
         )
-    return _detection_payload(detection)
+    return _detection_payload(detection, _echo_service(request))
 
 
 @router.get(
