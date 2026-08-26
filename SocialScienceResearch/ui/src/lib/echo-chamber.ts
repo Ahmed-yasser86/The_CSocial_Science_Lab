@@ -163,6 +163,58 @@ export function canContinue(detection: EchoDetection): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// On-demand lenses (video | channel) recomputed from stored crawl edges
+// ---------------------------------------------------------------------------
+
+export type EchoProjection = "video" | "channel";
+
+export interface EchoLensTopVideo {
+  video_id: string;
+  title: string | null;
+  channel_id: string | null;
+  channel_name: string | null;
+  in_degree: number;
+  out_degree: number;
+}
+
+export interface EchoLensTopChannel {
+  channel_id: string;
+  channel_name: string | null;
+  weighted_in_degree: number;
+  share: number | null;
+}
+
+export interface EchoChannelShare {
+  channel_id: string;
+  channel_name: string | null;
+  weight: number;
+  share: number;
+}
+
+export interface EchoLensSeed {
+  video_id: string;
+  title?: string | null;
+  thumbnail_url?: string | null;
+  channel_id?: string | null;
+  channel_name?: string | null;
+  url?: string | null;
+}
+
+export interface EchoLens {
+  detection_id: string;
+  projection: EchoProjection;
+  seed_run_id: string | null;
+  family_run_count: number;
+  edge_count: number;
+  signals: EchoLayerSignals;
+  score: EchoScore;
+  top_videos: EchoLensTopVideo[];
+  top_channels: EchoLensTopChannel[];
+  seed: EchoLensSeed | null;
+  computed_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Timeline shaping
 // ---------------------------------------------------------------------------
 

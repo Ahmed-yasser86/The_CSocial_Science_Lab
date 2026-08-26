@@ -600,12 +600,26 @@ class EchoChamberService(LayerScrapeService):
             if seed_channel
             else None
         )
+        # Full observed share distribution (desc), bounded at 500 entries.
+        names = self._repos.channels.list_channel_titles()
+        channel_shares = [
+            {
+                "channel_id": channel_id,
+                "channel_name": names.get(channel_id),
+                "weight": weight,
+                "share": round(weight / total, 6),
+            }
+            for channel_id, weight in sorted(
+                weighted_in.items(), key=lambda kv: (-kv[1], kv[0])
+            )[:500]
+        ]
         detail = {
             "top1": top1,
             "top3": top3,
             "seed_channel_share": seed_share,
             "seed_channel_id": seed_channel,
             "weighted_edge_total": total,
+            "channel_shares": channel_shares,
         }
         return self._signal(top1, detail)
 

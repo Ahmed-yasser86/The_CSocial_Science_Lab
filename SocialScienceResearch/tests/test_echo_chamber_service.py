@@ -236,6 +236,16 @@ def test_chain_stops_early_with_exact_signals(tmp_path) -> None:
         # S3 channel projection: CH2 collects 4 of the 5 weighted in-edges.
         assert final["s3"]["detail"]["top1"] == pytest.approx(0.8)
         assert final["s3"]["detail"]["top3"] == pytest.approx(1.0)
+        # Full share distribution: present, sorted desc, sums to ~1.0.
+        shares = final["s3"]["detail"]["channel_shares"]
+        assert shares
+        weights = [entry["weight"] for entry in shares]
+        assert weights == sorted(weights, reverse=True)
+        assert sum(e["share"] for e in shares) == pytest.approx(1.0)
+        assert all("channel_id" in e for e in shares)
+        top_entry = shares[0]
+        assert top_entry["weight"] == 4
+        assert top_entry["share"] == pytest.approx(0.8)
         # S4 honest zero: no pair observed in >=2 layers on this corpus.
         assert final["s4"]["status"] == "available"
         assert final["s4"]["value"] == 0.0
