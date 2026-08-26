@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
+import { getJobs } from "@/services/api";
 import { listProjects, createDataset, getChannels, getRuns } from "@/services/datasets";
 import { useResearchVariables } from "@/services/queries";
 import type {
@@ -60,6 +61,7 @@ const SOURCE_OPTIONS = [
 
 const SCOPE_MODES = [
   { value: "runs", label: "Runs" },
+  { value: "jobs", label: "Jobs" },
   { value: "channels", label: "Channels" },
   { value: "videos", label: "Videos" },
 ] as const;
@@ -81,8 +83,9 @@ export function DatasetBuilder({
   const [sourceMode, setSourceMode] = useState<"project" | "raw" | "scope">("raw");
   const [projectId, setProjectId] = useState("");
   const [includeRaw, setIncludeRaw] = useState(false);
-  const [scopeMode, setScopeMode] = useState<"runs" | "channels" | "videos">("runs");
+  const [scopeMode, setScopeMode] = useState<"runs" | "jobs" | "channels" | "videos">("runs");
   const [selectedRunIds, setSelectedRunIds] = useState<string[]>([]);
+  const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
   const [criteriaGroup, setCriteriaGroup] = useState<QueryGroup | null>(null);
@@ -100,6 +103,12 @@ export function DatasetBuilder({
     queryKey: ["runs", "all"],
     queryFn: () => getRuns(),
     enabled: sourceMode === "scope" && scopeMode === "runs",
+  });
+
+  const jobsQuery = useQuery({
+    queryKey: ["jobs", "list"],
+    queryFn: () => getJobs(),
+    enabled: sourceMode === "scope" && scopeMode === "jobs",
   });
 
   const channelsQuery = useQuery({
@@ -122,6 +131,7 @@ export function DatasetBuilder({
       if (sourceMode === "project" && projectId) body.project_id = projectId;
       if (sourceMode === "scope") {
         if (scopeMode === "runs" && selectedRunIds.length) body.run_ids = selectedRunIds;
+        if (scopeMode === "jobs" && selectedJobIds.length) body.job_ids = selectedJobIds;
         if (scopeMode === "channels" && selectedChannelIds.length) body.channel_ids = selectedChannelIds;
         if (scopeMode === "videos" && selectedVideoIds.length) body.video_ids = selectedVideoIds;
         if (criteriaGroup) body.criteria = criteriaGroup;
@@ -322,7 +332,7 @@ export function DatasetBuilder({
               <Field label="Scope type">
                 <Tabs
                   value={scopeMode}
-                  onValueChange={(value) => setScopeMode(value as "runs" | "channels" | "videos")}
+                  onValueChange={(value) => setScopeMode(value as "runs" | "jobs" | "channels" | "videos")}
                   className="w-full"
                 >
                   <TabsList className="grid w-full grid-cols-3">
@@ -390,6 +400,58 @@ export function DatasetBuilder({
                 </Field>
               )}
 
+              {scopeMode === "jobs" && (
+                <Field label="Select jobs">
+                  {jobsQuery.isLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading jobs…</div>
+                  ) : jobsQuery.isError ? (
+                    <ErrorState
+                      message={
+                        jobsQuery.error instanceof Error
+                          ? jobsQuery.error.message
+                          : "Failed to load jobs"
+                      }
+                      retry={() => jobsQuery.refetch()}
+                    />
+                  ) : (
+                    <div className="max-h-60 overflow-auto space-y-1 rounded-md border bg-muted/20 p-2">
+                      {jobsQuery.data?.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No jobs found.</p>
+                      ) : (
+                        jobsQuery.data?.map((job) => (
+                          <label
+                            key={job.job_id}
+                            className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedJobIds.includes(job.job_id)}
+                              onChange={(e) =>
+                                setSelectedJobIds((prev) =>
+                                  e.target.checked
+                                    ? [...prev, job.job_id]
+                                    : prev.filter((id) => id !== job.job_id)
+                                )
+                              }
+                              className="size-4"
+                            />
+                            <span className="font-mono text-xs truncate">{job.job_id}</span>
+                            <Badge variant="outline" className="text-[10px]">
+                              {job.status}
+                            </Badge>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {selectedJobIds.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedJobIds.length} job(s) selected — every run under
+                      the selected jobs is included.
+                    </p>
+                  )}
+                </Field>
+              )}
               {scopeMode === "channels" && (
                 <Field label="Select channels">
                   {channelsQuery.isLoading ? (

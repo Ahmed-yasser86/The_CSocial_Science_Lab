@@ -138,6 +138,8 @@ TABLES: dict[str, dict[str, str]] = {
         "notes": "JSONB NOT NULL DEFAULT '[]'::jsonb",
         "name": "TEXT",
         "layer_index": "BIGINT",
+        "job_id": "TEXT",
+        "tags": "JSONB NOT NULL DEFAULT '[]'::jsonb",
     },
     "collection_errors": {
         "error_id": "TEXT !PK",
@@ -252,6 +254,34 @@ TABLES: dict[str, dict[str, str]] = {
         "summary": "JSONB NOT NULL DEFAULT '{}'::jsonb",
         "config_json": "JSONB NOT NULL DEFAULT '{}'::jsonb",
     },
+    "collection_jobs": {
+        "job_id": "TEXT !PK",
+        "kind": "TEXT NOT NULL DEFAULT 'collect'",
+        "status": "TEXT NOT NULL DEFAULT 'pending'",
+        "tags": "JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "params_json": "JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "result_json": "JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "message": "TEXT",
+        "error": "TEXT",
+        "created_at": "TIMESTAMPTZ",
+        "started_at": "TIMESTAMPTZ",
+        "finished_at": "TIMESTAMPTZ",
+        "updated_at": "TIMESTAMPTZ",
+    },
+    "echo_detections": {
+        "detection_id": "TEXT !PK",
+        "seed_video_id": "TEXT",
+        "seed_run_id": "TEXT",
+        "root_layer_run_id": "TEXT",
+        "job_id": "TEXT",
+        "status": "TEXT NOT NULL DEFAULT 'pending'",
+        "params": "JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "layers": "JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "score": "JSONB",
+        "error": "TEXT",
+        "created_at": "TIMESTAMPTZ",
+        "updated_at": "TIMESTAMPTZ",
+    },
 }
 
 #: Secondary (non-unique) indexes: ``table -> [(columns...), ...]``.
@@ -262,7 +292,7 @@ INDEXES: dict[str, list[tuple[str, ...]]] = {
     "video_observations": [("video_id",), ("collection_run_id",)],
     "comments": [("video_id",), ("parent_comment_id",), ("root_comment_id",)],
     "comment_observations": [("comment_id",), ("collection_run_id",)],
-    "collection_runs": [("run_type",), ("started_at",)],
+    "collection_runs": [("run_type",), ("started_at",), ("job_id",)],
     "collection_errors": [("run_id",)],
     "recommendations": [
         ("source_video_id",),
@@ -274,6 +304,8 @@ INDEXES: dict[str, list[tuple[str, ...]]] = {
     "project_items": [("project_id",)],
     "samples": [("entity_type",)],
     "layer_runs": [("layer_index",), ("parent_run_id",)],
+    "collection_jobs": [("status",), ("kind",), ("created_at",)],
+    "echo_detections": [("status",), ("created_at",), ("job_id",)],
 }
 
 #: Unique constraints beyond the PK: ``table -> [([cols...], name), ...]``.
@@ -355,6 +387,20 @@ class SqlDatabase:
                 "videos",
                 'ALTER TABLE "videos" ADD COLUMN IF NOT EXISTS '
                 '"recommendations_scraped" BOOLEAN NOT NULL DEFAULT false',
+            ),
+            (
+                "collection_runs",
+                'ALTER TABLE "collection_runs" ADD COLUMN IF NOT EXISTS "job_id" TEXT',
+            ),
+            (
+                "collection_runs",
+                "ALTER TABLE \"collection_runs\" ADD COLUMN IF NOT EXISTS "
+                "\"tags\" JSONB NOT NULL DEFAULT '[]'::jsonb",
+            ),
+            (
+                "collection_jobs",
+                "ALTER TABLE \"collection_jobs\" ADD COLUMN IF NOT EXISTS "
+                "\"tags\" JSONB NOT NULL DEFAULT '[]'::jsonb",
             ),
         ]
         with self._pool.connection() as conn:

@@ -66,6 +66,7 @@ class CollectionRun(BaseModel):
     notes: list[str] = Field(default_factory=list)
     name: str | None = None  # researcher-provided display label (editable)
     layer_index: int | None = None  # the crawl layer this run was created in (None outside a crawl)
+    job_id: str | None = None  # the persisted job that spawned this run (J1 linkage; NULL for legacy rows)
 
 
 class CollectionError(BaseModel):

@@ -98,7 +98,7 @@ class LayerFakeProvider(AcquisitionProvider):
     def extract_channel(self, channel_url: str):
         raise InvalidURLError("not used in layer tests")
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         video_id = video_url.rsplit("v=", 1)[-1]
         if video_id in self.fail_videos:
             raise InvalidURLError(f"No video for {video_url}")

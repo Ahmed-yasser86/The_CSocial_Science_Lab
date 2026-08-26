@@ -219,6 +219,7 @@ def create_dataset(body: CreateDatasetRequest, request: Request) -> Dataset:
         entity_type=body.entity_type,
         include_raw=body.include_raw,
         run_ids=body.run_ids,
+        job_ids=body.job_ids,
         channel_ids=body.channel_ids,
         video_ids=body.video_ids,
         member_ids=body.member_ids,

@@ -167,6 +167,24 @@ export interface JobProgress {
   failures?: { video_id: string; error: string }[] | null;
 }
 
+export interface JobRunSummary {
+  run_id: string;
+  run_type: string;
+  target_url: string | null;
+  target_video_id: string | null;
+  parent_run_id: string | null;
+  layer_index: number | null;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  entities_discovered: number;
+  entities_succeeded: number;
+  entities_failed: number;
+  comments_collected: number | null;
+  tags?: string[];
+  name: string | null;
+}
+
 export interface Job {
   job_id: string;
   kind: string;
@@ -177,6 +195,8 @@ export interface Job {
   progress: JobProgress;
   message: string | null;
   cancel_requested: boolean;
+  tags?: string[];
+  runs?: JobRunSummary[];
 }
 
 export interface CollectJobResult {

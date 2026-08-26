@@ -12,12 +12,33 @@ applied: a stored ``""`` stays ``""`` (matching what pydantic expects for
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from SocialScienceResearch.persistence.serialization import headers_for
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert values psycopg's JSONB encoder cannot serialize.
+
+    ``datetime``/``date`` become ISO strings and Enums their values; anything
+    else exotic falls back to ``str`` so a single timestamp inside a timeline
+    dict can never abort a whole persistence write.
+    """
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _params(model) -> dict[str, Any]:
@@ -28,7 +49,7 @@ def _params(model) -> dict[str, Any]:
         if isinstance(value, Enum):
             params[name] = value.value
         elif isinstance(value, (dict, list, tuple)):
-            params[name] = Jsonb(list(value) if isinstance(value, tuple) else value)
+            params[name] = Jsonb(_json_safe(list(value) if isinstance(value, tuple) else value))
         else:
             params[name] = value
     return params

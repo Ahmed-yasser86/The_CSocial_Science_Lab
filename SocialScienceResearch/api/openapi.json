@@ -1645,6 +1645,251 @@
         }
       }
     },
+    "/api/v1/social-science/echo-chamber/detect": {
+      "post": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Detect",
+        "description": "Start an echo-chamber detection: one async job chains up to N frontier\nlayers around the seed and snapshots observed signals after each layer.",
+        "operationId": "detect_api_v1_social_science_echo_chamber_detect_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EchoDetectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EchoDetectionStartPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber": {
+      "get": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "List Detections",
+        "description": "Paginated detections, newest first.",
+        "operationId": "list_detections_api_v1_social_science_echo_chamber_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque cursor from the previous page",
+              "title": "Cursor"
+            },
+            "description": "Opaque cursor from the previous page"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Paginated_EchoDetection_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}": {
+      "get": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Get Detection",
+        "description": "Status + append-only per-layer timeline + latest composite score.",
+        "operationId": "get_detection_api_v1_social_science_echo_chamber__detection_id__get",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EchoDetection"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}/continue": {
+      "post": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Continue Detection",
+        "description": "Append more layers to a finished detection (lifetime cap 10).",
+        "operationId": "continue_detection_api_v1_social_science_echo_chamber__detection_id__continue_post",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EchoContinueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSubmitPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}/stop": {
+      "post": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Stop Detection",
+        "description": "Cooperatively stop the active crawl between layers.",
+        "operationId": "stop_detection_api_v1_social_science_echo_chamber__detection_id__stop_post",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EchoDetectionStartPayload"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/explore/records": {
       "get": {
         "tags": [
@@ -5126,6 +5371,61 @@
               "default": 50,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by job kind",
+              "title": "Kind"
+            },
+            "description": "Filter by job kind"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by job status",
+              "title": "Status"
+            },
+            "description": "Filter by job status"
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs created after this timestamp",
+              "title": "Created After"
+            },
+            "description": "Only jobs created after this timestamp"
           }
         ],
         "responses": {
@@ -5575,6 +5875,57 @@
                 "schema": {
                   "$ref": "#/components/schemas/Paginated_RunPayload_"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/jobs/{job_id}/tags": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Set Job Tags",
+        "description": "Set/replace the researcher tags on a job (before/during/after).",
+        "operationId": "set_job_tags_api_v1_social_science_jobs__job_id__tags_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobTagsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -9764,6 +10115,13 @@
             "type": "array",
             "title": "Run Ids"
           },
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids"
+          },
           "channel_ids": {
             "items": {
               "type": "string"
@@ -10382,6 +10740,249 @@
         ],
         "title": "DeleteSampleResponse",
         "description": "Response of ``DELETE {prefix}/samples/{sample_id}`` (404 if missing)."
+      },
+      "EchoContinueRequest": {
+        "properties": {
+          "extra_layers": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Extra Layers",
+            "description": "Additional layers to append (lifetime cap 10).",
+            "default": 1
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EchoContinueRequest",
+        "description": "Body for ``POST .../echo-chamber/{id}/continue`` (``extra=\"forbid\"``)."
+      },
+      "EchoDetectRequest": {
+        "properties": {
+          "video_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Url"
+          },
+          "video_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Id"
+          },
+          "seed_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Run Id"
+          },
+          "max_layers": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Max Layers",
+            "description": "Layers to crawl (hard cap 10).",
+            "default": 5
+          },
+          "collect_comments": {
+            "type": "boolean",
+            "title": "Collect Comments",
+            "default": false
+          },
+          "projection": {
+            "type": "string",
+            "enum": [
+              "video",
+              "channel"
+            ],
+            "title": "Projection",
+            "description": "Which node type the chamber analysis runs over: the seed video's recommendation graph of videos, or the channel-level graph (communities/concentration measured on channels).",
+            "default": "video"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "Researcher labels applied to the job and its runs."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "EchoDetectRequest",
+        "description": "Body for ``POST .../echo-chamber/detect`` (``extra=\"forbid\"``).\n\nIdentifies the seed (``video_url`` | ``video_id`` | ``seed_run_id``) and\nthe crawl budget. ``collect_comments`` opts in to comment collection so\nthe S5 commenter-overlap signal can be observed."
+      },
+      "EchoDetection": {
+        "properties": {
+          "detection_id": {
+            "type": "string",
+            "title": "Detection Id"
+          },
+          "seed_video_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Video Id"
+          },
+          "seed_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Run Id"
+          },
+          "root_layer_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Layer Run Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params"
+          },
+          "layers": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Layers"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "detection_id"
+        ],
+        "title": "EchoDetection",
+        "description": "The full detection record: spec + append-only timeline + latest score."
+      },
+      "EchoDetectionStartPayload": {
+        "properties": {
+          "detection_id": {
+            "type": "string",
+            "title": "Detection Id"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "pending"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "detection_id"
+        ],
+        "title": "EchoDetectionStartPayload",
+        "description": "Response of ``POST .../echo-chamber/detect``."
       },
       "EdgeRow": {
         "properties": {
@@ -11446,6 +12047,26 @@
             "type": "boolean",
             "title": "Cancel Requested",
             "default": false
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "runs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Runs"
+          },
+          "result_json": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Result Json"
           }
         },
         "additionalProperties": true,
@@ -11689,6 +12310,21 @@
           "job_id"
         ],
         "title": "JobSubmitPayload"
+      },
+      "JobTagsRequest": {
+        "properties": {
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "JobTagsRequest",
+        "description": "Body for ``PATCH .../jobs/{job_id}/tags`` (``extra=\"forbid\"``)."
       },
       "LayerBootstrapRequest": {
         "properties": {
@@ -12688,6 +13324,13 @@
             "type": "boolean",
             "title": "Dedupe",
             "default": true
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -12707,6 +13350,13 @@
             "type": "boolean",
             "title": "Dedupe",
             "default": true
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -12732,6 +13382,13 @@
               }
             ],
             "title": "Trigger Run Id"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -13590,6 +14247,50 @@
           "items"
         ],
         "title": "Paginated[Dataset]"
+      },
+      "Paginated_EchoDetection_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EchoDetection"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "default": false
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "Paginated[EchoDetection]"
       },
       "Paginated_EdgeRow_": {
         "properties": {
@@ -15992,6 +16693,35 @@
               }
             ],
             "title": "Name"
+          },
+          "layer_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer Index"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
           }
         },
         "additionalProperties": true,
@@ -17540,12 +18270,26 @@
               }
             ],
             "title": "Name"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "UpdateRunRequest",
-        "description": "Body for ``PATCH .../runs/{run_id}`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; the primary editable field is\nthe researcher-provided ``name`` label."
+        "description": "Body for ``PATCH .../runs/{run_id}`` (``extra=\"forbid\"``).\n\nOnly explicitly provided fields are applied; editable fields are the\nresearcher-provided ``name`` label and ``tags``."
       },
       "UpdateWorkspaceRequest": {
         "properties": {

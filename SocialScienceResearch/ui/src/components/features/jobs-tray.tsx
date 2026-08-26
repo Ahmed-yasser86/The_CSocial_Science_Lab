@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Briefcase, Ban, Loader2, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -236,14 +237,13 @@ function JobRow({
   return (
     <div className="space-y-1 rounded-md border p-2.5">
       <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onOpen}
+        <Link
+          href={`/jobs/${job.job_id}`}
           className="truncate font-mono text-xs underline-offset-2 outline-none hover:underline focus-visible:underline"
-          title="Open job details"
+          title="Open job details page"
         >
           {job.job_id}
-        </button>
+        </Link>
         {active ? (
           <Button
             variant="outline"

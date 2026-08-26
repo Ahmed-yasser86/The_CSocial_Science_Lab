@@ -75,7 +75,7 @@ class FakeAcquisitionProvider(AcquisitionProvider):
             videos=list(self.channel_raw.get("entries", [])),
         )
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         self.video_calls.append(video_url)
         video_id = video_url.rsplit("v=", 1)[-1]
         if video_id in self.fail_videos:
@@ -580,7 +580,7 @@ class _ConcurrencyProvider(FakeAcquisitionProvider):
         self.active = 0
         self.max_active = 0
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         with self._lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)

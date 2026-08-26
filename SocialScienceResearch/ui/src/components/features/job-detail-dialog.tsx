@@ -25,8 +25,12 @@ export function JobDetailDialog({
   const job = jobQuery.data;
 
   return (
-    <Dialog open={jobId !== null} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+    // modal={false}: job details are a passive progress surface users keep
+    // open while crawls run. A modal dialog marks the whole app shell
+    // inert/aria-hidden (Base UI), which makes the navbar disappear for the
+    // entire duration of a scrape. Non-modal keeps the rest of the app live.
+    <Dialog open={jobId !== null} onOpenChange={onOpenChange} modal={false}>
+      <DialogContent className="sm:max-w-lg" showBackdrop={false}>
         <DialogHeader>
           <DialogTitle className="font-mono text-sm">{jobId}</DialogTitle>
           <DialogDescription>

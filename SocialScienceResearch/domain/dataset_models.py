@@ -95,6 +95,7 @@ class CreateDatasetRequest(BaseModel):
     project_id: str | None = None
     include_raw: bool = False
     run_ids: list[str] = Field(default_factory=list)
+    job_ids: list[str] = Field(default_factory=list)
     channel_ids: list[str] = Field(default_factory=list)
     video_ids: list[str] = Field(default_factory=list)
     member_ids: list[str] = Field(default_factory=list)

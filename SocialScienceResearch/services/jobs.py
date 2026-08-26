@@ -12,6 +12,7 @@ down mid-extraction, because that could leave a run half-persisted).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -20,7 +21,32 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Callable, Protocol
 
+from SocialScienceResearch.domain.job_models import CollectionJob
 from SocialScienceResearch.utils.idgen import new_id, utcnow
+from SocialScienceResearch.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+#: Id of the job executed on THIS thread (set by :meth:`JobManager._run`).
+#: Collection bookkeeping reads it to stamp ``CollectionRun.job_id`` so every
+#: run created under a job links back to the user intent (plan J1).
+_job_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "active_job_id", default=None
+)
+#: Tags of the active job, stamped onto every run it creates.
+_job_tags_var: contextvars.ContextVar[list[str]] = contextvars.ContextVar(
+    "active_job_tags", default=[]
+)
+
+
+def current_job_id() -> str | None:
+    """The job id of the worker thread calling this, or ``None`` outside a job."""
+    return _job_id_var.get()
+
+
+def current_job_tags() -> list[str]:
+    """Tags of the worker thread's job (empty list outside a job)."""
+    return _job_tags_var.get()
 
 #: Signature of the progress callback handed to a worker function.
 ProgressCallback = Callable[[], None] | None
@@ -89,6 +115,7 @@ class Job:
     cancel_requested: bool = False
     result: Any = None
     error: str | None = None
+    tags: list[str] = field(default_factory=list)
     last_progress_at: datetime | None = None
     """When the job last emitted progress (or started). Used by the stall watchdog."""
 
@@ -98,6 +125,7 @@ class Job:
             "job_id": self.job_id,
             "kind": self.kind,
             "status": self.status.value if isinstance(self.status, JobStatus) else str(self.status),
+                "tags": list(self.tags),
             "created_at": _iso(self.created_at),
             "started_at": _iso(self.started_at),
             "finished_at": _iso(self.finished_at),
@@ -115,10 +143,20 @@ class JobManager:
         max_workers: int = 2,
         max_run_seconds: int = 3600,
         max_stall_seconds: int = 900,
+        *,
+        store=None,
     ) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._max_workers = max_workers
+        self._store = store
+        """Optional ``JobRepository`` write-through target (plan J1).
+
+        Only submit/running-start/milestone-free terminal transitions hit the
+        store; per-second progress stays in-memory (R-J1: never hammer SQL on
+        the hot progress path). A persistence failure is logged and never
+        breaks the live job.
+        """
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="collect"
         )
@@ -132,6 +170,21 @@ class JobManager:
             daemon=True,
         )
         self._watchdog.start()
+
+    def persist_job(self, job: Job) -> None:
+        """Public write-through for external state changes (e.g. tagging)."""
+        self._persist(job)
+
+    def set_store(self, store) -> None:
+        """Rebind the persistence store (workspace switch).
+
+        The manager survives workspace switches by design (its queue must stay
+        intact), but its write-through store belongs to the OLD workspace's
+        database. Without a rebind, persisted-job lookups after a switch read
+        the wrong DB and jobs 404 even though their rows exist.
+        """
+        with self._lock:
+            self._store = store
 
     # ------------------------------------------------------------------
     # Streaming (SSE) subscriptions
@@ -182,15 +235,95 @@ class JobManager:
                 self.unsubscribe(job.job_id, queue)
 
     # ------------------------------------------------------------------
+    # Write-through persistence (plan J1)
+    # ------------------------------------------------------------------
+    def _persist(self, job: Job) -> None:
+        """Mirror the job's current state into the store (best-effort)."""
+        if self._store is None:
+            return
+        try:
+            result = job.result
+            if isinstance(result, dict):
+                result_json = result
+            else:
+                result_json = (
+                    {"result_type": type(result).__name__}
+                    if result is not None
+                    else {}
+                )
+            self._store.save_job(
+                CollectionJob(
+                    job_id=job.job_id,
+                    kind=job.kind,
+                    status=(
+                        job.status.value
+                        if isinstance(job.status, JobStatus)
+                        else str(job.status)
+                    ),
+                    tags=list(job.tags),
+                    result_json=result_json,
+                    message=job.message,
+                    error=job.error,
+                    created_at=job.created_at if isinstance(job.created_at, datetime) else None,
+                    started_at=job.started_at if isinstance(job.started_at, datetime) else None,
+                    finished_at=job.finished_at if isinstance(job.finished_at, datetime) else None,
+                    updated_at=utcnow(),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - persistence must never break a job
+            logger.warning(
+                "Failed to persist job %s state (%s): %s",
+                job.job_id,
+                job.status,
+                exc,
+            )
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        """True when cancellation was requested for a pending/running job.
+
+        Long-running workers (e.g. the echo-chamber layer chain) poll this at
+        unit boundaries so ``stop`` terminates between layers instead of only
+        after the whole queue drains.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return bool(job and job.cancel_requested)
+
+    def persisted_jobs(
+        self, kind: str | None = None, status: str | None = None
+    ) -> list[Any]:
+        """Persisted job rows (read-through for restart survival)."""
+        if self._store is None:
+            return []
+        try:
+            return self._store.list_jobs(kind=kind, status=status)
+        except Exception as exc:  # noqa: BLE001 - degrade to memory-only view
+            logger.warning("Failed to read persisted jobs: %s", exc)
+            return []
+
+    # ------------------------------------------------------------------
     # Submission / lifecycle
     # ------------------------------------------------------------------
     def submit(
-        self, fn: Callable[[_ProgressSink], Any], *, kind: str = "collect"
+        self,
+        fn: Callable[[_ProgressSink], Any],
+        *,
+        kind: str = "collect",
+        job_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> Job:
-        """Schedule ``fn(progress_cb)`` on a worker thread; returns the job."""
-        job = Job(job_id=new_id("job"), kind=kind)
+        """Schedule ``fn(progress_cb)`` on a worker thread; returns the job.
+
+        ``job_id`` lets callers stamp dependent records BEFORE submission
+        (e.g. the echo detection row), avoiding a post-submit save that could
+        clobber the worker's earlier writes. ``tags`` labels the job (and, via
+        the worker context, every run it spawns) for researchers to
+        distinguish related work.
+        """
+        job = Job(job_id=job_id or new_id("job"), kind=kind, tags=list(tags or []))
         with self._lock:
             self._jobs[job.job_id] = job
+        self._persist(job)
         self._executor.submit(self._run, job, fn)
         return job
 
@@ -221,6 +354,7 @@ class JobManager:
                         )
                         job.message = "job timed out"
                         to_notify.append(job)
+                        self._persist(job)
                         continue
                     if self._max_stall_seconds and self._max_stall_seconds > 0:
                         last = job.last_progress_at or job.started_at
@@ -235,6 +369,7 @@ class JobManager:
                             )
                             job.message = "job stalled"
                             to_notify.append(job)
+                            self._persist(job)
 
             for job in to_notify:
                 self._notify(job)
@@ -244,7 +379,13 @@ class JobManager:
         started = utcnow()
         job.started_at = started
         job.last_progress_at = started
+        self._persist(job)
         self._notify(job)
+        # Stamp this worker thread with the job id so ALL runs created inside
+        # the worker (including per-video sub-runs spawned by layer crawls and
+        # expansions) link back to the job (plan J1 linkage).
+        token = _job_id_var.set(job.job_id)
+        _job_tags_var.set(list(job.tags))
         try:
             result = fn(self._progress_cb(job))
             # Only transition if still RUNNING: a concurrent kill/stall action
@@ -268,7 +409,10 @@ class JobManager:
                 job.status = JobStatus.FAILED
                 job.error = str(exc)
         finally:
+            _job_id_var.reset(token)
+            _job_tags_var.set([])
             job.finished_at = utcnow()
+            self._persist(job)
             self._notify(job)
 
     def cancel(self, job_id: str) -> bool:
@@ -328,6 +472,7 @@ class JobManager:
                     job.message = "killed by user"
                 killed.append(job)
         for job in killed:
+            self._persist(job)
             self._notify(job)
         if killed:
             self.recycle_executor()

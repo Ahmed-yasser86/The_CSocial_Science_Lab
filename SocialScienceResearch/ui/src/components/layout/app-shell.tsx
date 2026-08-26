@@ -19,6 +19,7 @@ import {
   Menu,
   Microscope,
   Network,
+  Radio,
   Search,
   Table2,
   Users,
@@ -71,6 +72,7 @@ const DOCS_ENTRY: NavEntry = { href: "/docs", label: "Docs", icon: BookOpen };
 const ANALYZE_ENTRIES: NavEntry[] = [
   { href: "/network", label: "Overview", icon: Network },
   { href: "/network/full", label: "Lab", icon: Microscope },
+  { href: "/network/echo-chambers", label: "Echo Chambers", icon: Radio },
   { href: "/network/commenters", label: "Commenters", icon: Users },
   { href: "/compare", label: "Compare", icon: GitCompare },
   { href: "/query", label: "Query", icon: Search },

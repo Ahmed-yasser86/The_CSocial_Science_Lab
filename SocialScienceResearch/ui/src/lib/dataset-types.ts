@@ -11,6 +11,7 @@ export interface CreateDatasetInput {
   project_id?: string;
   include_raw?: boolean;
   run_ids?: string[];
+  job_ids?: string[];
   channel_ids?: string[];
   video_ids?: string[];
   member_ids?: string[];

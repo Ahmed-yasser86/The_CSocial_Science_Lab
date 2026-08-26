@@ -27,6 +27,9 @@ __all__ = [
     "CommentStatsPayload",
     "CommentTreePayload",
     "DatasetSummaryPayload",
+    "EchoContinueRequest",
+    "EchoDetectRequest",
+    "EchoDetectionStartPayload",
     "ErrorPayload",
     "ExportRequest",
     "ExportResponse",
@@ -36,6 +39,7 @@ __all__ = [
     "JobPayload",
     "JobResultPayload",
     "JobSubmitPayload",
+    "JobTagsRequest",
     "LayerBootstrapRequest",
     "LayerScrapeRequest",
     "NetworkExportToProjectRequest",
@@ -125,6 +129,19 @@ class JobPayload(_Base):
     progress: dict[str, Any] = Field(default_factory=dict)
     message: str | None = None
     cancel_requested: bool = False
+    tags: list[str] = Field(default_factory=list)
+    # J1 additive fields: nested run provenance (grouped children) + the
+    # persisted row's params/result summary when the job came from storage.
+    runs: list[dict[str, Any]] = Field(default_factory=list)
+    result_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobTagsRequest(_Base):
+    """Body for ``PATCH .../jobs/{job_id}/tags`` (``extra="forbid"``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tags: list[str] = Field(default_factory=list)
 
 
 class JobCancelPayload(_Base):
@@ -179,18 +196,22 @@ class RunPayload(_Base):
     comments_collected: int | None = None
     notes: list[str] = Field(default_factory=list)
     name: str | None = None
+    layer_index: int | None = None
+    job_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class UpdateRunRequest(_Base):
     """Body for ``PATCH .../runs/{run_id}`` (``extra="forbid"``).
 
-    Only explicitly provided fields are applied; the primary editable field is
-    the researcher-provided ``name`` label.
+    Only explicitly provided fields are applied; editable fields are the
+    researcher-provided ``name`` label and ``tags``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
+    tags: list[str] | None = None
 
 
 class LayerBootstrapRequest(_Base):
@@ -241,6 +262,55 @@ class LayerScrapeRequest(_Base):
             "genuinely unexplored nodes."
         ),
     )
+
+
+class EchoDetectRequest(_Base):
+    """Body for ``POST .../echo-chamber/detect`` (``extra="forbid"``).
+
+    Identifies the seed (``video_url`` | ``video_id`` | ``seed_run_id``) and
+    the crawl budget. ``collect_comments`` opts in to comment collection so
+    the S5 commenter-overlap signal can be observed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    video_url: str | None = None
+    video_id: str | None = None
+    seed_run_id: str | None = None
+    max_layers: int = Field(
+        5, ge=1, le=10, description="Layers to crawl (hard cap 10)."
+    )
+    collect_comments: bool = False
+    projection: Literal["video", "channel"] = Field(
+        "video",
+        description=(
+            "Which node type the chamber analysis runs over: the seed "
+            "video's recommendation graph of videos, or the channel-level "
+            "graph (communities/concentration measured on channels)."
+        ),
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        description="Researcher labels applied to the job and its runs.",
+    )
+
+
+class EchoContinueRequest(_Base):
+    """Body for ``POST .../echo-chamber/{id}/continue`` (``extra="forbid"``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    extra_layers: int = Field(
+        1, ge=1, le=10, description="Additional layers to append (lifetime cap 10)."
+    )
+
+
+class EchoDetectionStartPayload(_Base):
+    """Response of ``POST .../echo-chamber/detect``."""
+
+    detection_id: str
+    job_id: str | None = None
+    status: str = "pending"
 
 
 class ExpansionScrapeVideoRequest(_Base):

@@ -28,6 +28,8 @@ from SocialScienceResearch.domain.models import (
     VideoObservation,
 )
 from SocialScienceResearch.domain.dataset_models import Dataset, ProjectItem
+from SocialScienceResearch.domain.echo_models import EchoDetection
+from SocialScienceResearch.domain.job_models import CollectionJob
 from SocialScienceResearch.domain.layer_models import LayerRun
 from SocialScienceResearch.domain.sample_models import Sample
 
@@ -62,6 +64,8 @@ class Repositories:
     project_items: ProjectItemRepository
     projects: ProjectRepository
     layers: LayerRunRepository
+    jobs: JobRepository
+    echo_detections: EchoDetectionRepository
 
 
 class ChannelRepository(ABC):
@@ -678,3 +682,53 @@ class LayerRunRepository(ABC):
     @abstractmethod
     def list_layer_runs(self) -> list[LayerRun]:
         """Return all layer-run records, oldest (layer 0) first."""
+
+
+class JobRepository(ABC):
+    """Persistence contract for collection jobs (plan J1 write-through).
+
+    The :class:`~services.jobs.JobManager` keeps live state in memory and
+    mirrors milestones + terminal states into this repository so the job
+    list survives restarts and runs can be grouped by ``job_id``.
+    """
+
+    @abstractmethod
+    def save_job(self, job: CollectionJob) -> None:
+        """Upsert a job row (by ``job_id``)."""
+
+    @abstractmethod
+    def get_job(self, job_id: str) -> CollectionJob | None:
+        """Return the persisted job with the given id, if present."""
+
+    @abstractmethod
+    def list_jobs(
+        self,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> list[CollectionJob]:
+        """Return persisted jobs (newest first), optionally filtered."""
+
+    def reconcile_stale_running(self, message: str) -> int:
+        """Mark orphaned pending/running rows as interrupted (crash honesty).
+
+        Called once at startup: a job that was pending/running when the
+        process died can never finish. Default is a no-op for backends
+        without a bulk update; SQL overrides with a single statement.
+        """
+        return 0
+
+
+class EchoDetectionRepository(ABC):
+    """Persistence contract for echo-chamber detections (echo plan §4)."""
+
+    @abstractmethod
+    def save_detection(self, detection: EchoDetection) -> None:
+        """Upsert a detection row (by ``detection_id``)."""
+
+    @abstractmethod
+    def get_detection(self, detection_id: str) -> EchoDetection | None:
+        """Return the detection with the given id, if present."""
+
+    @abstractmethod
+    def list_detections(self) -> list[EchoDetection]:
+        """Return all detections, newest first."""

@@ -81,8 +81,8 @@ def test_enrichment_concurrency_default_and_override(monkeypatch) -> None:
         ScraperSettings,
     )
 
-    assert DEFAULT_ENRICHMENT_CONCURRENCY == 4
-    assert ScraperSettings().enrichment_concurrency == 4
+    assert DEFAULT_ENRICHMENT_CONCURRENCY == 6
+    assert ScraperSettings().enrichment_concurrency == 6
     monkeypatch.setenv("SOCIAL_ENRICHMENT_CONCURRENCY", "7")
     assert ScraperSettings().enrichment_concurrency == 7
 

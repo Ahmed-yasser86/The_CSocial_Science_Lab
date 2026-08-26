@@ -300,7 +300,7 @@ class _TwoVideoProvider(AcquisitionProvider):
             ],
         )
 
-    def extract_video(self, video_url: str) -> dict:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict:
         video_id = video_url.rsplit("v=", 1)[-1]
         return {
             "id": video_id,

@@ -87,7 +87,7 @@ export function ScraperConfigPanel() {
             <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Presets
             </Label>
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
               {Object.entries(PRESETS).map(([key, preset]) => (
                 <button
                   key={key}

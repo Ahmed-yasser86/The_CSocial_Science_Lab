@@ -173,6 +173,25 @@ export function submitCollect(spec: CollectionSpec): Promise<{ job_id: string }>
   });
 }
 
+export function setJobTags(
+  jobId: string,
+  tags: string[],
+): Promise<{ job_id: string; tags: string[] }> {
+  return request(`/jobs/${jobId}/tags`, {
+    method: "PATCH",
+    body: JSON.stringify({ tags }),
+  });
+}
+
+export function setRunTags(
+  runId: string,
+  tags: string[],
+): Promise<Record<string, unknown>> {
+  return request(`/runs/${runId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ tags }),
+  });
+}
 export function getJobs(): Promise<Job[]> {
   return fetchAllPages<Job>(
     (cursor) => `/jobs${toQuery({ page_size: 500, cursor })}`,

@@ -74,7 +74,7 @@ class TranscriptAwareProvider(AcquisitionProvider):
     def extract_channel(self, channel_url: str) -> ChannelExtract:
         raise NotImplementedError
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         if self.fail_video:
             raise VideoUnavailableError(f"Video unavailable: {video_url}")
         return self.video_raw

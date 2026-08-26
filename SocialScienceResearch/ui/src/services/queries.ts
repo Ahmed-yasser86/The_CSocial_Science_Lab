@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -18,7 +18,7 @@ import type {
   VideoFilter,
 } from "@/lib/types";
 import * as api from "@/services/api";
-import { API_BASE } from "@/services/api";
+import { API_BASE, ApiError } from "@/services/api";
 import type { Job } from "@/lib/types";
 import {
   listDatasets,
@@ -314,6 +314,11 @@ export function useJob(jobId: string | null) {
     queryKey: queryKeys.job(jobId ?? ""),
     queryFn: () => api.getJob(jobId as string),
     enabled: !!jobId,
+    // A 404 means the job row cannot be found in this workspace's database
+    // (e.g. the job belongs to another workspace): retrying forever just
+    // hammers the API - surface the error state instead.
+    retry: (failureCount, error) =>
+      (error as ApiError)?.status !== 404 && failureCount < 2,
     // SSE (EventSource) is the primary live channel, but if it drops we must
     // still recover: poll at 2s while the job is not terminal so the card can
     // never get stuck on "running".
@@ -323,15 +328,41 @@ export function useJob(jobId: string | null) {
     },
   });
 
+  // SSE lifecycle guard: once the stream delivers a terminal event or fails
+  // to connect (404 for a job whose live owner is gone), it must NEVER be
+  // reopened - otherwise EventSource auto-reconnect loops hammer the API.
+  // Reset only when a different job id is subscribed.
+  const streamClosedRef = useRef(false);
   useEffect(() => {
-    if (!jobId) return;
+    streamClosedRef.current = false;
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId || streamClosedRef.current) return;
+    // Skip the stream entirely for a job already known to be terminal (e.g.
+    // served from the persisted row after a restart) - it can never emit
+    // further progress and would only 404/close.
+    const cached = queryClient.getQueryData<Job>(queryKeys.job(jobId));
+    if (
+      cached &&
+      (cached.status === "succeeded" ||
+        cached.status === "failed" ||
+        cached.status === "cancelled")
+    ) {
+      return;
+    }
     const url = `${API_BASE}/jobs/${jobId}/stream`;
     const es = new EventSource(url);
     const onMessage = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data) as Job;
         queryClient.setQueryData(queryKeys.job(jobId), data);
-        if (data.status === "succeeded" || data.status === "failed" || data.status === "cancelled") {
+        if (
+          data.status === "succeeded" ||
+          data.status === "failed" ||
+          data.status === "cancelled"
+        ) {
+          streamClosedRef.current = true;
           es.close();
         }
       } catch {
@@ -339,6 +370,10 @@ export function useJob(jobId: string | null) {
       }
     };
     const onError = () => {
+      // Close instead of letting EventSource auto-reconnect: a persistent
+      // error (404/410 from the server) would otherwise loop forever. The
+      // polling refetch below keeps non-terminal jobs moving.
+      streamClosedRef.current = true;
       es.close();
       void queryClient.invalidateQueries({ queryKey: queryKeys.job(jobId) });
     };
@@ -350,6 +385,27 @@ export function useJob(jobId: string | null) {
       es.close();
     };
   }, [jobId, queryClient]);
+
+  // Terminal-event client invalidation (R1 end-to-end, plan J1): when a job
+  // reaches a terminal state every read model it may have written (network
+  // graph/metrics/layers, runs ledger, jobs list, datasets) is invalidated so
+  // the UI reflects the new data without a manual refresh. Effect keyed on
+  // status - never a render-time side effect (pitfall A3).
+  const jobStatus = query.data?.status;
+  useEffect(() => {
+    if (
+      jobId &&
+      (jobStatus === "succeeded" ||
+        jobStatus === "failed" ||
+        jobStatus === "cancelled")
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ["network"] });
+      void queryClient.invalidateQueries({ queryKey: ["layers"] });
+      void queryClient.invalidateQueries({ queryKey: ["runs"] });
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    }
+  }, [jobId, jobStatus, queryClient]);
 
   return query;
 }

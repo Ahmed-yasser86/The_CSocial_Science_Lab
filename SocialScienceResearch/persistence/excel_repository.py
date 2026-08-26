@@ -43,6 +43,8 @@ from .base import (
 )
 from .author_repository import ExcelAuthorRepository
 from .dataset_repository import DatasetRepository
+from .echo_repository import ExcelEchoDetectionRepository
+from .job_repository import ExcelJobRepository
 from .layer_repository import LayerRunRepository
 from .excel_workbook import WorkbookStore
 from .project_item_repository import ProjectItemRepository
@@ -516,6 +518,8 @@ class ExcelRepositories(Repositories):
     projects: ProjectRepository
     project_items: ProjectItemRepository
     layers: LayerRunRepository
+    jobs: ExcelJobRepository
+    echo_detections: ExcelEchoDetectionRepository
 
 
 def build_excel_repositories(
@@ -544,6 +548,8 @@ def build_excel_repositories(
     projects = ProjectRepository(store)
     project_items = ExcelProjectItemRepository(store)
     layers = LayerRunRepository(store)
+    jobs = ExcelJobRepository(store)
+    echo_detections = ExcelEchoDetectionRepository(store)
     # Ensure observation/error sheets exist up-front for a stable file layout.
     for sheet, model in (
         ("channel_observations", ChannelObservation),
@@ -566,5 +572,7 @@ def build_excel_repositories(
         projects=projects,
         project_items=project_items,
         layers=layers,
+        jobs=jobs,
+        echo_detections=echo_detections,
         store=store,
     )

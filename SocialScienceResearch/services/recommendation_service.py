@@ -196,8 +196,11 @@ class RecommendationService(CollectionService):
         """
         if not video_ids:
             return []
-        concurrency = max(1, concurrency or self._settings.scraper.enrichment_concurrency)
-        throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
+        # Read the mutable runtime config (UI-tunable without restart), not
+        # the frozen settings - otherwise the Speed presets never affect the
+        # bulk phase that dominates large crawls.
+        concurrency = max(1, concurrency or self._enrichment_concurrency())
+        throttle = _RateLimiter(self._request_delay())
 
         # Every bulk scrape is registered as sub-runs under ONE parent (the run
         # that triggered it, or a synthetic anchor run when none is given) so

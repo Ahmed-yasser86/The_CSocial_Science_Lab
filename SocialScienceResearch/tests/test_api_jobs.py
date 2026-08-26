@@ -48,7 +48,7 @@ class InstantProvider(AcquisitionProvider):
     def extract_channel(self, channel_url: str) -> ChannelExtract:
         raise NotImplementedError
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         return {
             "id": "v1example0000000000000000001",
             "channel_id": "UCexample00000000000000000",
@@ -66,7 +66,7 @@ class BlockingProvider(InstantProvider):
         self.started = started
         self.gate = gate
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         self.started.set()
         if not self.gate.wait(timeout=10):
             raise RuntimeError("gate never opened")
@@ -384,6 +384,89 @@ def test_job_stream_404_unknown_job(tmp_path) -> None:
     client = TestClient(app)
     resp = client.get(f"{PREFIX}/jobs/nope/stream")
     assert resp.status_code == 404
+
+
+def test_job_stream_serves_persisted_snapshot_after_restart(tmp_path) -> None:
+    """A finished-but-not-live job streams ONE snapshot event, never 404s.
+
+    After a restart the in-memory registry no longer knows the job, but its
+    persisted row exists: a bare 404 would make EventSource reconnect forever
+    (the observed 404 loop). The stream must serve the snapshot and close.
+    """
+    from SocialScienceResearch.domain.job_models import CollectionJob
+
+    app = create_app(_settings(tmp_path), provider=InstantProvider())
+    client = TestClient(app)
+
+    resp = client.post(f"{PREFIX}/collect", json=_spec_payload())
+    job_id = resp.json()["job_id"]
+    _wait_for_terminal(client, job_id)
+
+    # Simulate the restart: the live registry forgets everything.
+    client.app.state.services["jobs"]._jobs.clear()
+
+    with client.stream("GET", f"{PREFIX}/jobs/{job_id}/stream") as stream:
+        events = _parse_sse(stream.iter_lines())
+    assert stream.status_code == 200
+    assert len(events) == 1
+    assert events[0]["job_id"] == job_id
+    assert events[0]["status"] == "succeeded"
+
+
+def test_cancel_orphaned_running_row_returns_200(tmp_path) -> None:
+    """Cancel of a persisted running row with no live owner succeeds.
+
+    A row written by a previous process lifetime says 'running' but no worker
+    owns it; cancel used to 409 against it while the UI showed it active.
+    It must be finalised as interrupted and return 200.
+    """
+    from SocialScienceResearch.domain.job_models import CollectionJob
+
+    app = create_app(_settings(tmp_path), provider=InstantProvider())
+    client = TestClient(app)
+    repos = client.app.state.services["repos"]
+    repos.jobs.save_job(
+        CollectionJob(job_id="job_orphan", kind="recommendation", status="running")
+    )
+
+    resp = client.post(f"{PREFIX}/jobs/job_orphan/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["cancelled"] is True
+    assert repos.jobs.get_job("job_orphan").status == "interrupted"
+
+
+def test_phantom_running_row_does_not_block_workspace_switch(tmp_path) -> None:
+    """A stale persisted 'running' row cannot block workspace activation.
+
+    The unified activity rule: ACTIVE iff the live manager says so. The
+    phantom row is reconciled to interrupted on sight and the switch
+    succeeds with 200.
+    """
+    from SocialScienceResearch.domain.job_models import CollectionJob
+
+    app = create_app(_settings(tmp_path), provider=InstantProvider())
+    client = TestClient(app)
+    repos = client.app.state.services["repos"]
+    repos.jobs.save_job(
+        CollectionJob(job_id="job_ghost", kind="collect", status="running")
+    )
+
+    created = client.post(
+        f"{PREFIX}/workspaces", json={"name": "Other"}
+    )
+    assert created.status_code == 200
+    workspace_id = created.json()["workspace_id"]
+
+    # The merged list heals the phantom instead of showing it as active.
+    jobs = client.get(f"{PREFIX}/jobs").json()["items"]
+    ghost = next(j for j in jobs if j["job_id"] == "job_ghost")
+    assert ghost["status"] == "interrupted"
+
+    resp = client.put(
+        f"{PREFIX}/session/context",
+        json={"active_workspace_id": workspace_id},
+    )
+    assert resp.status_code == 200
 
 
 def test_jobs_list_survives_malformed_job(client) -> None:

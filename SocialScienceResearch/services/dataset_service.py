@@ -80,6 +80,7 @@ class DatasetService:
         entity_type: str = "video",
         include_raw: bool = False,
         run_ids: list[str] | None = None,
+        job_ids: list[str] | None = None,
         channel_ids: list[str] | None = None,
         video_ids: list[str] | None = None,
         member_ids: list[str] | None = None,
@@ -100,7 +101,27 @@ class DatasetService:
         which run/action triggered its creation).
         """
         entity = self._entity(entity_type)
-        rows = self._query.resolve_latest_rows(entity, run_ids=run_ids)
+        # Job scoping: a job's runs (including its per-video sub-runs) widen
+        # the candidate run set; combined with explicit run_ids the scope is
+        # the AND of both dimensions (shared_features §5).
+        if job_ids:
+            job_run_ids = {
+                r.run_id
+                for r in self._repos.runs.list_runs()
+                if r.job_id in set(job_ids)
+            }
+            if run_ids:
+                run_ids = sorted(set(run_ids) & job_run_ids)
+            else:
+                run_ids = sorted(job_run_ids)
+            if not run_ids:
+                # A job filter matching no runs yields an honest empty
+                # dataset rather than silently ignoring the scope.
+                rows = []
+        if job_ids and not run_ids:
+            rows = []
+        else:
+            rows = self._query.resolve_latest_rows(entity, run_ids=run_ids)
 
         if channel_ids:
             rows = [r for r in rows if r.get("channel_id") in channel_ids]

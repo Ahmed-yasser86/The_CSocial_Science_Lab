@@ -646,7 +646,10 @@ class CollectionService:
         }
         try:
             throttle.wait()
-            info = self._provider.extract_video(video.url)
+            info = self._provider.extract_video(
+                video.url,
+                include_comments=bool(effective.get("collect_comments")),
+            )
         except LiveEventSkipError:
             result["skip_reason"] = _LIVE_SKIP_REASON
             return result
@@ -770,7 +773,10 @@ class CollectionService:
         run = self._begin_run(RunType.VIDEO, video_url, spec)
         errors: list[CollectionError] = []
         try:
-            info = self._provider.extract_video(video_url)
+            info = self._provider.extract_video(
+                video_url,
+                include_comments=bool(effective.get("collect_comments")),
+            )
         except AcquisitionError as exc:
             errors.append(
                 self._record_error(
@@ -1089,6 +1095,8 @@ class CollectionService:
         target_url: str,
         spec: CollectionSpec | None = None,
     ) -> CollectionRun:
+        from .jobs import current_job_id, current_job_tags
+
         run = CollectionRun(
             run_id=new_run_id(),
             run_type=run_type,
@@ -1100,6 +1108,10 @@ class CollectionService:
             config_json=(
                 spec.effective(self._settings) if spec is not None else self._config_snapshot()
             ),
+            # Every run created inside a job worker links back to the job
+            # (plan J1); legacy/outside-job runs keep NULL (provenance).
+            job_id=current_job_id(),
+            tags=list(current_job_tags()),
         )
         if run_type == RunType.CHANNEL:
             run.target_channel_id = None

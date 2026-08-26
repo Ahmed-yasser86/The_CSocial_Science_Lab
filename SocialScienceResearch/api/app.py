@@ -29,7 +29,7 @@ from io import BytesIO
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from SocialScienceResearch.config.settings import SocialScienceSettings
 from SocialScienceResearch.domain.collection import CollectionSpec
@@ -56,6 +56,7 @@ from SocialScienceResearch.services import (
     SamplingService,
 )
 from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
+from SocialScienceResearch.services.echo_chamber_service import EchoChamberService
 from SocialScienceResearch.services.pagination import (
     CursorError,
     Paginated,
@@ -97,6 +98,7 @@ from .schemas import (
     TopVideosPayload,
     TopVideoRow,
     UpdateRunRequest,
+    JobTagsRequest,
     VariableMetaPayload,
     VelocityPoint,
     VideoEngagementPayload,
@@ -122,6 +124,7 @@ class NetworkScrapeVideoRequest(BaseModel):
 
     video_id: str
     trigger_run_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class NetworkScrapeRunRequest(BaseModel):
@@ -129,6 +132,7 @@ class NetworkScrapeRunRequest(BaseModel):
 
     run_id: str
     dedupe: bool = True
+    tags: list[str] = Field(default_factory=list)
 
 
 class NetworkScrapeChannelRequest(BaseModel):
@@ -137,6 +141,7 @@ class NetworkScrapeChannelRequest(BaseModel):
     channel_id: str
     trigger_run_id: str | None = None
     dedupe: bool = True
+    tags: list[str] = Field(default_factory=list)
 
 
 def build_services(
@@ -144,11 +149,17 @@ def build_services(
     *,
     provider=None,
     repository=None,
+    jobs_manager: "JobManager | None" = None,
 ) -> dict[str, Any]:
     """Build the full service container for one persistence binding.
 
     ``repository`` overrides ``settings.repository`` so the SAME factory
-    provisions services against a workspace's database + data dir (plan §2.3).
+    provisions services against a workspace's database + data dir (plan 2.3).
+    ``jobs_manager`` reuses an existing JobManager across workspace switches:
+    the manager owns the live job registry and its executor queue, so every
+    rebuild MUST share one instance - otherwise services like the echo
+    detector submit to a manager that no longer serves reads, and the merged
+    view reconciles genuinely-live jobs to 'interrupted'.
     """
     repo_settings = repository or settings.repository
     repos = build_repositories(repo_settings)
@@ -158,6 +169,24 @@ def build_services(
         provider = YtDlpAcquisitionProvider(
             settings=settings.scraper, collection=settings.collection
         )
+    # Crash honesty (plan J1): a job that was pending/running when the
+    # previous process died can never finish; mark those rows interrupted.
+    try:
+        repos.jobs.reconcile_stale_running(
+            "interrupted: the server restarted while this job was active"
+        )
+    except Exception:  # noqa: BLE001 - persistence is best-effort at boot
+        pass
+    if jobs_manager is None:
+        jobs_manager = JobManager(
+            max_workers=settings.jobs.max_workers,
+            max_run_seconds=settings.jobs.max_run_seconds,
+            max_stall_seconds=settings.jobs.max_stall_seconds,
+            store=repos.jobs,
+        )
+    else:
+        # Same live registry, new workspace's write-through store.
+        jobs_manager.set_store(repos.jobs)
     return {
         "repos": repos,
         # ``RecommendationService`` extends ``CollectionService``; using it for
@@ -170,12 +199,11 @@ def build_services(
         "sampling": SamplingService(repos, settings.sampling.default_seed),
         "network": RecommendationGraphService(repos),
         "quality": QualityService(repos),
-        "jobs": JobManager(
-                max_workers=settings.jobs.max_workers,
-                max_run_seconds=settings.jobs.max_run_seconds,
-                max_stall_seconds=settings.jobs.max_stall_seconds,
-            ),
+        "jobs": jobs_manager,
         "layer_scrape": LayerScrapeService(provider, repos, settings=settings),
+        "echo": EchoChamberService(
+            provider, repos, settings=settings, jobs=jobs_manager
+        ),
     }
 
 
@@ -193,6 +221,7 @@ _CORE_SERVICE_KEYS = frozenset({
     "quality",
     "jobs",
     "layer_scrape",
+    "echo",
 })
 
 
@@ -291,12 +320,19 @@ class WorkspaceRuntime:
             return
 
         old_repos = self.services.get("repos")
-        fresh = build_services(
-            self.settings, provider=self.provider, repository=repository
-        )
         # The JobManager survives activation by design (its queue must be
-        # empty - activation is guarded while jobs are pending/running).
-        fresh["jobs"] = self.services.get("jobs") or fresh["jobs"]
+        # empty - activation is guarded while jobs are pending/running). Pass
+        # the SURVIVING manager into the rebuild so every freshly built
+        # service (echo detector, layer crawl, ...) shares the ONE live job
+        # registry; its store is rebound to the new workspace inside
+        # build_services. Building a second manager here would make submits
+        # land in a registry that read paths never see.
+        fresh = build_services(
+            self.settings,
+            provider=self.provider,
+            repository=repository,
+            jobs_manager=self.services.get("jobs"),
+        )
         for key in list(self.services):
             if key not in _CORE_SERVICE_KEYS:
                 del self.services[key]
@@ -320,7 +356,14 @@ class WorkspaceRuntime:
         self._bound = signature
 
     def active_jobs(self) -> list[Any]:
-        """Jobs still pending/running (blocks workspace switches)."""
+        """Jobs still pending/running per the ONE authoritative merge rule.
+
+        A job is ACTIVE iff the live manager says pending/running; otherwise
+        its persisted row governs. Persisted pending/running rows without a
+        live owner were written by a previous process lifetime and are lazily
+        finalised as ``interrupted`` here, so a restart can never leave a
+        phantom blocking workspace activation forever.
+        """
         manager = self.services.get("jobs")
         if manager is None:
             return []
@@ -329,6 +372,15 @@ class WorkspaceRuntime:
             status = getattr(job.status, "value", str(job.status))
             if status in ("pending", "running"):
                 active.append(job)
+        repos = self.services.get("repos")
+        if repos is not None:
+            for status_filter in _STALE_JOB_STATUSES:
+                try:
+                    rows = repos.jobs.list_jobs(status=status_filter)
+                except Exception:  # noqa: BLE001 - healing is best-effort
+                    continue
+                for row in rows:
+                    _reconcile_stale_job_row(repos, manager, row)
         return active
 
 
@@ -347,14 +399,18 @@ def _job_key(job) -> tuple[str, ...]:
     return (created_key, getattr(job, "job_id", ""))
 
 
-def _job_payload(job) -> dict[str, Any]:
+def _job_payload(job, runs: list[Any] | None = None) -> dict[str, Any]:
     """Best-effort JSON-safe payload for a single job.
 
     A single malformed job must never take down the whole list, so any
-    serialization failure falls back to a minimal but valid payload.
+    serialization failure falls back to a minimal but valid payload. ``runs``
+    carries the nested run summaries (plan J1 children provenance).
     """
+    run_summaries = [_run_summary(r) for r in (runs or [])]
     try:
-        return JobPayload.model_validate(job.to_dict()).model_dump(mode="json")
+        payload = JobPayload.model_validate(job.to_dict()).model_dump(mode="json")
+        payload["runs"] = run_summaries
+        return payload
     except Exception:
         created = getattr(job, "created_at", None)
         created_iso = created.isoformat() if isinstance(created, datetime) else None
@@ -364,7 +420,132 @@ def _job_payload(job) -> dict[str, Any]:
             "status": str(getattr(job, "status", "")),
             "created_at": created_iso or datetime.now(timezone.utc).isoformat(),
             "cancel_requested": bool(getattr(job, "cancel_requested", False)),
+            "runs": run_summaries,
         }
+
+
+def _run_summary(run) -> dict[str, Any]:
+    """Compact nested run row for a job's children table (additive field)."""
+    return {
+        "run_id": run.run_id,
+        "run_type": run.run_type.value if hasattr(run.run_type, "value") else str(run.run_type),
+        "target_url": run.target_url,
+        "target_video_id": run.target_video_id,
+        "parent_run_id": run.parent_run_id,
+        "layer_index": run.layer_index,
+        "status": (
+            run.status.value if hasattr(run.status, "value") else str(run.status)
+        ),
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "entities_discovered": run.entities_discovered,
+        "entities_succeeded": run.entities_succeeded,
+        "entities_failed": run.entities_failed,
+        "comments_collected": run.comments_collected,
+        "name": run.name,
+    }
+
+
+def _runs_for_job(repos, job_id: str) -> list[Any]:
+    """All runs stamped with this job id (nested children, plan J1)."""
+    return [run for run in repos.runs.list_runs() if run.job_id == job_id]
+
+
+#: Statuses a persisted row can carry that only make sense while a worker
+#: thread of SOME process owns the job. The authoritative activity rule is:
+#: a job is ACTIVE iff the live manager says pending/running; otherwise its
+#: persisted row governs. A row left pending/running without a live owner was
+#: written by a previous process lifetime (crash/restart lost the race with
+#: boot-time ``reconcile_stale_running``) and is lazily finalised here.
+_STALE_JOB_STATUSES = ("pending", "running")
+
+
+def _reconcile_stale_job_row(repos, manager, persisted) -> bool:
+    """Finalise an orphaned pending/running persisted row; True if it did.
+
+    Marks the row ``interrupted`` so it never resurfaces as a phantom
+    cancellable/running job in the merged view (and never blocks a workspace
+    switch). Rows owned by a live worker are left untouched.
+    """
+    status = str(persisted.status or "")
+    if status not in _STALE_JOB_STATUSES or manager.get(persisted.job_id) is not None:
+        return False
+    try:
+        persisted.status = "interrupted"
+        persisted.error = (
+            "interrupted: no worker owns this job "
+            "(written by a previous server process)"
+        )
+        persisted.message = "interrupted"
+        persisted.finished_at = datetime.now(timezone.utc)
+        persisted.updated_at = persisted.finished_at
+        repos.jobs.save_job(persisted)
+    except Exception:  # noqa: BLE001 - reconciliation is best-effort
+        return False
+    return True
+
+
+def _persisted_job_row(repos, manager, job_id: str):
+    """Fetch one persisted job row, lazily reconciling an orphaned row.
+
+    Returns ``(row, reconciled)``; ``row`` is ``None`` for unknown ids.
+    """
+    try:
+        persisted = repos.jobs.get_job(job_id)
+    except Exception:  # noqa: BLE001 - persistence hiccups degrade to None
+        return None, False
+    if persisted is None:
+        return None, False
+    return persisted, _reconcile_stale_job_row(repos, manager, persisted)
+
+
+def _job_from_persisted(persisted):
+    """Adapt a persisted :class:`CollectionJob` row to the live Job shape."""
+
+    class _PersistedJobView:
+        def __init__(self, row):
+            self.job_id = row.job_id
+            self.kind = row.kind
+            self.status = row.status
+            self.created_at = row.created_at
+            self.started_at = row.started_at
+            self.finished_at = row.finished_at
+            self.progress = {}
+            self.message = row.message or row.error
+            self.cancel_requested = False
+
+        def to_dict(self) -> dict[str, Any]:
+            """JSON-safe snapshot mirroring the live ``Job.to_dict`` shape."""
+            return {
+                "job_id": self.job_id,
+                "kind": self.kind,
+                "status": str(self.status or ""),
+                "created_at": (
+                    self.created_at.isoformat()
+                    if isinstance(self.created_at, datetime)
+                    else None
+                ),
+                "started_at": (
+                    self.started_at.isoformat()
+                    if isinstance(self.started_at, datetime)
+                    else None
+                ),
+                "finished_at": (
+                    self.finished_at.isoformat()
+                    if isinstance(self.finished_at, datetime)
+                    else None
+                ),
+                "progress": {},
+                "message": self.message,
+                "cancel_requested": False,
+            }
+
+    return _PersistedJobView(persisted)
+
+
+def _job_dict_key(job_dict: dict[str, Any]) -> tuple[str, ...]:
+    """Sort key for merged job payload dicts (created_at ISO then id)."""
+    return ((job_dict.get("created_at") or ""), job_dict.get("job_id", ""))
 
 
 def _video_key(video) -> tuple[str, ...]:
@@ -569,6 +750,7 @@ def create_app(
         comments,
         comparison,
         datasets,
+        echo_chamber,
         explorer,
         expansion,
         layer_network,
@@ -586,6 +768,7 @@ def create_app(
     app.include_router(comments.router, prefix=prefix)
     app.include_router(comparison.router, prefix=prefix)
     app.include_router(datasets.router, prefix=prefix)
+    app.include_router(echo_chamber.router, prefix=prefix)
     app.include_router(explorer.router, prefix=prefix)
     app.include_router(expansion.router, prefix=prefix)
     app.include_router(layer_network.router, prefix=prefix)
@@ -658,7 +841,7 @@ def create_app(
         def _worker(reporter):
             return services["recommendations"].collect_recommendations(body.video_url, reporter=reporter)
 
-        job = services["jobs"].submit(_worker, kind="recommendation")
+        job = services["jobs"].submit(_worker, kind="recommendation", tags=body.tags)
         return {"job_id": job.job_id}
 
     @app.post(
@@ -676,7 +859,7 @@ def create_app(
                 reporter=reporter,
             )
 
-        job = services["jobs"].submit(_worker, kind="recommendation")
+        job = services["jobs"].submit(_worker, kind="recommendation", tags=body.tags)
         return {"job_id": job.job_id}
 
     @app.post(
@@ -718,7 +901,7 @@ def create_app(
                 reporter=reporter,
             )
 
-        job = services["jobs"].submit(_worker, kind="recommendation")
+        job = services["jobs"].submit(_worker, kind="recommendation", tags=body.tags)
         return {"job_id": job.job_id}
 
     @app.post(
@@ -744,20 +927,57 @@ def create_app(
                 reporter=reporter,
             )
 
-        job = services["jobs"].submit(_worker, kind="recommendation")
+        job = services["jobs"].submit(_worker, kind="recommendation", tags=body.tags)
         return {"job_id": job.job_id}
 
     @app.get(f"{prefix}/jobs", tags=["jobs"], response_model=Paginated[JobPayload])
     def list_jobs(
         cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
         page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+        kind: str | None = Query(None, description="Filter by job kind"),
+        status: str | None = Query(None, description="Filter by job status"),
+        created_after: datetime | None = Query(None, description="Only jobs created after this timestamp"),
     ):
-        jobs = sorted(services["jobs"].list(), key=_job_key)
+        # Live (in-memory) jobs take precedence; persisted rows not in memory
+        # (older than the current process) are merged so completed jobs remain
+        # listed across restarts (plan J1 US-J1).
+        runs_by_job: dict[str, list[Any]] = {}
+        for run in repos.runs.list_runs():
+            if run.job_id:
+                runs_by_job.setdefault(run.job_id, []).append(run)
+        merged: dict[str, dict[str, Any]] = {}
+        for persisted in services["jobs"].persisted_jobs(kind=kind, status=status):
+            # Lazy reconciliation: a pending/running row with no live owner
+            # is finalised before it can surface as a phantom active job.
+            _reconcile_stale_job_row(services["repos"], services["jobs"], persisted)
+            payload = _job_payload(
+                _job_from_persisted(persisted), runs=runs_by_job.get(persisted.job_id, [])
+            )
+            payload["result_json"] = persisted.result_json or {}
+            merged[persisted.job_id] = payload
+        for live in services["jobs"].list():
+            if kind and live.kind != kind:
+                continue
+            live_status = getattr(live.status, "value", str(live.status))
+            if status and live_status != status:
+                continue
+            merged[live.job_id] = _job_payload(live, runs=runs_by_job.get(live.job_id, []))
+        jobs_list = list(merged.values())
+        if created_after is not None:
+            threshold = created_after.isoformat()
+            jobs_list = [
+                j for j in jobs_list if (j.get("created_at") or "") >= threshold
+            ]
+        jobs_sorted = sorted(jobs_list, key=_job_dict_key)
         page = page_sorted(
-            jobs, cursor=cursor, page_size=page_size, key_func=_job_key, total=len(jobs)
+            jobs_sorted,
+            cursor=cursor,
+            page_size=page_size,
+            key_func=_job_dict_key,
+            total=len(jobs_sorted),
         )
         return Paginated(
-            items=[_job_payload(j) for j in page.items],
+            items=page.items,
             next_cursor=page.next_cursor,
             has_more=page.has_more,
             total=page.total,
@@ -783,9 +1003,21 @@ def create_app(
     @app.get(f"{prefix}/jobs/{{job_id}}", tags=["jobs"], response_model=JobPayload)
     def get_job(job_id: str):
         job = services["jobs"].get(job_id)
-        if job is None:
+        if job is not None:
+            return _job_payload(job, runs=_runs_for_job(repos, job_id))
+        # Not live anymore (process restart): serve the persisted row. A row
+        # still claiming pending/running without a live owner is reconciled
+        # first so the merged view never shows a phantom running job.
+        persisted, _reconciled = _persisted_job_row(
+            services["repos"], services["jobs"], job_id
+        )
+        if persisted is None:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        return _job_payload(job)
+        payload = _job_payload(
+            _job_from_persisted(persisted), runs=_runs_for_job(repos, job_id)
+        )
+        payload["result_json"] = persisted.result_json or {}
+        return payload
 
     @app.post(
         f"{prefix}/jobs/{{job_id}}/cancel",
@@ -793,12 +1025,24 @@ def create_app(
         response_model=JobCancelPayload,
     )
     def cancel_job(job_id: str):
-        if not services["jobs"].cancel(job_id):
-            raise HTTPException(
-                status_code=409,
-                detail=f"Job {job_id} cannot be cancelled (finished or missing)",
-            )
-        return {"job_id": job_id, "cancelled": True}
+        if services["jobs"].cancel(job_id):
+            return {"job_id": job_id, "cancelled": True}
+        # Not live: the persisted row governs. A pending/running row with no
+        # live owner (previous process lifetime) is finalised as interrupted
+        # by the lookup below, so honouring the cancellation succeeds instead
+        # of 409-ing against a phantom the UI rightly showed as active.
+        persisted, reconciled = _persisted_job_row(
+            repos, services["jobs"], job_id
+        )
+        if reconciled:
+            return {"job_id": job_id, "cancelled": True}
+        detail = (
+            f"Job {job_id} cannot be cancelled "
+            f"(status: {persisted.status})"
+            if persisted is not None
+            else f"Job {job_id} cannot be cancelled (finished or missing)"
+        )
+        raise HTTPException(status_code=409, detail=detail)
 
     @app.get(
         f"{prefix}/jobs/{{job_id}}/result",
@@ -851,7 +1095,28 @@ def create_app(
         """
         manager = services["jobs"]
         if manager.get(job_id) is None:
-            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            # Not live (terminal job after restart, or orphaned row). Serve
+            # the persisted snapshot as ONE event and close gracefully: a
+            # bare 404 here makes EventSource reconnect forever. Truly
+            # unknown ids stay 404.
+            persisted, _reconciled = _persisted_job_row(
+                repos, manager, job_id
+            )
+            if persisted is None:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            payload = _job_payload(_job_from_persisted(persisted))
+
+            async def snapshot_stream():
+                yield f"data: {json.dumps(payload)}\n\n"
+
+            return StreamingResponse(
+                snapshot_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         loop = asyncio.get_running_loop()
         queue = manager.subscribe(job_id, loop)
@@ -943,10 +1208,35 @@ def create_app(
         run = repos.runs.get_run(run_id)
         if run is None:
             raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+        updates: dict[str, Any] = {}
         if body.name is not None:
-            run = run.model_copy(update={"name": body.name})
+            updates["name"] = body.name
+        if body.tags is not None:
+            updates["tags"] = [t.strip() for t in body.tags if t.strip()]
+        if updates:
+            run = run.model_copy(update=updates)
         repos.runs.update_run(run)
         return _run_payload(run)
+
+    @app.patch(
+        f"{prefix}/jobs/{{job_id}}/tags",
+        tags=["jobs"],
+    )
+    def set_job_tags(job_id: str, body: JobTagsRequest):
+        """Set/replace the researcher tags on a job (before/during/after)."""
+        tags = [t.strip() for t in body.tags if t.strip()]
+        manager: JobManager = services["jobs"]
+        live = manager.get(job_id)
+        if live is not None:
+            live.tags = list(tags)
+            manager.persist_job(live)
+        else:
+            persisted = _persisted_job_row(repos, services["jobs"], job_id)[0]
+            if persisted is None:
+                raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+            persisted.tags = list(tags)
+            repos.jobs.save_job(persisted)
+        return {"job_id": job_id, "tags": tags}
 
     @app.get(
         f"{prefix}/runs/{{run_id}}/errors",

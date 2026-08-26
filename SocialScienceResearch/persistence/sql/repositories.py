@@ -21,7 +21,9 @@ from typing import Any, Iterator
 from psycopg.types.json import Jsonb
 
 from SocialScienceResearch.domain.dataset_models import Dataset, Project, ProjectItem
+from SocialScienceResearch.domain.echo_models import EchoDetection
 from SocialScienceResearch.domain.enums import EntityType
+from SocialScienceResearch.domain.job_models import CollectionJob
 from SocialScienceResearch.domain.layer_models import LayerRun
 from SocialScienceResearch.domain.models import (
     AuthorProfile,
@@ -41,6 +43,8 @@ from SocialScienceResearch.persistence.base import (
     ChannelRepository,
     CollectionRunRepository,
     CommentRepository,
+    EchoDetectionRepository,
+    JobRepository,
     LayerRunRepository,
     ProjectItemRepository,
     RecommendationRepository,
@@ -1138,6 +1142,127 @@ class SqlLayerRunRepository(LayerRunRepository):
 
 
 # ---------------------------------------------------------------------------
+# Persisted jobs (plan J1 write-through)
+# ---------------------------------------------------------------------------
+
+class SqlJobRepository(JobRepository):
+    """PostgreSQL-backed collection-job rows."""
+
+    def __init__(self, db: SqlDatabase) -> None:
+        self._db = db
+
+    _UPDATABLE = (
+        "kind",
+        "status",
+        "params_json",
+        "result_json",
+        "message",
+        "error",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "updated_at",
+    )
+
+    def save_job(self, job: CollectionJob) -> None:
+        cols = headers_for(CollectionJob)
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        ph = ", ".join(f"%({c})s" for c in cols)
+        update = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in self._UPDATABLE)
+        self._db.execute(
+            f'INSERT INTO "collection_jobs" ({col_list}) VALUES ({ph}) '
+            'ON CONFLICT ("job_id") DO UPDATE SET ' + update,
+            _params(job),
+        )
+
+    def get_job(self, job_id: str) -> CollectionJob | None:
+        row = self._db.fetchone(
+            'SELECT * FROM "collection_jobs" WHERE "job_id" = %(key)s',
+            {"key": job_id},
+        )
+        return _row(CollectionJob, row)  # type: ignore[return-value]
+
+    def list_jobs(
+        self,
+        kind: str | None = None,
+        status: str | None = None,
+    ) -> list[CollectionJob]:
+        clauses: list[str] = []
+        params: dict[str, Any] = {}
+        if kind is not None:
+            clauses.append('"kind" = %(kind)s')
+            params["kind"] = kind
+        if status is not None:
+            clauses.append('"status" = %(status)s')
+            params["status"] = status
+        sql = 'SELECT * FROM "collection_jobs"'
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += ' ORDER BY "created_at" DESC NULLS LAST'
+        rows = self._db.execute(sql, params)
+        return [_row(CollectionJob, r) for r in rows]  # type: ignore[return-value]
+
+    def reconcile_stale_running(self, message: str) -> int:
+        row = self._db.fetchone(
+            'UPDATE "collection_jobs" '
+            'SET "status" = %(status)s, "error" = %(msg)s, '
+            '"finished_at" = NOW(), "updated_at" = NOW() '
+            'WHERE "status" IN (%(p)s, %(r)s) RETURNING "job_id"',
+            {"status": "interrupted", "msg": message, "p": "pending", "r": "running"},
+        )
+        return 1 if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Echo-chamber detections (echo plan §4)
+# ---------------------------------------------------------------------------
+
+class SqlEchoDetectionRepository(EchoDetectionRepository):
+    """PostgreSQL-backed echo-detection rows."""
+
+    def __init__(self, db: SqlDatabase) -> None:
+        self._db = db
+
+    _UPDATABLE = (
+        "seed_video_id",
+        "seed_run_id",
+        "root_layer_run_id",
+        "job_id",
+        "status",
+        "params",
+        "layers",
+        "score",
+        "error",
+        "created_at",
+        "updated_at",
+    )
+
+    def save_detection(self, detection: EchoDetection) -> None:
+        cols = headers_for(EchoDetection)
+        col_list = ", ".join(f'"{c}"' for c in cols)
+        ph = ", ".join(f"%({c})s" for c in cols)
+        update = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in self._UPDATABLE)
+        self._db.execute(
+            f'INSERT INTO "echo_detections" ({col_list}) VALUES ({ph}) '
+            'ON CONFLICT ("detection_id") DO UPDATE SET ' + update,
+            _params(detection),
+        )
+
+    def get_detection(self, detection_id: str) -> EchoDetection | None:
+        row = self._db.fetchone(
+            'SELECT * FROM "echo_detections" WHERE "detection_id" = %(key)s',
+            {"key": detection_id},
+        )
+        return _row(EchoDetection, row)  # type: ignore[return-value]
+
+    def list_detections(self) -> list[EchoDetection]:
+        rows = self._db.execute(
+            'SELECT * FROM "echo_detections" ORDER BY "created_at" DESC NULLS LAST'
+        )
+        return [_row(EchoDetection, r) for r in rows]  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
 # Container + factory
 # ---------------------------------------------------------------------------
 
@@ -1149,6 +1274,8 @@ class SqlRepositories(Repositories):
     projects: SqlProjectRepository
     project_items: SqlProjectItemRepository
     layers: SqlLayerRunRepository
+    jobs: SqlJobRepository
+    echo_detections: SqlEchoDetectionRepository
 
     def __init__(self, db: SqlDatabase, transcripts_dir: str | Path | None = None) -> None:
         self._db = db
@@ -1164,6 +1291,8 @@ class SqlRepositories(Repositories):
         self.projects = SqlProjectRepository(db)
         self.project_items = SqlProjectItemRepository(db)
         self.layers = SqlLayerRunRepository(db)
+        self.jobs = SqlJobRepository(db)
+        self.echo_detections = SqlEchoDetectionRepository(db)
 
     @property
     def store(self):
