@@ -37,7 +37,17 @@ export interface EchoScoreComponent {
   key: "s1" | "s2" | "s3" | "s4" | "s5";
   label: string;
   value: number | null;
+  /** Spec §27: raw observed component value. */
+  value_raw?: number | null;
+  /** Spec §27: normalized value on the common [0,1] scale. */
+  value_normalized?: number | null;
+  /** Nominal researcher weight (spec §26): .35/.30/.20/.15/.15 */
+  weight?: number;
   weight_effective: number;
+  /** weight_effective x normalized value (spec §37 Custom Research Index). */
+  weighted_contribution?: number;
+  /** Lens of the component signal (spec §28). */
+  lens?: string;
   status: EchoSignalStatus;
 }
 
@@ -268,3 +278,134 @@ export function shapeTimeline(layers: EchoLayerSnapshot[]): EchoTimelineRow[] {
       },
     }));
 }
+
+// ---------------------------------------------------------------------------
+// Structural lenses (spec §35-§38): /structure + /audience payloads
+// ---------------------------------------------------------------------------
+
+/** §36 metadata envelope shared by every structural metric. */
+export interface MetricEnvelope {
+  metric: string;
+  value: number | null;
+  status: EchoSignalStatus;
+  category: string;
+  lens: string;
+  numerator?: number | null;
+  denominator?: number | null;
+  definition?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface NullModelPayload {
+  metric: string;
+  status: EchoSignalStatus;
+  observed?: MetricEnvelope;
+  null_mean: number | null;
+  null_sd: number | null;
+  z_score: number | null;
+  empirical_percentile: number | null;
+  n_randomizations: number;
+  seed: number;
+  preserves?: string[];
+  does_not_preserve?: string[];
+  null_values?: number[];
+  detail?: { reason?: string };
+}
+
+export interface PersistenceRow {
+  layer_index: number;
+  node_count: number;
+  edge_count: number;
+  seed_community_share: number | null;
+  dominant_community_share: number | null;
+  within_community_recommendation_rate: number | null;
+  persistence_jaccard_vs_previous: number | null;
+  status: EchoSignalStatus;
+  reason?: string;
+}
+
+export interface CommunityRow {
+  size: number;
+  is_seed_community?: boolean;
+  members?: string[];
+  conductance: MetricEnvelope;
+  internal_external_edge_ratio: MetricEnvelope;
+}
+
+export interface SeedCommunitySummary {
+  contains_seed: boolean;
+  size?: number;
+  share?: number | null;
+  members_sample?: string[];
+  conductance?: MetricEnvelope;
+  internal_external_edge_ratio?: MetricEnvelope;
+  status?: EchoSignalStatus;
+  reason?: string;
+}
+
+export interface CommunityStructure {
+  community_count: MetricEnvelope;
+  largest_community_size: MetricEnvelope;
+  modularity: MetricEnvelope;
+  seed_community: SeedCommunitySummary | null;
+  communities: CommunityRow[];
+}
+
+export interface ChannelConcentration {
+  top_channel_share: MetricEnvelope;
+  hhi: MetricEnvelope;
+  unique_channel_count: MetricEnvelope;
+  shares: { channel_id: string; weight: number; share: number }[];
+}
+
+export interface EchoStructure {
+  detection_id: string;
+  seed_run_id: string | null;
+  family_run_count: number;
+  computed_at: string;
+  disclaimers: string[];
+  video_lens: {
+    lens: string;
+    network_statistics: MetricEnvelope[];
+    community_structure: CommunityStructure;
+    reinforcement: {
+      within_community_recommendation_rate: MetricEnvelope;
+      null_model: NullModelPayload;
+      community_persistence: PersistenceRow[];
+    };
+    centrality: Record<"pagerank" | "hits_hubs" | "hits_authorities", MetricEnvelope>;
+  };
+  channel_lens: {
+    lens: string;
+    projection_rule: string;
+    network: MetricEnvelope[];
+    unattributed_edges: MetricEnvelope;
+    concentration: ChannelConcentration;
+    weighted_activity_total: MetricEnvelope;
+  };
+}
+
+export interface AudienceOverlapBlock {
+  jaccard_mean: MetricEnvelope;
+  within_community_jaccard_mean: MetricEnvelope;
+  between_community_jaccard_mean: MetricEnvelope;
+  videos_with_commenters: MetricEnvelope;
+  status: EchoSignalStatus;
+  reason?: string;
+  pair_count?: number;
+}
+
+export interface EchoAudience {
+  detection_id: string;
+  computed_at: string;
+  disclaimers: string[];
+  commenter_overlap: AudienceOverlapBlock;
+}
+
+/** Verbatim research disclaimers (spec §38) - rendered in the UI footer. */
+export const ECHO_DISCLAIMERS: string[] = [
+  "The recommendation graph represents observed recommendation relationships between videos. These relationships do not directly represent viewer beliefs, social relationships, ideological agreement, or causation.",
+  "Standard network metrics describe structural properties of the observed recommendation graph. They should not be interpreted individually as proof of an Echo Chamber.",
+  "The Custom Lens Score is a researcher-defined index combining selected structural signals. Its weights are methodological choices made for this project and are not adopted from a universally validated Echo Chamber index.",
+  "A strong structural signal does not by itself establish content homophily, shared beliefs, or psychological effects on viewers.",
+];

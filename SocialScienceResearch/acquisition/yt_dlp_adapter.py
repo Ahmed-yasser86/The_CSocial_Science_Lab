@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import os
 import re
+import shutil
 import tempfile
 import threading
 import urllib.error
@@ -189,8 +190,19 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
     def extract_channel(self, channel_url: str) -> ChannelExtract:
         return self._retry(self._extract_channel)(channel_url)
 
-    def extract_video(self, video_url: str) -> dict[str, Any]:
-        return self._retry(self._extract_video)(video_url)
+    def extract_video(
+        self, video_url: str, *, include_comments: bool | None = None
+    ) -> dict[str, Any]:
+        """Extract one video's metadata (and optionally comments).
+
+        ``include_comments`` overrides the global collection policy per call:
+        crawls that opted out of comments must not pay the comment-pagination
+        cost inside yt-dlp (up to ``max_comments_per_video`` network pages).
+        ``None`` keeps the configured default behaviour.
+        """
+        return self._retry(self._extract_video)(
+            video_url, include_comments=include_comments
+        )
 
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
         return self._retry(self._extract_recommendations)(video_url)
@@ -380,9 +392,15 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             e for e in (live_info.get("entries") or []) if isinstance(e, dict)
         ]
 
-    def _extract_video(self, video_url: str) -> dict[str, Any]:
+    def _extract_video(
+        self, video_url: str, *, include_comments: bool | None = None
+    ) -> dict[str, Any]:
         opts = self._base_opts()
-        want_comments = self._collection.collect_comments
+        want_comments = (
+            self._collection.collect_comments
+            if include_comments is None
+            else include_comments
+        )
         if want_comments:
             opts["getcomments"] = True
             opts["max_comments"] = (
@@ -693,6 +711,16 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
                 }
             },
         }
+        # Modern YouTube extraction needs a JS runtime for challenge solving;
+        # without one yt-dlp falls back through deprecated clients and every
+        # video takes minutes instead of seconds. Node is auto-detected (the
+        # frontend toolchain ships it); deno stays the library default. The
+        # remote EJS challenge-solver component is required for n-challenge
+        # solving - without it videos still fall back to slow clients.
+        node_path = shutil.which("node")
+        if node_path:
+            opts["js_runtimes"] = {"node": {"path": node_path}}
+            opts["remote_components"] = ["ejs:github"]
         if self._settings.proxy:
             opts["proxy"] = self._settings.proxy
         if self._settings.impersonate:

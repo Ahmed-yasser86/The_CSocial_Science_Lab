@@ -403,7 +403,7 @@ export function DatasetBuilder({
               {scopeMode === "jobs" && (
                 <Field label="Select jobs">
                   {jobsQuery.isLoading ? (
-                    <div className="text-xs text-muted-foreground">Loading jobs…</div>
+                    <div className="text-xs text-muted-foreground">Loading jobsâ€¦</div>
                   ) : jobsQuery.isError ? (
                     <ErrorState
                       message={
@@ -446,7 +446,7 @@ export function DatasetBuilder({
                   )}
                   {selectedJobIds.length > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      {selectedJobIds.length} job(s) selected — every run under
+                      {selectedJobIds.length} job(s) selected â€” every run under
                       the selected jobs is included.
                     </p>
                   )}

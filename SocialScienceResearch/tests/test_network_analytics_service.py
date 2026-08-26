@@ -715,6 +715,7 @@ def test_graph_node_carries_recommendations_scraped_flag(service) -> None:
     by_id = {n.video_id: n for n in graph.nodes}
     assert all(by_id[v].recommendations_scraped is False for v in ("a", "b", "a2"))
     repos.videos.mark_recommendations_scraped("a")
+    NetworkAnalyticsService.clear_analytics_cache()
     graph = service.graph()
     by_id = {n.video_id: n for n in graph.nodes}
     assert by_id["a"].recommendations_scraped is True

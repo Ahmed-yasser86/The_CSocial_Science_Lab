@@ -127,6 +127,71 @@ def get_detection(request: Request, detection_id: str):
     return _detection_payload(detection)
 
 
+@router.get(
+    "/echo-chamber/{detection_id}/lens",
+    tags=["echo_chamber"],
+)
+def get_detection_lens(
+    request: Request,
+    detection_id: str,
+    projection: str = Query("video", description="Lens projection: video | channel"),
+):
+    """Recompute a lens on demand from the STORED crawl edges only.
+
+    ``projection=video`` is the stored-timeline signal math; ``channel``
+    aggregates the same edges at channel level (S2 seed-channel
+    reinforcement share, S3 top-channel share, S1/S4 on channel pairs,
+    S5 unavailable unless comments exist). Includes the top-10 videos /
+    channels by weighted in-degree within the crawl and the seed card.
+    """
+    if projection not in ("video", "channel"):
+        raise HTTPException(
+            status_code=400, detail="projection must be 'video' or 'channel'"
+        )
+    service = _echo_service(request)
+    try:
+        return service.lens(detection_id, projection)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0]))
+
+
+@router.get(
+    "/echo-chamber/{detection_id}/structure",
+    tags=["echo_chamber"],
+)
+def get_detection_structure(request: Request, detection_id: str):
+    """Full structural analysis of the stored crawl (spec §37 sections).
+
+    VIDEO LENS: network statistics, community structure (modularity,
+    conductance, internal/external ratio), reinforcement (WCR + seeded
+    degree-preserving null model with z-score/percentile, community
+    persistence), centrality (PageRank/HITS). CHANNEL LENS: channel
+    projection network + concentration (HHI/top share). Every metric
+    carries the §36 metadata envelope; unavailable metrics are explicit,
+    never silent zeros. Includes verbatim research disclaimers (§38).
+    """
+    service = _echo_service(request)
+    try:
+        return service.structure(detection_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0]))
+
+
+@router.get(
+    "/echo-chamber/{detection_id}/audience",
+    tags=["echo_chamber"],
+)
+def get_detection_audience(request: Request, detection_id: str):
+    """Audience/commenter lens (§22): mean Jaccard commenter overlap within
+    vs between detected communities. Unavailable when no comment identities
+    were collected - missing data is never converted to zero."""
+    service = _echo_service(request)
+    try:
+        return service.audience(detection_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0]))
+
+
 @router.post(
     "/echo-chamber/{detection_id}/continue",
     tags=["echo_chamber"],

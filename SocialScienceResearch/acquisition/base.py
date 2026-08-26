@@ -63,7 +63,7 @@ class AcquisitionProvider(ABC):
         """Extract raw channel metadata and its video entries."""
 
     @abstractmethod
-    def extract_video(self, video_url: str) -> dict[str, Any]:
+    def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         """Extract raw full metadata for a single video (with comments when configured)."""
 
     @abstractmethod

@@ -124,6 +124,20 @@ def _resolve_scope(
     )
 
 
+def _job_run_ids(request: Request, job_ids_param: str | None) -> list[str] | None:
+    """Resolve a comma-separated ``job_ids`` filter to the UNION of those
+    jobs' child-run ids (plan-J1 linkage; unknown job ids resolve to no runs,
+    which keeps the AND semantics of the other filters intact)."""
+    ids = [j.strip() for j in (job_ids_param or "").split(",") if j.strip()]
+    if not ids:
+        return None
+    wanted = set(ids)
+    repos = request.app.state.services["repos"]
+    return [
+        run.run_id for run in repos.runs.list_runs() if run.job_id in wanted
+    ]
+
+
 def _scope_request(body) -> NetworkScopeRequest:
     """Project the export/merge body's scope fields onto a scope request."""
     return NetworkScopeRequest(
@@ -226,6 +240,11 @@ def network_graph(
         description="When a run_id is given, also fold in every descendant sub-run "
         "(the full run lineage) instead of just the selected run's own edges.",
     ),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated job ids: the run scope becomes the union of "
+        "those jobs' child runs (AND-combined with any run scope).",
+    ),
 ):
     """Enriched node/edge payload for the interactive graph UI.
 
@@ -282,6 +301,21 @@ def network_graph(
         run_id = None
     else:
         family_ids = None
+    # Optional job scope: resolve job ids to the union of their child runs.
+    # AND semantics are preserved: when a run scope is also present the two
+    # scopes are intersected, and every other filter still applies on top.
+    # An empty intersection must stay an empty slice (never "all runs"),
+    # hence the never-matching sentinel id.
+    job_scope = _job_run_ids(request, job_ids)
+    if job_scope is not None:
+        base: set[str] | None = None
+        if family_ids is not None:
+            base = set(family_ids)
+        elif run_id:
+            base = {run_id}
+        combined = sorted(base & set(job_scope)) if base else list(job_scope)
+        run_id = None
+        family_ids = combined or ["__no_matching_run__"]
     if projection == "channel":
         return service.channel_graph(
             run_id=run_id,
@@ -335,6 +369,11 @@ def network_edges(
     ),
     cursor: str | None = Query(None, description="Opaque cursor from the previous page"),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated job ids: the slice becomes the union of those "
+        "jobs' child runs (AND-combined with any run_id filter).",
+    ),
 ):
     """Cursor-paginated list of observed recommendation edges.
     
@@ -344,9 +383,20 @@ def network_edges(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=400, detail="channel_scope must be source, target or either")
+    run_ids_filter = _job_run_ids(request, job_ids)
+    if run_ids_filter is not None:
+        # AND semantics with an explicit run_id: intersect, never widen. An
+        # empty intersection stays an empty slice via a never-matching id.
+        if run_id:
+            run_ids_filter = [r for r in run_ids_filter if r == run_id]
+            run_id = None
+        run_ids_filter = run_ids_filter or ["__no_matching_run__"]
     return paginated(
         _service(request).edges(
-            run_id=run_id, channel_id=channel_id, channel_scope=channel_scope
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_scope=channel_scope,
+            run_ids=run_ids_filter,
         ),
         cursor=cursor,
         page_size=page_size,

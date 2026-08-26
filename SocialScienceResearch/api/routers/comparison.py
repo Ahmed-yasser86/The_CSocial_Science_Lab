@@ -27,6 +27,7 @@ from SocialScienceResearch.services.comparison_service import (
     CohortComparison,
     ComparisonService,
     EntityComparison,
+    JobComparison,
     Normalization,
     PeriodComparison,
     RunComparison,
@@ -104,6 +105,15 @@ class RunComparisonRequest(BaseModel):
     metrics: list[str] = Field(default_factory=list)
 
 
+class JobsComparisonRequest(BaseModel):
+    """Body of ``POST /comparison/jobs``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_ids: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
+
+
 def _service(request: Request) -> ComparisonService:
     """Lazily build/cache the shared ComparisonService on ``app.state``."""
     return get_service(
@@ -159,3 +169,14 @@ def compare_cohorts(body: CohortComparisonRequest, request: Request) -> CohortCo
 def compare_runs(body: RunComparisonRequest, request: Request) -> RunComparison:
     """Compare collection-run snapshots with entity churn between runs."""
     return _service(request).compare_runs(body.run_ids, body.metrics)
+
+
+@router.post("/comparison/jobs", response_model=JobComparison)
+def compare_jobs(body: JobsComparisonRequest, request: Request) -> JobComparison:
+    """Compare two jobs via their aggregated child-run metrics.
+
+    Mirrors ``POST /comparison/runs`` but takes ``job_ids``: each job's
+    child runs (plan-J1 linkage) are resolved and pooled into one snapshot
+    per job, with entity churn between consecutive jobs.
+    """
+    return _service(request).compare_jobs(body.job_ids, body.metrics)

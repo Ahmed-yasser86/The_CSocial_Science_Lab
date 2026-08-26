@@ -50,6 +50,7 @@ from SocialScienceResearch.domain.enums import (
 from SocialScienceResearch.utils.logger import get_logger
 
 from .collection_service import CollectionService, ProgressReporter, _RateLimiter
+from .network_analytics_service import NetworkAnalyticsService
 from .recommendation_graph_service import RecommendationGraphService
 from .results import CollectionResult
 
@@ -640,6 +641,7 @@ class RecommendationService(CollectionService):
         # build_graph() keeps serving the stale (often empty) pre-scrape graph
         # for the whole corpus (300s TTL) and forever for run-scoped slices.
         RecommendationGraphService.clear_graph_cache()
+        NetworkAnalyticsService.clear_analytics_cache()
         return result
 
     def _begin_recommendation_run(

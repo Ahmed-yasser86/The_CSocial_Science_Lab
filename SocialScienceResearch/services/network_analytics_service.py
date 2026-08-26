@@ -87,6 +87,9 @@ def _hashable(value: Any) -> Any:
     return value
 
 
+_ttl_stores: list[dict[Any, tuple[float, Any]]] = []
+
+
 def _ttl_cache(ttl_seconds: int):
     """Memoize a method result for ``ttl_seconds`` (per instance).
 
@@ -99,6 +102,7 @@ def _ttl_cache(ttl_seconds: int):
 
     def decorator(fn):
         store: dict[Any, tuple[float, Any]] = {}
+        _ttl_stores.append(store)
         lock = RLock()
 
         @functools.wraps(fn)
@@ -550,6 +554,12 @@ class NetworkAnalyticsService:
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
         self._graph_service = RecommendationGraphService(repos)
+
+    @classmethod
+    def clear_analytics_cache(cls) -> None:
+        """Invalidate cached metrics/graph payloads (writers must call this)."""
+        for store in _ttl_stores:
+            store.clear()
 
     # ------------------------------------------------------------------
     @_ttl_cache(300)

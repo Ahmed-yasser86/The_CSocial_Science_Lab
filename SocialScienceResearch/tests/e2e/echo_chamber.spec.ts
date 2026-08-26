@@ -81,6 +81,71 @@ function scoreFor(verdict: string, value: number | null) {
   };
 }
 
+function lensPayload(
+  state: ReturnType<typeof makeState>,
+  projection: "video" | "channel",
+) {
+  const hasEdges = state.layers.some((l) => l.edges_observed > 0);
+  return {
+    detection_id: DETECTION_ID,
+    projection,
+    seed_run_id: "run_seed",
+    family_run_count: Math.max(state.layers.length, 1),
+    edge_count: state.layers.reduce((acc, l) => acc + l.edges_observed, 0),
+    signals: {
+      s1: signal(hasEdges ? 0.5 : null),
+      // S2 means different things per lens (guide §3): seed concentration on
+      // the video lens, seed-channel reinforcement share on the channel lens.
+      s2: signal(hasEdges ? 0.72 : null, { projection }),
+      s3: signal(hasEdges ? 0.8 : null),
+      s4: signal(hasEdges && state.layers.length >= 2 ? 0.25 : null),
+      s5: { value: null, status: "unavailable", detail: {} },
+    },
+    score: scoreFor(state.verdict, state.scoreValue),
+    top_videos: [
+      {
+        video_id: "v_top1",
+        title: "Most recommended video",
+        channel_id: "ch_a",
+        channel_name: "Channel A",
+        in_degree: 4,
+        out_degree: 2,
+      },
+      {
+        video_id: "v_top2",
+        title: null,
+        channel_id: "ch_b",
+        channel_name: null,
+        in_degree: 1,
+        out_degree: 0,
+      },
+    ],
+    top_channels: [
+      {
+        channel_id: "ch_a",
+        channel_name: "Channel A",
+        weighted_in_degree: 6,
+        share: 0.75,
+      },
+      {
+        channel_id: "ch_b",
+        channel_name: null,
+        weighted_in_degree: 2,
+        share: null,
+      },
+    ],
+    seed: {
+      video_id: "seed_a",
+      title: "Seed video",
+      thumbnail_url: null,
+      channel_id: "ch_seed",
+      channel_name: "Seed Channel",
+      url: "https://www.youtube.com/watch?v=seed_a",
+    },
+    computed_at: new Date().toISOString(),
+  };
+}
+
 /** Mutable mocked-detection state shared across route handlers. */
 function makeState() {
   return {
@@ -213,6 +278,17 @@ async function mockBackend(page: Page, state: ReturnType<typeof makeState>, wsId
   await page.route(new RegExp(`/echo-chamber/${DETECTION_ID}$`), async (route: Route) =>
     route.fulfill({ json: detectionPayload(state) }),
   );
+
+  // Both on-demand lenses (video | channel) recomputed from stored edges.
+  await page.route(
+    new RegExp(`/echo-chamber/${DETECTION_ID}/lens`),
+    async (route: Route) => {
+      const raw =
+        new URL(route.request().url()).searchParams.get("projection") ?? "video";
+      const projection = raw === "channel" ? "channel" : "video";
+      return route.fulfill({ json: lensPayload(state, projection) });
+    },
+  );
 }
 
 test.describe("Echo chamber detector", () => {
@@ -280,6 +356,16 @@ test.describe("Echo chamber detector", () => {
     await expect(page.getByTestId("echo-verdict")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("echo-verdict-chip")).toHaveText("Weak structure");
     await expect(page.getByTestId("echo-timeline-row")).toHaveCount(4);
+
+    // Both lenses recompute from stored crawl edges: seed card + Videos tab
+    // with the top-videos table, then the Channels tab with top channels.
+    await expect(page.getByTestId("echo-seed-card")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("echo-seed-link")).toHaveText("Seed video");
+    await expect(page.getByTestId("echo-lens-video")).toBeVisible();
+    await expect(page.getByTestId("echo-top-videos")).toContainText("Most recommended video");
+    await page.getByRole("tab", { name: "Channels" }).click();
+    await expect(page.getByTestId("echo-lens-channel")).toBeVisible();
+    await expect(page.getByTestId("echo-top-channels")).toContainText("Channel A");
 
     // Continue appends a layer WITHOUT altering earlier rows.
     const beforeRows = await page.getByTestId("echo-timeline-row").allInnerTexts();

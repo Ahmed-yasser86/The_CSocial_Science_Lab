@@ -283,6 +283,45 @@ class RunComparison(BaseModel):
     method: str = "run_snapshot_observation_counts"
 
 
+class JobSnapshot(BaseModel):
+    """Aggregated snapshot of one collection job's child runs.
+
+    ``entity_counts`` sum the distinct entities observed across the job's
+    child runs (a video seen in two child runs counts once); ``metrics``
+    pool every child-run observation into one mean (never an average of
+    averages).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    job_id: str
+    kind: str | None = None
+    status: str | None = None
+    run_count: int = 0
+    run_ids: list[str] = []
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    entity_counts: dict[str, int] = {}
+    metrics: dict[str, float | None] = {}
+    n: int = 0
+    population_size: int = 0
+    method: str = "job_aggregated_child_run_observation_counts"
+
+
+class JobComparison(BaseModel):
+    """Two jobs compared via their aggregated child-run metrics."""
+
+    model_config = ConfigDict(extra="allow")
+
+    job_ids: list[str]
+    metrics: list[str]
+    snapshots: list[JobSnapshot] = []
+    transitions: list[RunTransition] = []
+    population_size: int
+    n: int
+    method: str = "job_aggregated_child_run_observation_counts"
+
+
 # ----------------------------------------------------------------------
 # Service
 # ----------------------------------------------------------------------
@@ -577,6 +616,129 @@ class ComparisonService:
             population_size=len(run_ids),
             n=len(run_ids),
             method="run_snapshot_observation_counts",
+        )
+
+    def compare_jobs(
+        self,
+        job_ids: list[str],
+        metrics: list[str] | None = None,
+    ) -> JobComparison:
+        """Compare two jobs by their AGGREGATED child-run observations.
+
+        Each job's child runs (``CollectionRun.job_id`` linkage, plan J1) are
+        resolved and pooled: entity counts are distinct across the job's runs
+        and metric means are computed over ALL of the job's video
+        observations together (never an average of per-run averages).
+        Transitions report which video ids appeared / disappeared between
+        consecutive jobs' entity sets. Reuses the same observed-only scan as
+        :meth:`compare_runs`.
+        """
+        job_ids = list(dict.fromkeys(job_ids))
+        if len(job_ids) < 2:
+            raise ValueError("compare_jobs requires at least two distinct job_ids")
+        fields = self._metric_fields("video", metrics or ["views", "likes", "comments"])
+
+        runs_by_job: dict[str, list[Any]] = defaultdict(list)
+        for run in self._repos.runs.list_runs():
+            if run.job_id in job_ids:
+                runs_by_job[run.job_id].append(run)
+        for job_id in job_ids:
+            if not runs_by_job.get(job_id):
+                raise ValueError(f"Job {job_id!r} has no child runs")
+
+        video_obs_by_run: dict[str, list[VideoObservation]] = defaultdict(list)
+        videos_by_run: dict[str, set[str]] = defaultdict(set)
+        for video in self._repos.videos.list_videos():
+            for obs in self._repos.videos.list_video_observations(video.video_id):
+                video_obs_by_run[obs.collection_run_id].append(obs)
+                videos_by_run[obs.collection_run_id].add(video.video_id)
+
+        channels_by_run: dict[str, set[str]] = defaultdict(set)
+        for channel in self._repos.channels.list_channels():
+            for obs in self._repos.channels.list_channel_observations(channel.channel_id):
+                channels_by_run[obs.collection_run_id].add(channel.channel_id)
+
+        comments_by_run: dict[str, set[str]] = defaultdict(set)
+        for comment in self._repos.comments.list_comments():
+            for obs in self._repos.comments.list_comment_observations(comment.comment_id):
+                comments_by_run[obs.collection_run_id].add(comment.comment_id)
+
+        job_rows = (
+            {j.job_id: j for j in (self._repos.jobs.list_jobs() or [])}
+            if getattr(self._repos, "jobs", None) is not None
+            else {}
+        )
+
+        snapshots: list[JobSnapshot] = []
+        videos_by_job: dict[str, set[str]] = {}
+        for job_id in job_ids:
+            child_runs = sorted(runs_by_job[job_id], key=lambda r: r.started_at)
+            run_ids = [r.run_id for r in child_runs]
+            all_obs = [
+                obs for rid in run_ids for obs in video_obs_by_run.get(rid, [])
+            ]
+            metric_means: dict[str, float | None] = {}
+            n_total = 0
+            for metric, field in fields.items():
+                values = [getattr(o, field, None) for o in all_obs]
+                m = StatisticsService.mean(values)
+                metric_means[metric] = m.value
+                n_total += m.n
+            job_row = job_rows.get(job_id)
+            started = min((r.started_at for r in child_runs), default=None)
+            finished = max(
+                (r.finished_at for r in child_runs if r.finished_at), default=None
+            )
+            videos_by_job[job_id] = {
+                vid for rid in run_ids for vid in videos_by_run.get(rid, ())
+            }
+            snapshots.append(
+                JobSnapshot(
+                    job_id=job_id,
+                    kind=getattr(job_row, "kind", None),
+                    status=getattr(job_row, "status", None),
+                    run_count=len(run_ids),
+                    run_ids=run_ids,
+                    started_at=started,
+                    finished_at=finished,
+                    entity_counts={
+                        "videos": len(videos_by_job[job_id]),
+                        "channels": len(
+                            {c for rid in run_ids for c in channels_by_run.get(rid, ())}
+                        ),
+                        "comments": len(
+                            {c for rid in run_ids for c in comments_by_run.get(rid, ())}
+                        ),
+                    },
+                    metrics=metric_means,
+                    n=n_total,
+                    population_size=len(all_obs),
+                    method="job_aggregated_child_run_observation_counts",
+                )
+            )
+
+        transitions: list[RunTransition] = []
+        for a, b in zip(job_ids, job_ids[1:]):
+            from_ids = videos_by_job.get(a, set())
+            to_ids = videos_by_job.get(b, set())
+            transitions.append(
+                RunTransition(
+                    from_run=a,
+                    to_run=b,
+                    entity_type="video",
+                    new_entities=sorted(to_ids - from_ids),
+                    disappeared_entities=sorted(from_ids - to_ids),
+                )
+            )
+
+        return JobComparison(
+            job_ids=job_ids,
+            metrics=list(fields.keys()),
+            snapshots=snapshots,
+            transitions=transitions,
+            population_size=len(job_ids),
+            n=sum(s.n for s in snapshots),
+            method="job_aggregated_child_run_observation_counts",
         )
 
     # ------------------------------------------------------------------

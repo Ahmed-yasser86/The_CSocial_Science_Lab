@@ -973,6 +973,45 @@
         }
       }
     },
+    "/api/v1/social-science/comparison/jobs": {
+      "post": {
+        "summary": "Compare Jobs",
+        "description": "Compare two jobs via their aggregated child-run metrics.\n\nMirrors ``POST /comparison/runs`` but takes ``job_ids``: each job's\nchild runs (plan-J1 linkage) are resolved and pooled into one snapshot\nper job, with entity churn between consecutive jobs.",
+        "operationId": "compare_jobs_api_v1_social_science_comparison_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobsComparisonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobComparison"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/projects": {
       "post": {
         "tags": [
@@ -1778,6 +1817,141 @@
                 "schema": {
                   "$ref": "#/components/schemas/EchoDetection"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}/lens": {
+      "get": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Get Detection Lens",
+        "description": "Recompute a lens on demand from the STORED crawl edges only.\n\n``projection=video`` is the stored-timeline signal math; ``channel``\naggregates the same edges at channel level (S2 seed-channel\nreinforcement share, S3 top-channel share, S1/S4 on channel pairs,\nS5 unavailable unless comments exist). Includes the top-10 videos /\nchannels by weighted in-degree within the crawl and the seed card.",
+        "operationId": "get_detection_lens_api_v1_social_science_echo_chamber__detection_id__lens_get",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Lens projection: video | channel",
+              "default": "video",
+              "title": "Projection"
+            },
+            "description": "Lens projection: video | channel"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}/structure": {
+      "get": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Get Detection Structure",
+        "description": "Full structural analysis of the stored crawl (spec \u00a737 sections).\n\nVIDEO LENS: network statistics, community structure (modularity,\nconductance, internal/external ratio), reinforcement (WCR + seeded\ndegree-preserving null model with z-score/percentile, community\npersistence), centrality (PageRank/HITS). CHANNEL LENS: channel\nprojection network + concentration (HHI/top share). Every metric\ncarries the \u00a736 metadata envelope; unavailable metrics are explicit,\nnever silent zeros. Includes verbatim research disclaimers (\u00a738).",
+        "operationId": "get_detection_structure_api_v1_social_science_echo_chamber__detection_id__structure_get",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/echo-chamber/{detection_id}/audience": {
+      "get": {
+        "tags": [
+          "echo_chamber"
+        ],
+        "summary": "Get Detection Audience",
+        "description": "Audience/commenter lens (\u00a722): mean Jaccard commenter overlap within\nvs between detected communities. Unavailable when no comment identities\nwere collected - missing data is never converted to zero.",
+        "operationId": "get_detection_audience_api_v1_social_science_echo_chamber__detection_id__audience_get",
+        "parameters": [
+          {
+            "name": "detection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Detection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3031,6 +3205,24 @@
               "title": "Include Sub Runs"
             },
             "description": "When a run_id is given, also fold in every descendant sub-run (the full run lineage) instead of just the selected run's own edges."
+          },
+          {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated job ids: the run scope becomes the union of those jobs' child runs (AND-combined with any run scope).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated job ids: the run scope becomes the union of those jobs' child runs (AND-combined with any run scope)."
           }
         ],
         "responses": {
@@ -3195,6 +3387,24 @@
               "default": 50,
               "title": "Page Size"
             }
+          },
+          {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated job ids: the slice becomes the union of those jobs' child runs (AND-combined with any run_id filter).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated job ids: the slice becomes the union of those jobs' child runs (AND-combined with any run_id filter)."
           }
         ],
         "responses": {
@@ -11984,6 +12194,63 @@
         ],
         "title": "JobCancelPayload"
       },
+      "JobComparison": {
+        "properties": {
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Metrics"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/JobSnapshot"
+            },
+            "type": "array",
+            "title": "Snapshots",
+            "default": []
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/RunTransition"
+            },
+            "type": "array",
+            "title": "Transitions",
+            "default": []
+          },
+          "population_size": {
+            "type": "integer",
+            "title": "Population Size"
+          },
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "job_aggregated_child_run_observation_counts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "job_ids",
+          "metrics",
+          "population_size",
+          "n"
+        ],
+        "title": "JobComparison",
+        "description": "Two jobs compared via their aggregated child-run metrics."
+      },
       "JobPayload": {
         "properties": {
           "job_id": {
@@ -12297,6 +12564,118 @@
         "title": "JobResultPayload",
         "description": "Union-shaped job result (single result, many results, or failure)."
       },
+      "JobSnapshot": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "run_count": {
+            "type": "integer",
+            "title": "Run Count",
+            "default": 0
+          },
+          "run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Run Ids",
+            "default": []
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "entity_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Entity Counts",
+            "default": {}
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Metrics",
+            "default": {}
+          },
+          "n": {
+            "type": "integer",
+            "title": "N",
+            "default": 0
+          },
+          "population_size": {
+            "type": "integer",
+            "title": "Population Size",
+            "default": 0
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "job_aggregated_child_run_observation_counts"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "title": "JobSnapshot",
+        "description": "Aggregated snapshot of one collection job's child runs.\n\n``entity_counts`` sum the distinct entities observed across the job's\nchild runs (a video seen in two child runs counts once); ``metrics``\npool every child-run observation into one mean (never an average of\naverages)."
+      },
       "JobSubmitPayload": {
         "properties": {
           "job_id": {
@@ -12325,6 +12704,28 @@
         "type": "object",
         "title": "JobTagsRequest",
         "description": "Body for ``PATCH .../jobs/{job_id}/tags`` (``extra=\"forbid\"``)."
+      },
+      "JobsComparisonRequest": {
+        "properties": {
+          "job_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Job Ids"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Metrics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "JobsComparisonRequest",
+        "description": "Body of ``POST /comparison/jobs``."
       },
       "LayerBootstrapRequest": {
         "properties": {

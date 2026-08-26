@@ -35,6 +35,7 @@ export const networkFullKeys = {
     connected?: string,
     scraped?: string,
     includeSubRuns?: boolean,
+    jobIds?: string[],
   ) =>
     [
       "network",
@@ -48,6 +49,7 @@ export const networkFullKeys = {
       connected ?? "all",
       scraped ?? "all",
       includeSubRuns ? "subruns" : "single",
+      (jobIds ?? []).join(",") || "all",
     ] as const,
 };
 
@@ -231,6 +233,7 @@ export function getNetworkGraph(
   connected?: "only" | "isolated",
   scraped?: "scraped" | "unscraped",
   includeSubRuns?: boolean,
+  jobIds?: string[],
 ): Promise<NetworkGraphPayload | ChannelGraphPayload> {
   return request(
     `/network/graph${toQuery({
@@ -243,6 +246,7 @@ export function getNetworkGraph(
       connected,
       scraped,
       include_sub_runs: includeSubRuns ? "true" : undefined,
+      job_ids: jobIds?.length ? jobIds.join(",") : undefined,
     })}`,
   );
 }
@@ -258,6 +262,7 @@ export function useNetworkGraph(
   connected?: "only" | "isolated",
   scraped?: "scraped" | "unscraped",
   includeSubRuns?: boolean,
+  jobIds?: string[],
 ) {
   return useQuery({
     queryKey: networkFullKeys.graph(
@@ -270,6 +275,7 @@ export function useNetworkGraph(
       connected,
       scraped,
       includeSubRuns,
+      jobIds,
     ),
     queryFn: () =>
       getNetworkGraph(
@@ -282,6 +288,7 @@ export function useNetworkGraph(
         connected,
         scraped,
         includeSubRuns,
+        jobIds,
       ),
     placeholderData: (previous) => previous,
     ...options,

@@ -26,8 +26,8 @@ DEFAULT_DATASET_NAME = "youtube_research"
 DEFAULT_RETRIES = 3
 DEFAULT_RETRY_BACKOFF = 2.0
 DEFAULT_SOCKET_TIMEOUT = 30.0
-DEFAULT_REQUEST_DELAY_SECONDS = 0.5
-DEFAULT_ENRICHMENT_CONCURRENCY = 4
+DEFAULT_REQUEST_DELAY_SECONDS = 0.25
+DEFAULT_ENRICHMENT_CONCURRENCY = 6
 #: Cap on how many recommended/new target videos are deep-enriched (full
 #: stats + comments) per scrape. Bounds the wall-clock cost of a crawl so a
 #: layer crawl over hundreds of recommendations always completes and forms a

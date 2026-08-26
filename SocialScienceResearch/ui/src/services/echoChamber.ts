@@ -4,8 +4,12 @@ import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { request, toQuery } from "@/services/api";
 import type {
+  EchoAudience,
   EchoDetection,
   EchoLayerSnapshot,
+  EchoLens,
+  EchoProjection,
+  EchoStructure,
 } from "@/lib/echo-chamber";
 import { isTerminalDetection } from "@/lib/echo-chamber";
 
@@ -22,6 +26,8 @@ export const echoChamberKeys = {
   detection: (detectionId: string | null) =>
     ["echo-chamber", detectionId ?? "none"] as const,
   list: ["echo-chamber", "list"] as const,
+  lens: (detectionId: string | null, projection: EchoProjection) =>
+    ["echo-chamber", detectionId ?? "none", "lens", projection] as const,
 };
 
 export interface DetectEchoBody {
@@ -71,6 +77,65 @@ export function listEchoDetections(cursor?: string): Promise<{
   total: number;
 }> {
   return request(`/echo-chamber${toQuery({ cursor, page_size: 50 })}`);
+}
+
+/** Recompute one lens (video | channel) from stored crawl edges on demand. */
+export function getEchoLens(
+  detectionId: string,
+  projection: EchoProjection,
+): Promise<EchoLens> {
+  return request(
+    `/echo-chamber/${encodeURIComponent(detectionId)}/lens${toQuery({
+      projection,
+    })}`,
+  );
+}
+
+/** Cached-per-(detection, projection) lens query. */
+export function useEchoLens(
+  detectionId: string | null,
+  projection: EchoProjection,
+) {
+  return useQuery({
+    queryKey: echoChamberKeys.lens(detectionId, projection),
+    queryFn: () => getEchoLens(detectionId as string, projection),
+    enabled: !!detectionId,
+    staleTime: 60_000,
+  });
+}
+
+/** Full structural analysis (spec §37 sections) from stored crawl edges. */
+export function getEchoStructure(detectionId: string): Promise<EchoStructure> {
+  return request(
+    `/echo-chamber/${encodeURIComponent(detectionId)}/structure`,
+  );
+}
+
+export function useEchoStructure(detectionId: string | null) {
+  return useQuery({
+    queryKey: ["echo-chamber", detectionId ?? "none", "structure"],
+    queryFn: () => getEchoStructure(detectionId as string),
+    enabled: !!detectionId,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Audience/commenter lens (spec §22): Jaccard within/between communities. */
+export function getEchoAudience(detectionId: string): Promise<EchoAudience> {
+  return request(
+    `/echo-chamber/${encodeURIComponent(detectionId)}/audience`,
+  );
+}
+
+export function useEchoAudience(detectionId: string | null) {
+  return useQuery({
+    queryKey: ["echo-chamber", detectionId ?? "none", "audience"],
+    queryFn: () => getEchoAudience(detectionId as string),
+    enabled: !!detectionId,
+    staleTime: 60_000,
+    retry: false,
+  });
 }
 
 /** Poll a detection until terminal; keeps the live progress card in sync. */

@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 class RuntimeScraperConfig:
     """Mutable scraper settings that the UI can update at runtime."""
 
-    request_delay_seconds: float = 0.5
-    enrichment_concurrency: int = 4
+    request_delay_seconds: float = 0.25
+    enrichment_concurrency: int = 6
     socket_timeout: float = 30.0
     retries: int = 3
     retry_backoff: float = 2.0
@@ -40,7 +40,10 @@ class RuntimeScraperConfig:
 PRESETS: dict[str, dict] = {
     "fast": {
         "label": "Fast",
-        "description": "High concurrency, minimal delay. Best for small crawls.",
+        "description": (
+            "High concurrency (10 workers), minimal delay (0.05s). Best for "
+            "small crawls; higher chance of YouTube rate-limiting on big ones."
+        ),
         "request_delay_seconds": 0.05,
         "enrichment_concurrency": 10,
         "socket_timeout": 20.0,
@@ -48,25 +51,23 @@ PRESETS: dict[str, dict] = {
     },
     "balanced": {
         "label": "Balanced",
-        "description": "Moderate speed with reasonable safety.",
+        "description": (
+            "Moderate speed (6 workers, 0.2s delay). Good default that "
+            "usually stays under YouTube's rate-limit radar."
+        ),
         "request_delay_seconds": 0.2,
         "enrichment_concurrency": 6,
         "socket_timeout": 25.0,
         "max_enrich_targets": 100,
     },
-    "default": {
-        "label": "Default",
-        "description": "Safe defaults for most use cases.",
-        "request_delay_seconds": 0.5,
-        "enrichment_concurrency": 4,
-        "socket_timeout": 30.0,
-        "max_enrich_targets": 100,
-    },
-    "slow": {
-        "label": "Slow",
-        "description": "Conservative pacing. Avoids rate limits.",
-        "request_delay_seconds": 1.0,
-        "enrichment_concurrency": 2,
+    "careful": {
+        "label": "Careful",
+        "description": (
+            "Conservative pacing (3 workers, 0.75s delay). Slowest but "
+            "safest against rate limits; use for large overnight crawls."
+        ),
+        "request_delay_seconds": 0.75,
+        "enrichment_concurrency": 3,
         "socket_timeout": 45.0,
         "max_enrich_targets": 50,
     },

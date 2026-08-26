@@ -163,6 +163,30 @@ function RunCard({
   );
 }
 
+function JobStatTile({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className="rounded-md border bg-muted/40 px-3 py-2"
+      data-testid={`job-stat-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+    >
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className={`text-lg font-semibold tabular-nums ${className ?? ""}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export function JobDetailPage({ jobId }: { jobId: string }) {
   const jobQuery = useJob(jobId);
   const cancel = useCancelJob();
@@ -288,15 +312,34 @@ export function JobDetailPage({ jobId }: { jobId: string }) {
           <div><dt className="inline">Elapsed </dt><dd className="inline">{elapsed(job.started_at, job.finished_at)}</dd></div>
         </dl>
         {runs.length > 0 && (
-          <p className="mt-3 text-sm text-muted-foreground" data-testid="job-totals">
-            {runs.length} run{runs.length === 1 ? "" : "s"} ·{" "}
-            <span className="text-emerald-600">{totals.succeeded} succeeded</span>
-            {totals.failed > 0 && (
-              <> · <span className="text-destructive">{totals.failed} failed</span></>
-            )}
-            {totals.comments > 0 && <> · {totals.comments} comments</>} ·{" "}
-            {""}elapsed across workers shown per run below
-          </p>
+          <div
+            className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6"
+            data-testid="job-stats-tiles"
+          >
+            <JobStatTile label="Total runs" value={String(runs.length)} />
+            <JobStatTile
+              label="Discovered"
+              value={totals.discovered.toLocaleString()}
+            />
+            <JobStatTile
+              label="Succeeded"
+              value={totals.succeeded.toLocaleString()}
+              className="text-emerald-600"
+            />
+            <JobStatTile
+              label="Failed"
+              value={totals.failed.toLocaleString()}
+              className={totals.failed > 0 ? "text-destructive" : undefined}
+            />
+            <JobStatTile
+              label="Comments"
+              value={totals.comments.toLocaleString()}
+            />
+            <JobStatTile
+              label="Elapsed (latest run)"
+              value={elapsed(job.started_at, job.finished_at)}
+            />
+          </div>
         )}
       </Card>
 

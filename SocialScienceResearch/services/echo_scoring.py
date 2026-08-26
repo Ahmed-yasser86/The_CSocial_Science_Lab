@@ -30,6 +30,15 @@ COMPONENT_LABELS: dict[str, str] = {
     "s5": "Commenter-overlap reinforcement",
 }
 
+#: Lens of every component (spec §28): the UI/API must show it explicitly.
+COMPONENT_LENSES: dict[str, str] = {
+    "s1": "video",
+    "s2": "video",
+    "s3": "channel",
+    "s4": "cross_lens",
+    "s5": "audience",
+}
+
 #: Core signals: any of these missing -> inconclusive verdict.
 CORE_KEYS = ("s1", "s2", "s3", "s4")
 
@@ -66,12 +75,20 @@ def compute_score(
     weights: dict[str, float] | None = None,
     computed_at: datetime | None = None,
 ) -> dict[str, Any]:
-    """Transparent composite over available signals (plan §2.2).
+    """Transparent composite over available signals (plan §2.2, spec §27).
 
     ``signals`` maps component keys to observed values (``None`` when the
     signal could not be observed). Returns the full payload:
     ``{value, band, verdict, components[], computed_at}`` where every
-    component carries its effective weight and availability status.
+    component carries its effective weight and availability status plus the
+    §27 contract: raw value, normalized value, nominal weight, weighted
+    contribution and lens.
+
+    Normalization method (spec §27): every component is a share/ratio that is
+    already on a [0, 1] scale by construction (S1/S3/S4 are edge shares,
+    S2 concentration is clamped to [0,1] at observation time), so the
+    normalization is the identity clamp01 - incompatible raw units (counts,
+    percentages) are never mixed in.
     """
     w = dict(DEFAULT_WEIGHTS if weights is None else weights)
     values = {key: signals.get(key) for key in ("s1", "s2", "s3", "s4", "s5")}
@@ -84,22 +101,36 @@ def compute_score(
     core_missing = False
     for key, value in values.items():
         available = value is not None
+        raw = float(value) if available else None
+        # Normalized value on the common [0,1] scale (identity clamp01).
+        normalized = clamp01(raw) if available else None
         if available:
             effective = w.get(key, 0.0)
             weight_sum += effective
-            weighted_total += effective * float(value)
-            normalized = round(effective / total_weight, 6) if total_weight > 0 else 0.0
+            weighted_total += effective * float(normalized)
+            normalized_weight = (
+                round(effective / total_weight, 6) if total_weight > 0 else 0.0
+            )
         else:
             effective = 0.0
-            normalized = 0.0
+            normalized_weight = 0.0
             if key in CORE_KEYS:
                 core_missing = True
         components.append(
             {
                 "key": key,
                 "label": COMPONENT_LABELS[key],
-                "value": float(value) if available else None,
-                "weight_effective": normalized,
+                "value": raw,
+                "value_raw": raw,
+                "value_normalized": round(normalized, 6) if normalized is not None else None,
+                "weight": w.get(key, 0.0),
+                "weight_effective": normalized_weight,
+                "weighted_contribution": (
+                    round(normalized_weight * normalized, 6)
+                    if normalized is not None
+                    else 0.0
+                ),
+                "lens": COMPONENT_LENSES[key],
                 "status": "available" if available else "unavailable",
             }
         )

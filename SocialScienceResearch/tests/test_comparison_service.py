@@ -345,6 +345,103 @@ def test_compare_runs_unknown_run_raises_value_error(excel_repos, fixed_now) -> 
 
 
 # ----------------------------------------------------------------------
+# Job comparison (POST /comparison/jobs)
+# ----------------------------------------------------------------------
+def _seed_job_run(repos, run_id: str, job_id: str, started_at: datetime) -> None:
+    repos.runs.create_run(
+        CollectionRun(
+            run_id=run_id,
+            run_type=RunType.CHANNEL,
+            target_url=f"https://www.youtube.com/@{run_id}",
+            started_at=started_at,
+            status="success",
+            job_id=job_id,
+        )
+    )
+
+
+def test_compare_jobs_aggregates_child_runs(excel_repos) -> None:
+    t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 2, 1, 12, 0, tzinfo=timezone.utc)
+    _seed_channel(excel_repos, "ch_j", "J", 100_000, observed_at=t1, run_id="jr_a1")
+    # Job A: two child runs; video j_shared observed in both.
+    _seed_job_run(excel_repos, "jr_a1", "job_a", t1)
+    _seed_job_run(excel_repos, "jr_a2", "job_a", t1)
+    _seed_video(excel_repos, "j_only_a", "ch_j", "OnlyA", date(2026, 1, 1),
+                views=100, run_id="jr_a1", observed_at=t1)
+    _seed_video(excel_repos, "j_shared", "ch_j", "Shared", date(2026, 1, 1),
+                views=50, run_id="jr_a1", observed_at=t1)
+    excel_repos.videos.save_video_observation(
+        VideoObservation(
+            observation_id="obs_jshared_a2",
+            collection_run_id="jr_a2",
+            video_id="j_shared",
+            observed_at=t1,
+            view_count=60,
+        )
+    )
+    # Job B: one child run with a new video only.
+    _seed_job_run(excel_repos, "jr_b1", "job_b", t2)
+    _seed_video(excel_repos, "j_only_b", "ch_j", "OnlyB", date(2026, 2, 1),
+                views=200, run_id="jr_b1", observed_at=t2)
+
+    service = ComparisonService(excel_repos, None)
+    result = service.compare_jobs(["job_a", "job_b"], ["views"])
+
+    assert [s.job_id for s in result.snapshots] == ["job_a", "job_b"]
+    a, b = result.snapshots
+    # Job A pooled observations: views 100, 50, 60 -> mean ~70; distinct videos = 2.
+    assert a.run_count == 2 and b.run_count == 1
+    assert a.entity_counts["videos"] == 2
+    assert b.entity_counts["videos"] == 1
+    assert a.metrics["views"] == pytest.approx(70.0)
+    assert b.metrics["views"] == pytest.approx(200.0)
+    assert result.transitions[0].new_entities == ["j_only_b"]
+    assert result.transitions[0].disappeared_entities == ["j_only_a", "j_shared"]
+
+
+def test_compare_jobs_requires_two_distinct_jobs_with_runs(excel_repos) -> None:
+    t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    service = ComparisonService(excel_repos, None)
+    with pytest.raises(ValueError):
+        service.compare_jobs(["only_one"], ["views"])
+    _seed_job_run(excel_repos, "jr_x", "job_x", t1)
+    with pytest.raises(ValueError):
+        service.compare_jobs(["job_x", "job_missing"], ["views"])
+
+
+def test_comparison_jobs_endpoint(tmp_path) -> None:
+    t1 = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    repo_settings = RepositorySettings(data_dir=str(tmp_path), dataset_name="jobs_cmp_api")
+    repos = build_excel_repositories(repo_settings)
+    _seed_channel(repos, "ch_ej", "EJ", 100_000, observed_at=t1, run_id="jr_p1")
+    _seed_job_run(repos, "jr_p1", "job_p", t1)
+    _seed_video(repos, "p1", "ch_ej", "P1", date(2026, 1, 1), views=100,
+                run_id="jr_p1", observed_at=t1)
+    _seed_job_run(repos, "jr_q1", "job_q", t1)
+    _seed_video(repos, "q1", "ch_ej", "Q1", date(2026, 1, 2), views=300,
+                run_id="jr_q1", observed_at=t1)
+    repos.store.close()
+
+    settings = SocialScienceSettings(
+        repository=repo_settings, api=ApiSettings(prefix=PREFIX)
+    )
+    client = TestClient(create_app(settings))
+    resp = client.post(
+        f"{PREFIX}/comparison/jobs",
+        json={"job_ids": ["job_p", "job_q"], "metrics": ["views"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [s["job_id"] for s in data["snapshots"]] == ["job_p", "job_q"]
+    by_job = {s["job_id"]: s for s in data["snapshots"]}
+    assert by_job["job_p"]["metrics"]["views"] == 100.0
+    assert by_job["job_q"]["metrics"]["views"] == 300.0
+    assert len(data["transitions"]) == 1
+
+    bad = client.post(f"{PREFIX}/comparison/jobs", json={"job_ids": ["job_p"]})
+    assert bad.status_code == 400
+# ----------------------------------------------------------------------
 # Validation
 # ----------------------------------------------------------------------
 def test_compare_videos_empty_ids_raise_value_error(excel_repos, fixed_now) -> None:

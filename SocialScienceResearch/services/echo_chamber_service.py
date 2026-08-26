@@ -26,6 +26,7 @@ import networkx as nx
 from SocialScienceResearch.domain.echo_models import EchoDetection
 from SocialScienceResearch.services.echo_scoring import compute_score
 from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
+from SocialScienceResearch.services import structural_metrics as sm
 from SocialScienceResearch.services.network_analytics_service import (
     NetworkAnalyticsService,
 )
@@ -956,6 +957,269 @@ class EchoChamberService(LayerScrapeService):
             "seed": self._seed_payload(detection),
             "computed_at": utcnow().isoformat(),
         }
+
+    # ------------------------------------------------------------------
+    # Structural lenses (spec §5-§22) - computed from STORED edges only
+    # ------------------------------------------------------------------
+    #: Verbatim research disclaimers (spec §38) served with every structural
+    #: payload so API consumers see them next to the numbers.
+    DISCLAIMERS = [
+        "The recommendation graph represents observed recommendation "
+        "relationships between videos. These relationships do not directly "
+        "represent viewer beliefs, social relationships, ideological "
+        "agreement, or causation.",
+        "Standard network metrics describe structural properties of the "
+        "observed recommendation graph. They should not be interpreted "
+        "individually as proof of an Echo Chamber.",
+        "The Custom Lens Score is a researcher-defined index combining "
+        "selected structural signals. Its weights are methodological choices "
+        "made for this project and are not adopted from a universally "
+        "validated Echo Chamber index.",
+        "A strong structural signal does not by itself establish content "
+        "homophily, shared beliefs, or psychological effects on viewers.",
+    ]
+
+    def _family_graph(self, family_run_ids: list[str]) -> nx.DiGraph:
+        """Directed graph over unique stored crawl pairs (dedup policy §5.2)."""
+        rows = self._analytics.edges(run_ids=family_run_ids) if family_run_ids else []
+        graph = sm.build_graph(
+            (row.source_video_id, row.recommended_video_id) for row in rows
+        )
+        return graph
+
+    def _family_edge_rows(self, family_run_ids: list[str]):
+        return self._analytics.edges(run_ids=family_run_ids) if family_run_ids else []
+
+    def _channel_pairs(self, rows) -> list[tuple[str, str]]:
+        """Channel->Channel projection rule (§18): video edge A(vX)->B(vY)
+        becomes (channel(X), channel(Y)); edges whose either endpoint's
+        channel is unresolvable are DROPPED and counted - never invented."""
+        channel_map = self._video_channel_map()
+        pairs: list[tuple[str, str]] = []
+        self._unattributed_edges = 0
+        for row in rows:
+            source = channel_map.get(row.source_video_id)
+            target = channel_map.get(row.recommended_video_id) or getattr(
+                row, "channel_id", None
+            )
+            if not source or not target:
+                self._unattributed_edges += 1
+                continue
+            pairs.append((source, target))
+        return pairs
+
+    def structure(self, detection_id: str) -> dict[str, Any]:
+        """Full structural analysis (spec §37 sections) from stored edges.
+
+        VIDEO LENS: standard stats / community structure / reinforcement
+        (+ null model + persistence) / centrality. CHANNEL LENS: channel
+        network + concentration (HHI). Every metric carries the §36
+        metadata envelope; unavailable data never becomes a silent 0.
+        """
+        detection = self.get_detection(detection_id)
+        if detection is None:
+            raise KeyError(f"Echo detection {detection_id} not found")
+        family = self._family_layers(detection.seed_run_id)
+        family_run_ids = [rid for layer in family for rid in (layer.run_ids or [])]
+        self._lens_channel_map = self._video_channel_map()
+        try:
+            rows = self._family_edge_rows(family_run_ids)
+            graph = sm.build_graph(
+                (r.source_video_id, r.recommended_video_id) for r in rows
+            )
+
+            # Per-layer unique directed pairs for community persistence (§15).
+            per_layer: dict[int, list[tuple[str, str]]] = {}
+            for row in rows:
+                per_layer.setdefault(row.layer_index or 0, []).append(
+                    (row.source_video_id, row.recommended_video_id)
+                )
+            layer_edges = sorted(per_layer.items())
+
+            # Channel lens projection (§18).
+            channel_pairs = self._channel_pairs(rows)
+            channel_graph = sm.build_graph(channel_pairs)
+            weighted_in: dict[str, int] = {}
+            total_attributed = len(channel_pairs)
+            for src, tgt in channel_pairs:
+                weighted_in[tgt] = weighted_in.get(tgt, 0) + 1
+            unattributed = getattr(self, "_unattributed_edges", 0)
+
+            wcr_env = sm.within_community_rate(graph)
+            null_payload: dict[str, Any]
+            if wcr_env["value"] is None:
+                null_payload = {
+                    "metric": "within_community_recommendation_rate_null_model",
+                    "status": sm.STATUS_UNAVAILABLE,
+                    "detail": {"reason": "observed WCR unavailable"},
+                }
+            else:
+                null_payload = sm.null_model_wcr(graph)
+
+            payload = {
+                "detection_id": detection.detection_id,
+                "seed_run_id": detection.seed_run_id,
+                "family_run_count": len(family),
+                "computed_at": utcnow().isoformat(),
+                "disclaimers": list(self.DISCLAIMERS),
+                "video_lens": {
+                    "lens": "video",
+                    "network_statistics": sm.standard_statistics(graph),
+                    "community_structure": sm.community_structure(
+                        graph, seed_video_id=detection.seed_video_id
+                    ),
+                    "reinforcement": {
+                        "within_community_recommendation_rate": wcr_env,
+                        "null_model": null_payload,
+                        "community_persistence": sm.community_persistence(
+                            layer_edges, seed_video_id=detection.seed_video_id
+                        ),
+                    },
+                    "centrality": sm.centrality_metrics(graph),
+                },
+                "channel_lens": {
+                    "lens": "channel",
+                    "projection_rule": (
+                        "Video edge A(vX)->B(vY) projects to channel(X)->"
+                        "channel(Y); repeated video edges between the same "
+                        "channels collapse to ONE unique channel edge here "
+                        "(weighted activity counted separately below); edges "
+                        "with an unresolvable endpoint channel are dropped."
+                    ),
+                    "network": sm.standard_statistics(channel_graph),
+                    "unattributed_edges": sm.envelope(
+                        "channel_unattributed_edges",
+                        unattributed,
+                        category="standard_statistic",
+                        lens="channel",
+                        definition=(
+                            "video edges dropped from the channel projection "
+                            "because an endpoint's channel was unresolvable"
+                        ),
+                    ),
+                    "concentration": sm.channel_concentration(weighted_in),
+                    "weighted_activity_total": sm.envelope(
+                        "channel_weighted_activity_total",
+                        total_attributed,
+                        category="standard_statistic",
+                        lens="channel",
+                    ),
+                },
+            }
+        finally:
+            self._lens_channel_map = None
+        return payload
+
+    def audience(self, detection_id: str) -> dict[str, Any]:
+        """Audience/commenter lens (§22): Jaccard overlap within/between the
+        detected communities of the crawl-family graph.
+
+        Available ONLY where commenter identities exist; missing comment data
+        yields ``status="unavailable"`` - never a fabricated zero.
+        """
+        detection = self.get_detection(detection_id)
+        if detection is None:
+            raise KeyError(f"Echo detection {detection_id} not found")
+        family = self._family_layers(detection.seed_run_id)
+        family_run_ids = [rid for layer in family for rid in (layer.run_ids or [])]
+
+        def _env(metric, value, **kw):
+            return sm.envelope(metric, value, lens="audience", **kw)
+
+        base = {
+            "detection_id": detection.detection_id,
+            "computed_at": utcnow().isoformat(),
+            "disclaimers": list(self.DISCLAIMERS),
+            "commenter_overlap": {
+                "jaccard_mean": _env("jaccard_mean", None, category="audience"),
+                "within_community_jaccard_mean": _env(
+                    "within_community_jaccard_mean", None, category="audience"
+                ),
+                "between_community_jaccard_mean": _env(
+                    "between_community_jaccard_mean", None, category="audience"
+                ),
+                "videos_with_commenters": _env(
+                    "videos_with_commenters", 0, category="audience"
+                ),
+                "status": sm.STATUS_UNAVAILABLE,
+                "reason": "not evaluated yet",
+            },
+        }
+        graph = self._family_graph(family_run_ids)
+        communities = sm.detect_communities(graph)
+        assignment: dict[str, int] = {}
+        for idx, comm in enumerate(communities):
+            for node in comm:
+                assignment[node] = idx
+
+        commenter_sets: dict[str, set[str]] = {}
+        for node in graph.nodes:
+            members = self._commenters(node)
+            if members:
+                commenter_sets[node] = members
+        block = base["commenter_overlap"]
+        block["videos_with_commenters"] = _env(
+            "videos_with_commenters", len(commenter_sets), category="audience"
+        )
+        if not commenter_sets:
+            block["reason"] = (
+                "no collected comments with resolvable author identities on "
+                "any crawled video"
+            )
+            return base
+
+        within: list[float] = []
+        between: list[float] = []
+        pair_count = 0
+        videos = sorted(commenter_sets)
+        for i, a in enumerate(videos):
+            for b in videos[i + 1 :]:
+                union = commenter_sets[a] | commenter_sets[b]
+                jaccard = (
+                    round(len(commenter_sets[a] & commenter_sets[b]) / len(union), 6)
+                    if union
+                    else None
+                )
+                if jaccard is None:
+                    continue
+                pair_count += 1
+                if assignment.get(a) is not None and assignment.get(a) == assignment.get(b):
+                    within.append(jaccard)
+                else:
+                    between.append(jaccard)
+
+        all_values = within + between
+        block["pair_count"] = pair_count
+        block["within_pair_count"] = len(within)
+        block["between_pair_count"] = len(between)
+        block["jaccard_mean"] = _env(
+            "jaccard_mean",
+            round(sum(all_values) / len(all_values), 6) if all_values else None,
+            category="audience",
+            numerator=round(sum(all_values), 6) if all_values else None,
+            denominator=len(all_values) or None,
+        )
+        block["within_community_jaccard_mean"] = _env(
+            "within_community_jaccard_mean",
+            round(sum(within) / len(within), 6) if within else None,
+            category="audience",
+            numerator=round(sum(within), 6) if within else None,
+            denominator=len(within) or None,
+        )
+        block["between_community_jaccard_mean"] = _env(
+            "between_community_jaccard_mean",
+            round(sum(between) / len(between), 6) if between else None,
+            category="audience",
+            numerator=round(sum(between), 6) if between else None,
+            denominator=len(between) or None,
+        )
+        if not all_values:
+            block["status"] = sm.STATUS_UNAVAILABLE
+            block["reason"] = "no comparable video pairs with commenters"
+        else:
+            block["status"] = sm.STATUS_AVAILABLE
+            block.pop("reason", None)
+        return base
 
     # ------------------------------------------------------------------
     # Score

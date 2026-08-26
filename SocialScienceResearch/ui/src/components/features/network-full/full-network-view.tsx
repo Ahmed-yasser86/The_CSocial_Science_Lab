@@ -20,7 +20,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useRuns } from "@/services/queries";
+import { useRuns, useJobs } from "@/services/queries";
 import {
   NetworkMetricTiles,
   DegreeDistributionPanel,
@@ -157,6 +157,7 @@ function mapChannelGraphPayload(payload: ChannelGraphPayload): {
 
 export function FullNetworkView() {
   const runsQuery = useRuns();
+  const jobsQuery = useJobs();
   // Resumable Lab session (US-73-78 foundation): restore the previous view
   // from localStorage so a researcher can pick up where they left off. State is
   // initialised to defaults on the server AND the client's first paint to avoid
@@ -178,6 +179,7 @@ export function FullNetworkView() {
   const [graphScraped, setGraphScraped] = useState<"scraped" | "unscraped" | null>(null);
   const [graphIncludeSubRuns, setGraphIncludeSubRuns] = useState(false);
   const [graphVideoIds, setGraphVideoIds] = useState<string[]>([]);
+  const [graphJobIds, setGraphJobIds] = useState<string[]>([]);
   const [addToProjectOpen, setAddToProjectOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [scrapeAllOpen, setScrapeAllOpen] = useState(false);
@@ -292,12 +294,14 @@ export function FullNetworkView() {
     graphConnected ?? undefined,
     graphScraped ?? undefined,
     graphIncludeSubRuns || undefined,
+    graphJobIds,
   );
 
   const hasActiveGraphFilters =
     graphRunId !== null ||
     graphChannelIds.length > 0 ||
     graphVideoIds.length > 0 ||
+    graphJobIds.length > 0 ||
     graphLayerIndex !== null ||
     graphConnected !== null ||
     graphScraped !== null ||
@@ -325,6 +329,7 @@ export function FullNetworkView() {
     setGraphRunId(null);
     setGraphChannelIds([]);
     setGraphVideoIds([]);
+    setGraphJobIds([]);
     setGraphLayerIndex(null);
     setGraphConnected(null);
     setGraphScraped(null);
@@ -732,6 +737,14 @@ export function FullNetworkView() {
                 onChange={setGraphChannelIds}
               />
               <VideoMultiSelect selected={graphVideoIds} onChange={setGraphVideoIds} />
+              <JobMultiSelect
+                jobs={(jobsQuery.data ?? []).map((j) => ({
+                  job_id: j.job_id,
+                  kind: j.kind,
+                }))}
+                selected={graphJobIds}
+                onChange={setGraphJobIds}
+              />
 
               <div className="flex flex-wrap items-center gap-2">
                 <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1248,6 +1261,100 @@ function NodeListPanel({
 }
 
 type ChannelFacetLike = { channel_id: string; channel_name?: string | null };
+
+type JobFacetLike = { job_id: string; kind?: string | null };
+
+function JobMultiSelect({
+  jobs,
+  selected,
+  onChange,
+}: {
+  jobs: JobFacetLike[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const list = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return jobs;
+    return jobs.filter(
+      (j) => j.job_id.toLowerCase().includes(q) || (j.kind ?? "").toLowerCase().includes(q),
+    );
+  }, [jobs, search]);
+
+  const toggle = (id: string) =>
+    onChange(
+      selected.includes(id)
+        ? selected.filter((x) => x !== id)
+        : [...selected, id],
+    );
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button variant="outline" size="sm" className="gap-1" />
+        }
+      >
+        Jobs{selected.length ? ` (${selected.length})` : ""}
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-2" align="start">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search jobs…"
+          className="mb-2"
+          aria-label="Search jobs"
+        />
+        <div className="max-h-64 overflow-y-auto">
+          {list.length === 0 ? (
+            <div className="p-2 text-xs text-muted-foreground">No jobs</div>
+          ) : (
+            list.map((j) => (
+              <label
+                key={j.job_id}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted"
+              >
+                <Checkbox
+                  checked={selected.includes(j.job_id)}
+                  onCheckedChange={() => toggle(j.job_id)}
+                />
+                <span className="truncate font-mono text-xs">
+                  {j.job_id}
+                </span>
+                <span className="ml-auto text-[10px] uppercase text-muted-foreground">
+                  {j.kind ?? ""}
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+        {selected.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1 border-t pt-2">
+            {selected.map((id) => (
+              <Badge
+                key={id}
+                variant="secondary"
+                className="gap-1 font-mono"
+              >
+                {id.length > 16 ? `${id.slice(0, 16)}…` : id}
+                <button
+                  type="button"
+                  aria-label={`Remove ${id}`}
+                  className="ml-0.5 rounded hover:bg-background/60"
+                  onClick={() => toggle(id)}
+                >
+                  ×
+                </button>
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 /** Max rows rendered in the (unvirtualized) node list table. */
 const NODE_LIST_RENDER_CAP = 200;

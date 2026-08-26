@@ -258,3 +258,63 @@ def test_detect_requires_a_seed(tmp_path) -> None:
         json={"seed_run_id": "run_missing", "max_layers": 2},
     )
     assert resp.status_code == 404
+
+
+def test_lens_recomputes_both_projections_from_stored_edges(tmp_path) -> None:
+    """GET /echo-chamber/{id}/lens recomputes the video AND channel lenses
+    on demand from stored crawl edges only - including for a detection whose
+    params.projection is 'video' (old detections must show both lenses)."""
+    run_id = _seed_run(tmp_path)
+    client = TestClient(create_app(_settings(tmp_path), provider=EchoApiProvider()))
+
+    resp = client.post(
+        f"{PREFIX}/echo-chamber/detect",
+        json={"seed_run_id": run_id, "max_layers": 3, "projection": "video"},
+    )
+    assert resp.status_code == 200
+    detection_id = resp.json()["detection_id"]
+    detection = _wait_terminal(client, detection_id)
+    assert detection["params"]["projection"] == "video"
+    assert len(detection["layers"]) >= 2
+
+    video_lens = client.get(
+        f"{PREFIX}/echo-chamber/{detection_id}/lens",
+        params={"projection": "video"},
+    )
+    assert video_lens.status_code == 200
+    vbody = video_lens.json()
+    assert vbody["detection_id"] == detection_id
+    assert vbody["projection"] == "video"
+    assert set(vbody["signals"]) == {"s1", "s2", "s3", "s4", "s5"}
+    assert vbody["edge_count"] > 0
+    assert set(vbody["score"]) >= {"value", "band", "verdict"}
+    assert isinstance(vbody["top_videos"], list) and vbody["top_videos"]
+    assert {"video_id", "in_degree"} <= set(vbody["top_videos"][0])
+    # Seed card resolved from persisted video rows.
+    assert vbody["seed"]["video_id"] == SEED_A
+
+    channel_lens = client.get(
+        f"{PREFIX}/echo-chamber/{detection_id}/lens",
+        params={"projection": "channel"},
+    )
+    assert channel_lens.status_code == 200
+    cbody = channel_lens.json()
+    assert cbody["projection"] == "channel"
+    assert set(cbody["signals"]) == {"s1", "s2", "s3", "s4", "s5"}
+    assert cbody["signals"]["s2"]["status"] in ("available", "unavailable")
+    if cbody["signals"]["s2"]["status"] == "available":
+        detail = cbody["signals"]["s2"]["detail"]
+        assert detail.get("projection") == "channel"
+    # S5 unavailable without collected comments; top channels by weighted
+    # in-degree are present from the same stored edges.
+    assert cbody["signals"]["s5"]["value"] is None
+    assert isinstance(cbody["top_channels"], list)
+
+    # Errors: unknown detection -> 404, bad projection -> 400.
+    missing = client.get(f"{PREFIX}/echo-chamber/ech_missing/lens")
+    assert missing.status_code == 404
+    bad = client.get(
+        f"{PREFIX}/echo-chamber/{detection_id}/lens",
+        params={"projection": "bogus"},
+    )
+    assert bad.status_code == 400
