@@ -508,10 +508,10 @@ class EchoChamberService(LayerScrapeService):
         total = len(edges)
         if not total:
             return self._unavailable("no observed edges in this crawl yet")
+        channel_map = self._video_channel_map()
         reinforced = 0
         for e in edges:
-            target = self._repos.videos.get_video(e.recommended_video_id)
-            if target is not None and target.channel_id == seed_channel:
+            if channel_map.get(e.recommended_video_id) == seed_channel:
                 reinforced += 1
         value = round(reinforced / total, 6)
         return self._signal(
@@ -705,6 +705,243 @@ class EchoChamberService(LayerScrapeService):
             if author:
                 commenters.add(author)
         return commenters
+
+    # ------------------------------------------------------------------
+    # On-demand lenses (video | channel) over STORED crawl edges only
+    # ------------------------------------------------------------------
+    def _video_channel_map(self) -> dict[str, str]:
+        """One-shot {video_id -> channel_id} map for lens computations.
+
+        Replaces the per-edge ``get_video`` N+1 that crashed the connection
+        pool on large crawls (2k+ edges) - a single query serves every
+        channel resolution within one lens computation.
+        """
+        cached = getattr(self, "_lens_channel_map", None)
+        if cached is not None:
+            return cached
+        meta = self._repos.videos.list_video_metadata()
+        mapping = {
+            vid: (entry or {}).get("channel_id")
+            for vid, entry in meta.items()
+            if entry
+        }
+        self._lens_channel_map = mapping
+        return mapping
+
+    def _channel_of(self, video_id: str, fallback: str | None = None) -> str | None:
+        channels = self._video_channel_map()
+        return channels.get(video_id) or fallback
+
+    def _signal_s1_channel(self, family) -> dict[str, Any]:
+        """Channel-projection S1: share of new channel-pairs whose TARGET
+        channel an earlier layer already knew (same honesty rules as S1)."""
+
+        def _layer_pairs(layer) -> list[tuple[str, str]]:
+            pairs: list[tuple[str, str]] = []
+            for e in self._repos.recommendations.list_recommendation_edges(
+                run_ids=list(layer.run_ids or [])
+            ):
+                source_channel = self._channel_of(e.source_video_id)
+                target_channel = self._channel_of(
+                    e.recommended_video_id, getattr(e, "channel_id", None)
+                )
+                if source_channel and target_channel:
+                    pairs.append((source_channel, target_channel))
+            return pairs
+
+        def _earlier_set(index: int) -> set[str]:
+            earlier: set[str] = set()
+            for previous in family:
+                if previous.layer_index >= index:
+                    continue
+                for video_id in list(previous.frontier_video_ids or []) + list(
+                    previous.discovered_video_ids or []
+                ):
+                    channel = self._channel_of(video_id)
+                    if channel:
+                        earlier.add(channel)
+                for _src, target in _layer_pairs(previous):
+                    earlier.add(target)
+            return earlier
+
+        current = family[-1] if family else None
+        cum_value = None
+        cum_detail = {"collapsed": 0, "total": 0}
+        collapsed_total = 0
+        pair_total = 0
+        for layer in family:
+            if layer.layer_index < 2:
+                continue
+            earlier = _earlier_set(layer.layer_index)
+            pairs = _layer_pairs(layer)
+            collapsed_total += sum(1 for _s, t in pairs if t in earlier)
+            pair_total += len(pairs)
+        if pair_total:
+            cum_value = round(collapsed_total / pair_total, 6)
+            cum_detail = {"collapsed": collapsed_total, "total": pair_total}
+        if cum_value is None:
+            return self._unavailable(
+                "no collapsible channel-pair layers yet (needs >= 2 crawled layers)"
+            )
+        return self._signal(
+            cum_value,
+            {
+                "projection": "channel",
+                "cumulative": cum_value,
+                "cumulative_detail": cum_detail,
+                "layer_index": current.layer_index if current else None,
+            },
+        )
+
+    def _signal_s4_channel(self, family) -> dict[str, Any]:
+        """Channel-projection S4: distinct channel-pairs observed in >= 2
+        different layers / distinct channel-pairs."""
+        if len(family) < 2:
+            return self._unavailable("needs at least 2 crawled layers")
+        pair_layers: dict[tuple[str, str], set[int]] = {}
+        for l in family:
+            for edge in self._repos.recommendations.list_recommendation_edges(
+                run_ids=list(l.run_ids or [])
+            ):
+                source_channel = self._channel_of(edge.source_video_id)
+                target_channel = self._channel_of(
+                    edge.recommended_video_id, getattr(edge, "channel_id", None)
+                )
+                if source_channel and target_channel:
+                    pair_layers.setdefault(
+                        (source_channel, target_channel), set()
+                    ).add(l.layer_index)
+        if not pair_layers:
+            return self._unavailable("no channel-attributed edges across layers")
+        repeated = sum(1 for layers in pair_layers.values() if len(layers) >= 2)
+        value = round(repeated / len(pair_layers), 6)
+        return self._signal(
+            value,
+            {
+                "projection": "channel",
+                "pair_repeat": value,
+                "distinct_pairs": len(pair_layers),
+                "repeated_pairs": repeated,
+            },
+        )
+
+    def _top_videos(self, family_run_ids: list[str]) -> list[dict[str, Any]]:
+        """Top-10 videos by in-degree within the stored crawl edges."""
+        payload = self._analytics.graph(run_ids=family_run_ids or None)
+        ranked = sorted(
+            payload.nodes,
+            key=lambda n: (-(n.in_degree or 0), n.video_id),
+        )[:10]
+        return [
+            {
+                "video_id": n.video_id,
+                "title": n.title,
+                "channel_id": n.channel_id,
+                "channel_name": n.channel_name,
+                "in_degree": n.in_degree,
+                "out_degree": n.out_degree,
+            }
+            for n in ranked
+        ]
+
+    def _top_channels(self, family_run_ids: list[str]) -> list[dict[str, Any]]:
+        """Top-10 channels by weighted in-degree within the stored crawl."""
+        projection = self._analytics.channel_graph(run_ids=family_run_ids or None)
+        weighted_in: dict[str, int] = {}
+        total_edges = 0
+        for edge in projection.edges:
+            weighted_in[edge.target] = (
+                weighted_in.get(edge.target, 0) + edge.video_edge_count
+            )
+            total_edges += edge.video_edge_count
+        names = {n.channel_id: n.channel_name for n in projection.nodes}
+        ranked = sorted(weighted_in.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+        return [
+            {
+                "channel_id": channel_id,
+                "channel_name": names.get(channel_id),
+                "weighted_in_degree": count,
+                "share": round(count / total_edges, 6) if total_edges else None,
+            }
+            for channel_id, count in ranked
+        ]
+
+    def _seed_payload(self, detection: EchoDetection) -> dict[str, Any] | None:
+        """The 'analysis started from' seed card data (observed rows only)."""
+        video_id = detection.seed_video_id or (detection.params or {}).get("video_id")
+        if not video_id:
+            return None
+        video = self._repos.videos.get_video(str(video_id))
+        if video is None:
+            return {"video_id": str(video_id)}
+        channel_name = None
+        if video.channel_id:
+            channel_name = self._repos.channels.list_channel_titles().get(
+                video.channel_id
+            )
+        return {
+            "video_id": video.video_id,
+            "title": video.title,
+            "thumbnail_url": getattr(video, "thumbnail_url", None),
+            "channel_id": video.channel_id,
+            "channel_name": channel_name,
+            "url": f"https://www.youtube.com/watch?v={video.video_id}",
+        }
+
+    def lens(self, detection_id: str, projection: str = "video") -> dict[str, Any]:
+        """Recompute one lens on demand from the STORED crawl edges only.
+
+        ``projection="video"`` is the signal math of the stored timeline;
+        ``projection="channel"`` aggregates the same edges at channel level
+        (S2 = seed-channel reinforcement share, S3 = top-channel share,
+        S1/S4 on channel pairs, S5 unavailable unless comments exist).
+        Nothing here re-crawls or estimates - every number comes from
+        persisted observations of this detection's crawl-family runs.
+        """
+        detection = self.get_detection(detection_id)
+        if detection is None:
+            raise KeyError(f"Echo detection {detection_id} not found")
+        if projection not in ("video", "channel"):
+            raise ValueError("projection must be 'video' or 'channel'")
+        family = self._family_layers(detection.seed_run_id)
+        family_run_ids = [rid for layer in family for rid in (layer.run_ids or [])]
+        # One shared video->channel map for the whole lens computation: kills
+        # the per-edge N+1 that crashed the pool on large crawls.
+        self._lens_channel_map = self._video_channel_map()
+        if projection == "video":
+            signals = {
+                "s1": self._signal_s1(family),
+                "s2": self._signal_s2(detection, family_run_ids),
+                "s3": self._signal_s3(detection, family_run_ids),
+                "s4": self._signal_s4(family),
+                "s5": self._signal_s5(detection, family_run_ids),
+            }
+        else:
+            signals = {
+                "s1": self._signal_s1_channel(family),
+                "s2": self._signal_s2_channel(detection, family_run_ids),
+                "s3": self._signal_s3(detection, family_run_ids),
+                "s4": self._signal_s4_channel(family),
+            "s5": self._signal_s5(detection, family_run_ids),
+        }
+        self._lens_channel_map = None
+        score = compute_score(
+            {key: signals[key].get("value") for key in ("s1", "s2", "s3", "s4", "s5")},
+            computed_at=utcnow(),
+        )
+        return {
+            "detection_id": detection.detection_id,
+            "projection": projection,
+            "seed_run_id": detection.seed_run_id,
+            "family_run_count": len(family),
+            "edge_count": self._count_edges(family_run_ids),
+            "signals": signals,
+            "score": score,
+            "top_videos": self._top_videos(family_run_ids),
+            "top_channels": self._top_channels(family_run_ids),
+            "seed": self._seed_payload(detection),
+            "computed_at": utcnow().isoformat(),
+        }
 
     # ------------------------------------------------------------------
     # Score
