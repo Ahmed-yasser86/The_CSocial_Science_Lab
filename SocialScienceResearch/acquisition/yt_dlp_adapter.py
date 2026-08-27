@@ -30,6 +30,13 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 from SocialScienceResearch.config.settings import CollectionSettings, ScraperSettings
+from SocialScienceResearch.concurrency.budget_controller import (
+    OPER_EXTRACT_CHANNEL,
+    OPER_EXTRACT_RECOMMENDATIONS,
+    OPER_EXTRACT_TRANSCRIPT,
+    OPER_EXTRACT_VIDEO,
+    BudgetController,
+)
 from SocialScienceResearch.domain.enums import TranscriptStatus
 from SocialScienceResearch.utils.logger import get_logger
 
@@ -44,7 +51,7 @@ from .errors import (
     build_error,
     classify_exception,
 )
-from .retry import retry_policy
+from .retry import retry_policy_budgeted
 from .up_next import scan_page_dumps
 
 logger = get_logger(__name__)
@@ -177,19 +184,20 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         self,
         settings: ScraperSettings | None = None,
         collection: CollectionSettings | None = None,
+        budget_controller: "BudgetController | None" = None,
     ) -> None:
         self._settings = settings or ScraperSettings()
         self._collection = collection or CollectionSettings()
-        self._retry = retry_policy(
-            retries=self._settings.retries,
-            backoff=self._settings.retry_backoff,
+        self._budget = budget_controller or BudgetController(
+            min_interval=self._settings.request_delay_seconds,
+            max_ytdl_contexts=self._settings.budget_max_ytdl_contexts,
         )
 
     # ------------------------------------------------------------------
-    # Public interface (wrapped with the retry policy)
+    # Public interface (wrapped with the budgeted retry policy)
     # ------------------------------------------------------------------
     def extract_channel(self, channel_url: str) -> ChannelExtract:
-        return self._retry(self._extract_channel)(channel_url)
+        return self._budgeted(OPER_EXTRACT_CHANNEL)(self._extract_channel)(channel_url)
 
     def extract_video(
         self, video_url: str, *, include_comments: bool | None = None
@@ -201,17 +209,39 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         cost inside yt-dlp (up to ``max_comments_per_video`` network pages).
         ``None`` keeps the configured default behaviour.
         """
-        return self._retry(self._extract_video)(
+        return self._budgeted(OPER_EXTRACT_VIDEO)(self._extract_video)(
             video_url, include_comments=include_comments
         )
 
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
-        return self._retry(self._extract_recommendations)(video_url)
+        return self._budgeted(OPER_EXTRACT_RECOMMENDATIONS)(
+            self._extract_recommendations
+        )(video_url)
 
     def extract_transcript(
         self, video_url: str, lang: str | None = None
     ) -> TranscriptExtract:
-        return self._retry(self._extract_transcript)(video_url, lang)
+        return self._budgeted(OPER_EXTRACT_TRANSCRIPT)(self._extract_transcript)(
+            video_url, lang
+        )
+
+    def _budgeted(self, operation: str):
+        """Build a retry decorator that paces *all* attempts through the budget.
+
+        ``run_id`` is read from the process run-context (set by the caller via
+        :func:`run_context`) so retries are attributed to the correct run.
+        """
+        from SocialScienceResearch.concurrency.budget_controller import (
+            get_current_run_id,
+        )
+
+        return retry_policy_budgeted(
+            self._budget,
+            operation,
+            get_current_run_id(),
+            retries=self._settings.retries,
+            backoff=self._settings.retry_backoff,
+        )
 
     # ------------------------------------------------------------------
     # Internal implementations
@@ -702,16 +732,22 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
     # Shared extraction
     # ------------------------------------------------------------------
     def _extract(self, url: str, opts: dict[str, Any]) -> dict[str, Any]:
-        with YoutubeDL(opts) as ydl:
-            try:
-                info = ydl.extract_info(url, download=False)
-            except DownloadError as exc:
-                raise self._classify_download_error(exc) from exc
-            except Exception as exc:  # noqa: BLE001 - classify anything else
-                raise build_error(classify_exception(exc), str(exc)) from exc
-            if info is None:
-                raise InvalidURLError(f"Could not resolve URL: {url}")
-            return ydl.sanitize_info(info)
+        from SocialScienceResearch.concurrency.ytdlp_semaphore import (
+            get_ytdl_limiter,
+        )
+
+        # Cap simultaneously-active YoutubeDL contexts across the whole process.
+        with get_ytdl_limiter().acquire():
+            with YoutubeDL(opts) as ydl:
+                try:
+                    info = ydl.extract_info(url, download=False)
+                except DownloadError as exc:
+                    raise self._classify_download_error(exc) from exc
+                except Exception as exc:  # noqa: BLE001 - classify anything else
+                    raise build_error(classify_exception(exc), str(exc)) from exc
+                if info is None:
+                    raise InvalidURLError(f"Could not resolve URL: {url}")
+                return ydl.sanitize_info(info)
 
     @staticmethod
     def _classify_download_error(exc: DownloadError) -> AcquisitionError:

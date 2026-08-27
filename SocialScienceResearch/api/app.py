@@ -57,6 +57,7 @@ from SocialScienceResearch.services import (
 )
 from SocialScienceResearch.services.layer_scrape_service import LayerScrapeService
 from SocialScienceResearch.services.echo_chamber_service import EchoChamberService
+from SocialScienceResearch.api.routers.budget import router as budget_router
 from SocialScienceResearch.services.pagination import (
     CursorError,
     Paginated,
@@ -150,6 +151,7 @@ def build_services(
     provider=None,
     repository=None,
     jobs_manager: "JobManager | None" = None,
+    budget_controller=None,
 ) -> dict[str, Any]:
     """Build the full service container for one persistence binding.
 
@@ -187,20 +189,39 @@ def build_services(
     else:
         # Same live registry, new workspace's write-through store.
         jobs_manager.set_store(repos.jobs)
+    # One process-global budget controller shared by every scraping service and
+    # every job, so the aggregate YouTube request rate is coordinated (replaces
+    # the old per-service _RateLimiter instances). Phase 1: fixed rate. The
+    # SAME instance is injected into the acquisition provider (so retries route
+    # through it) and the homophily service.
+    from SocialScienceResearch.concurrency.budget_controller import BudgetController
+
+    if budget_controller is None:
+        budget_controller = BudgetController(
+            min_interval=settings.scraper.request_delay_seconds,
+            max_ytdl_contexts=settings.scraper.budget_max_ytdl_contexts,
+        )
     return {
         "repos": repos,
+        "budget_controller": budget_controller,
         # ``RecommendationService`` extends ``CollectionService``; using it for
         # the ``"collection"`` key wires the spec-driven recommendation target
         # (previously raised NotImplementedError from the base class).
-        "collection": RecommendationService(provider, repos, settings=settings),
-        "recommendations": RecommendationService(provider, repos, settings=settings),
+        "collection": RecommendationService(
+            provider, repos, settings=settings, budget_controller=budget_controller
+        ),
+        "recommendations": RecommendationService(
+            provider, repos, settings=settings, budget_controller=budget_controller
+        ),
         "analytics": AnalyticsService(repos),
         "query": QueryService(repos, settings),
         "sampling": SamplingService(repos, settings.sampling.default_seed),
         "network": RecommendationGraphService(repos),
         "quality": QualityService(repos),
         "jobs": jobs_manager,
-        "layer_scrape": LayerScrapeService(provider, repos, settings=settings),
+        "layer_scrape": LayerScrapeService(
+            provider, repos, settings=settings, budget_controller=budget_controller
+        ),
         "echo": EchoChamberService(
             provider, repos, settings=settings, jobs=jobs_manager
         ),
@@ -638,6 +659,7 @@ def create_app(
         retry_backoff=settings.scraper.retry_backoff,
         transcript_provider=settings.scraper.transcript_provider,
     )
+    budget_controller = None
     if provider is None:
         from SocialScienceResearch.acquisition import YtDlpAcquisitionProvider
         from SocialScienceResearch.acquisition.freetranscriptapi_provider import (
@@ -646,9 +668,21 @@ def create_app(
         from SocialScienceResearch.acquisition.routing_provider import (
             RoutingAcquisitionProvider,
         )
+        from SocialScienceResearch.concurrency.budget_controller import (
+            BudgetController,
+        )
 
+        # One controller for the whole process: shared by the acquisition
+        # provider (first attempt + every retry), the scraping services, and the
+        # homophily service, so nothing bypasses the bucket.
+        budget_controller = BudgetController(
+            min_interval=settings.scraper.request_delay_seconds,
+            max_ytdl_contexts=settings.scraper.budget_max_ytdl_contexts,
+        )
         _ytdlp = YtDlpAcquisitionProvider(
-            settings=settings.scraper, collection=settings.collection
+            settings=settings.scraper,
+            collection=settings.collection,
+            budget_controller=budget_controller,
         )
         _free = (
             FreeTranscriptApiProvider(
@@ -665,7 +699,11 @@ def create_app(
         )
     runtime = WorkspaceRuntime(settings, provider=provider)
     services = runtime.services
-    services.update(build_services(settings, provider=provider))
+    services.update(
+        build_services(
+            settings, provider=provider, budget_controller=budget_controller
+        )
+    )
     runtime.active_workspace_id = None  # synced to the persisted pointer below
 
     @asynccontextmanager
@@ -697,6 +735,7 @@ def create_app(
     app.state.services = services
     app.state.settings = settings
     app.state.workspace_runtime = runtime
+    app.state.budget_controller = services["budget_controller"]
 
     # Request-scoped workspace routing: every request is served by the
     # services bound to the ACTIVE workspace's database + data dir. Installed
@@ -808,6 +847,7 @@ def create_app(
     app.include_router(project_items.router, prefix=prefix)
     app.include_router(samples.router, prefix=prefix)
     app.include_router(scraper_config.router, prefix=prefix)
+    app.include_router(budget_router, prefix=prefix)
     app.include_router(search.router, prefix=prefix)
     app.include_router(session.router, prefix=prefix)
     app.include_router(workspaces.router, prefix=prefix)

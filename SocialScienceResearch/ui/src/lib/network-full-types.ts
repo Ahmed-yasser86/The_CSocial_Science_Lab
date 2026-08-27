@@ -47,6 +47,20 @@ export interface NetworkSlice {
   top_ranked: RankedVideo[];
 }
 
+export interface NodeCentrality {
+  degree: number;
+  closeness: number;
+  eigenvector: number;
+  betweenness: number;
+  community_id: number | null;
+}
+
+export interface NetworkCentralities {
+  nodes: Record<string, NodeCentrality>;
+  algorithm: string;
+  computed_at: string;
+}
+
 export interface TemporalGrowth {
   from_run_id: string;
   to_run_id: string;

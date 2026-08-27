@@ -70,6 +70,11 @@ from SocialScienceResearch.services.recommendation_graph_service import (
     RecommendationGraphService,
 )
 from SocialScienceResearch.services.statistics_service import StatisticsService
+from SocialScienceResearch.services.weight_spec import (
+    edge_weight_for_mode,
+    normalize_weights,
+    parse_weight_spec,
+)
 
 #: Default page size applied by list endpoints (mirrors ``api/app.py``).
 DEFAULT_PAGE_SIZE = 50
@@ -376,6 +381,7 @@ class GraphEdge(_Base):
     run_type: str | None = None
     run_name: str | None = None
     title: str | None = None
+    weight: float = 1.0  # weight_spec-derived edge weight (1.0 = structural default)
 
 
 class NetworkGraph(_Base):
@@ -393,6 +399,7 @@ class NetworkGraph(_Base):
     channels: list[ChannelFacet] = []
     node_count: int = 0
     edge_count: int = 0
+    weight_spec: dict | None = None  # echoed weight spec, when a non-default one was applied
 
 
 class NetworkScope(_Base):
@@ -864,6 +871,7 @@ class NetworkAnalyticsService:
         channel_ids: list[str] | None = None,
         connected: str | None = None,
         scraped: str | None = None,
+        weight_spec: str | None = None,
     ) -> NetworkGraph:
         """Enriched node/edge payload driving the interactive graph UI.
 
@@ -933,6 +941,21 @@ class NetworkAnalyticsService:
                     run_ids_by_node.setdefault(video_id, set()).add(edge_run_id)
                 if edge_run_type:
                     run_types_by_node.setdefault(video_id, set()).add(edge_run_type)
+
+        # Apply the optional weight spec (N1): each observation edge gets a raw
+        # weight from its mode, then the whole slice is normalized so weights are
+        # comparable. Default (no spec) leaves every edge at 1.0, preserving
+        # today's structural behaviour exactly.
+        ws = parse_weight_spec(weight_spec) if weight_spec else None
+        if ws is not None:
+            raw = [
+                edge_weight_for_mode(ws.weight_mode, getattr(e, "position", None))
+                for e in edges
+            ]
+            norm = normalize_weights(raw, ws.normalization)
+            for e, w in zip(edges, norm):
+                e.weight = w
+        weight_echo = ws.to_dict() if ws is not None else None
 
         # Node metadata: sources first (they may also be targets), then any
         # targets that are not already present. Metadata comes from the
@@ -1064,6 +1087,7 @@ class NetworkAnalyticsService:
             channels=channels,
             node_count=len(nodes),
             edge_count=len(edges),
+            weight_spec=weight_echo,
         )
 
     # ------------------------------------------------------------------
@@ -1077,6 +1101,8 @@ class NetworkAnalyticsService:
         layer_index: int | None = None,
         video_ids: list[str] | None = None,
         projection: str = "video",
+        weight_spec: str | None = None,
+        weighted: bool = False,
     ) -> dict[str, dict[str, float]]:
         """Per-node centrality vector for the visible graph (benchmarkable).
 
@@ -1086,6 +1112,11 @@ class NetworkAnalyticsService:
         directed slice; ``community_id`` is copied from the graph view so the
         output doubles as a labelled benchmark fixture (e.g. Zachary's karate
         club). Empty slices return ``{}``.
+
+        When ``weighted`` is true and a ``weight_spec`` is supplied, edge
+        ``weight`` attributes (from the same spec the graph renders) drive
+        eigenvector/betweenness and a weighted degree centrality - so the
+        weight change propagates consistently into the centrality battery.
         """
         if projection == "channel":
             payload = self.channel_graph(
@@ -1103,19 +1134,36 @@ class NetworkAnalyticsService:
                 channel_scope=channel_scope,
                 layer_index=layer_index,
                 video_ids=video_ids,
+                weight_spec=weight_spec,
             )
+        use_weight = bool(weighted and weight_spec)
         G = nx.DiGraph()
         for e in payload.edges:
-            G.add_edge(e.source, e.target)
+            w = getattr(e, "weight", None)
+            if use_weight and w is not None:
+                G.add_edge(e.source, e.target, weight=w)
+            else:
+                G.add_edge(e.source, e.target)
         if G.number_of_nodes() == 0:
             return {}
-        degree = nx.degree_centrality(G)
+        if use_weight:
+            total = sum(d for _, d in G.degree(weight="weight"))
+            degree = {
+                n: (G.degree(n, weight="weight") / total if total else 0.0)
+                for n in G.nodes
+            }
+        else:
+            degree = nx.degree_centrality(G)
         closeness = nx.closeness_centrality(G)
         try:
-            eigenvector = nx.eigenvector_centrality(G, max_iter=1000)
+            eigenvector = nx.eigenvector_centrality(
+                G, max_iter=1000, weight="weight" if use_weight else None
+            )
         except nx.PowerIterationFailedConvergence:
             eigenvector = {n: 0.0 for n in G.nodes}
-        betweenness = nx.betweenness_centrality(G)
+        betweenness = nx.betweenness_centrality(
+            G, weight="weight" if use_weight else None
+        )
         result: dict[str, dict[str, float]] = {}
         for node in payload.nodes:
             nid = node.channel_id if projection == "channel" else node.video_id
@@ -1154,6 +1202,7 @@ class NetworkAnalyticsService:
         connected: str | None = None,
         scraped: str | None = None,
         projection: str = "video",
+        weight_spec: str | None = None,
     ) -> tuple[str, str | bytes, str]:
         """Serialize the *visible* scoped network into a file-format payload.
 
@@ -1204,8 +1253,12 @@ class NetworkAnalyticsService:
             video_ids=video_ids,
             connected=connected,
             scraped=scraped,
+            weight_spec=weight_spec,
         )
-        return self._serialize_video_graph(payload, format)
+        weight_echo = (
+            parse_weight_spec(weight_spec).to_dict() if weight_spec else None
+        )
+        return self._serialize_video_graph(payload, format, weight_echo)
 
     # -- export serializers -------------------------------------------------
     def _aggregated_edges(self, edges):
@@ -1215,6 +1268,11 @@ class NetworkAnalyticsService:
         "positions", "title", "run_id"}``. Collapsing guarantees the exported
         edge set is exactly the visible edge set (no parallel edges from
         repeated observations) and provides the ``weight`` the formats need.
+
+        ``weight`` sums each edge's ``weight`` attribute, which ``graph()`` has
+        already resolved from the active weight spec (default 1.0 per
+        observation -> identical to the old observation count for the default
+        spec, so exports stay byte-for-byte stable).
         """
         agg: dict[tuple[str, str], dict[str, Any]] = {}
         for e in edges:
@@ -1229,7 +1287,12 @@ class NetworkAnalyticsService:
                     "run_id": getattr(e, "run_id", None),
                 }
                 agg[key] = rec
-            rec["weight"] += 1
+            rec["weight"] += getattr(e, "weight", 1.0)
+            # Whole-number weights (the default observation count) stay int so
+            # the default export is byte-for-byte identical to the pre-weight
+            # payloads; fractional weights (a real spec) stay float.
+            if float(rec["weight"]).is_integer():
+                rec["weight"] = int(rec["weight"])
             rid = getattr(e, "run_id", None)
             if rid and rid not in rec["run_ids"]:
                 rec["run_ids"].append(rid)
@@ -1238,7 +1301,9 @@ class NetworkAnalyticsService:
                 rec["positions"].append(pos)
         return agg
 
-    def _serialize_video_graph(self, payload: "NetworkGraph", format: str):
+    def _serialize_video_graph(
+        self, payload: "NetworkGraph", format: str, weight_spec: dict | None = None
+    ):
         fmt = (format or "").strip().lower()
         nodes = {n.video_id: n for n in payload.nodes}
         agg = self._aggregated_edges(payload.edges)
@@ -1284,6 +1349,10 @@ class NetworkAnalyticsService:
                     position=rec["positions"][0] if rec["positions"] else -1,
                     run_id=";".join(rec["run_ids"]),
                 )
+            if weight_spec is not None:
+                export.graph["weight_spec"] = json.dumps(
+                    weight_spec, ensure_ascii=False, default=str
+                )
             buffer = io.BytesIO()
             if fmt == "graphml":
                 nx.write_graphml(export, buffer)
@@ -1294,7 +1363,7 @@ class NetworkAnalyticsService:
             return filename, buffer.getvalue().decode("utf-8"), media_type
 
         if fmt == "json":
-            out = {
+            out: dict[str, Any] = {
                 "nodes": [
                     {"data": _node_attrs(n)} for n in payload.nodes
                 ],
@@ -1313,6 +1382,8 @@ class NetworkAnalyticsService:
                     for (s, t), rec in agg.items()
                 ],
             }
+            if weight_spec is not None:
+                out["weight_spec"] = weight_spec
             return (
                 "recommendations.json",
                 json.dumps(out, ensure_ascii=False, default=str),
@@ -1322,11 +1393,31 @@ class NetworkAnalyticsService:
         if fmt == "csv":
             buffer = io.StringIO()
             writer = csv.writer(buffer, dialect="excel")
-            writer.writerow(
-                ["source", "target", "weight", "relationship_type"]
-            )
-            for (s, t), rec in agg.items():
-                writer.writerow([s, t, rec["weight"], "recommendation"])
+            if weight_spec is not None:
+                writer.writerow(
+                    [
+                        "source",
+                        "target",
+                        "weight",
+                        "relationship_type",
+                        "weight_definition",
+                    ]
+                )
+                definition = (
+                    weight_spec.get("edge_type", "")
+                    + ":"
+                    + weight_spec.get("weight_mode", "")
+                )
+                for (s, t), rec in agg.items():
+                    writer.writerow(
+                        [s, t, rec["weight"], "recommendation", definition]
+                    )
+            else:
+                writer.writerow(
+                    ["source", "target", "weight", "relationship_type"]
+                )
+                for (s, t), rec in agg.items():
+                    writer.writerow([s, t, rec["weight"], "recommendation"])
             return "recommendations.csv", buffer.getvalue(), "text/csv"
 
         if fmt == "xlsx":

@@ -15,7 +15,11 @@ Routes (all under the configured API prefix):
   ProjectItem artifact under a Project;
 * ``POST /network/merge`` - overlap + combined SNA statistics for two scopes;
 * ``GET /network/merge/options`` - picker payload of runs + expansions;
-* ``GET /network/channels`` - lightweight channel projection.
+* ``GET /network/channels`` - lightweight channel projection;
+* ``GET /network/centralities`` - per-node centrality battery (degree/closeness/
+  eigenvector/betweenness + community_id) for the rendered graph slice.
+* ``GET /network/weights/options`` - catalog of legal ``edge_type × weight_mode``
+  weight specs with per-scope availability (drives the weight dropdown).
 
 Owned by the B6 module agent. Do NOT edit ``api/app.py`` from here.
 """
@@ -49,6 +53,7 @@ from SocialScienceResearch.services.network_analytics_service import (
     NetworkScope,
     TemporalResult,
 )
+from SocialScienceResearch.services.weight_spec import weight_options_catalog
 from SocialScienceResearch.services.pagination import Paginated
 from SocialScienceResearch.services.project_item_service import ProjectItemService
 from SocialScienceResearch.utils.idgen import utcnow
@@ -245,6 +250,12 @@ def network_graph(
         description="Comma-separated job ids: the run scope becomes the union of "
         "those jobs' child runs (AND-combined with any run scope).",
     ),
+    weight: str | None = Query(
+        None,
+        description="Weight spec token, e.g. `recommendation:observation_count` "
+        "(default behaviour) or `recommendation:reciprocal_position:min_max`. "
+        "See GET /network/weights/options. Unknown spec -> 400.",
+    ),
 ):
     """Enriched node/edge payload for the interactive graph UI.
 
@@ -278,6 +289,17 @@ def network_graph(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=400, detail="scraped must be scraped or unscraped")
+    if weight is not None:
+        from fastapi import HTTPException
+        from SocialScienceResearch.services.weight_spec import (
+            WeightSpecError,
+            parse_weight_spec,
+        )
+
+        try:
+            parse_weight_spec(weight)
+        except WeightSpecError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     service = _service(request)
     parsed_channel_ids = (
         [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
@@ -335,7 +357,113 @@ def network_graph(
         connected=connected,
         scraped=scraped,
         video_ids=parsed_video_ids,
+        weight_spec=weight,
     )
+
+
+@router.get(
+    "/network/centralities",
+    tags=["network"],
+)
+def network_centralities(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    channel_scope: str = Query("source"),
+    layer_index: int | None = Query(None, ge=0),
+    video_ids: str | None = Query(None),
+    projection: str = Query("video"),
+    weight: str | None = Query(
+        None,
+        description="Weight spec token (e.g. recommendation:reciprocal_position:"
+        "min_max). See GET /network/weights/options. Unknown spec -> 400.",
+    ),
+    weighted: bool = Query(
+        False,
+        description="When true and a `weight` spec is supplied, centralities use "
+        "the spec's edge weights (eigenvector/betweenness/degree).",
+    ),
+):
+    """Per-node centrality battery for the rendered graph slice (N0).
+
+    Returns ``degree``, ``closeness``, ``eigenvector``, ``betweenness`` and
+    ``community_id`` for every node in the same subgraph ``/network/graph``
+    would render for the given scope. These are research-grade positions:
+    betweenness flags brokerage across clusters, eigenvector the core of the
+    recommendation space, degree the recommender's view of popularity.
+
+    Mirrors the scope parsing of ``/network/graph`` so the centralities always
+    describe exactly what is on screen.
+    """
+    from fastapi import HTTPException
+
+    if projection not in ("video", "channel"):
+        raise HTTPException(status_code=400, detail="projection must be video or channel")
+    if channel_scope not in ("source", "target", "either"):
+        raise HTTPException(
+            status_code=400,
+            detail="channel_scope must be source, target or either",
+        )
+    service = _service(request)
+    if weight is not None:
+        from SocialScienceResearch.services.weight_spec import (
+            WeightSpecError,
+            parse_weight_spec,
+        )
+
+        try:
+            parse_weight_spec(weight)
+        except WeightSpecError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    parsed_channel_ids = (
+        [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
+        if channel_ids
+        else None
+    )
+    parsed_video_ids = (
+        [v for v in (p.strip() for p in (video_ids or "").split(",")) if v]
+        if video_ids
+        else None
+    )
+    channel_filter_ids = parsed_channel_ids or ([channel_id] if channel_id else None)
+    nodes = service.centralities(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_filter_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        video_ids=parsed_video_ids,
+        projection=projection,
+        weight_spec=weight,
+        weighted=weighted,
+    )
+    return {
+        "nodes": nodes,
+        "algorithm": "networkx",
+        "computed_at": utcnow().isoformat(),
+    }
+
+
+@router.get(
+    "/network/weights/options",
+    tags=["network"],
+)
+def network_weight_options(
+    request: Request,
+    run_id: str | None = Query(None),
+):
+    """Catalog of legal weight specs for the active scope (N1).
+
+    Returns every ``edge_type × weight_mode`` combination the network engine
+    understands, the normalizations and params each accepts, and a coarse
+    per-scope ``available`` flag with ``unavailable_signals`` when the required
+    raw data is absent. The UI renders this directly into the weight dropdown
+    instead of hardcoding options. The authoritative per-edge coverage is still
+    surfaced at computation time via ``weight_provenance.unavailable_signals``.
+    """
+    repos = request.app.state.services.get("repos")
+    return {"options": weight_options_catalog(repos=repos, run_id=run_id)}
 
 
 @router.get(
@@ -433,6 +561,12 @@ def network_export(
         None,
         description="Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all",
     ),
+    weight: str | None = Query(
+        None,
+        description="Weight spec token, e.g. `recommendation:observation_count` "
+        "(default behaviour) or `recommendation:reciprocal_position:min_max`. "
+        "See GET /network/weights/options. Unknown spec -> 400.",
+    ),
 ):
     """Download the *visible* recommendation network as graphml/edgelist/gexf/
     csv/json/xlsx.
@@ -461,6 +595,17 @@ def network_export(
         from fastapi import HTTPException
 
         raise HTTPException(status_code=400, detail="scraped must be scraped or unscraped")
+    if weight is not None:
+        from fastapi import HTTPException
+        from SocialScienceResearch.services.weight_spec import (
+            WeightSpecError,
+            parse_weight_spec,
+        )
+
+        try:
+            parse_weight_spec(weight)
+        except WeightSpecError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     parsed_channel_ids = (
         [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
         if channel_ids
@@ -483,6 +628,7 @@ def network_export(
         scraped=scraped,
         video_ids=parsed_video_ids,
         projection=projection,
+        weight_spec=weight,
     )
     return StreamingResponse(
         iter([content]),

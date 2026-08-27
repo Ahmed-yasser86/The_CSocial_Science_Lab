@@ -42,6 +42,10 @@ from typing import Any, Callable, Iterator
 
 import numpy as np
 
+from SocialScienceResearch.concurrency.budget_controller import (
+    BudgetController,
+    run_context,
+)
 from SocialScienceResearch.domain.enums import TranscriptStatus
 from SocialScienceResearch.domain.models import TranscriptRecord
 from SocialScienceResearch.utils.idgen import new_id, utcnow
@@ -527,12 +531,16 @@ class ContentHomophilyService:
     """Runs the full Content Homophily pipeline as ONE opt-in async job."""
 
     def __init__(self, provider, repos, settings=None, *, jobs=None, analytics=None,
-                 embedder=None, embedder_factory=None) -> None:
+                 embedder=None, embedder_factory=None, budget_controller=None) -> None:
         from SocialScienceResearch.config.settings import SocialScienceSettings
 
         self._provider = provider
         self._repos = repos
         self._settings = settings or SocialScienceSettings()
+        self._budget = budget_controller or BudgetController(
+            min_interval=self._settings.scraper.request_delay_seconds,
+            max_ytdl_contexts=self._settings.scraper.budget_max_ytdl_contexts,
+        )
         self._jobs = jobs
         self._analytics = analytics or None
         self._embedder = embedder
@@ -763,7 +771,8 @@ class ContentHomophilyService:
             url = f"https://www.youtube.com/watch?v={video_id}"
         lang = self._settings.scraper.transcript_lang
         try:
-            extract = self._provider.extract_transcript(url, lang=lang)
+            with run_context(analysis_id):
+                extract = self._provider.extract_transcript(url, lang=lang)
         except Exception as exc:  # noqa: BLE001 - explicit unsupported outcome
             self._save_transcript_record(analysis_id, video_id, lang,
                                          TranscriptStatus.UNSUPPORTED, str(exc))

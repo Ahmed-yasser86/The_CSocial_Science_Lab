@@ -49,6 +49,8 @@ def update_scraper_config(request: Request, body: ScraperConfigPayload) -> dict[
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     config.update(**updates)
+    # Keep the shared budget controller's pacing in sync with the UI speed setting.
+    _sync_budget(request, config.request_delay_seconds)
     return config.to_dict()
 
 
@@ -72,4 +74,12 @@ def apply_preset(request: Request, body: PresetRequest) -> dict[str, Any]:
         enrichment_concurrency=preset["enrichment_concurrency"],
         socket_timeout=preset["socket_timeout"],
     )
+    _sync_budget(request, config.request_delay_seconds)
     return {**config.to_dict(), "applied_preset": body.preset}
+
+
+def _sync_budget(request: Request, request_delay_seconds: float) -> None:
+    """Push the UI speed setting into the shared budget controller (best-effort)."""
+    controller = getattr(request.app.state, "budget_controller", None)
+    if controller is not None:
+        controller.set_min_interval(request_delay_seconds)

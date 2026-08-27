@@ -49,7 +49,9 @@ from SocialScienceResearch.domain.enums import (
 )
 from SocialScienceResearch.utils.logger import get_logger
 
-from .collection_service import CollectionService, ProgressReporter, _RateLimiter
+from SocialScienceResearch.concurrency.budget_controller import run_context
+
+from .collection_service import CollectionService, ProgressReporter
 from .network_analytics_service import NetworkAnalyticsService
 from .recommendation_graph_service import RecommendationGraphService
 from .results import CollectionResult
@@ -102,7 +104,8 @@ class RecommendationService(CollectionService):
         video = self._repos.videos.get_video(video_id) if video_id else None
         if video is None:
             try:
-                info = self._provider.extract_video(video_url)
+                with run_context(run.run_id):
+                    info = self._provider.extract_video(video_url)
             except AcquisitionError as exc:
                 self._record_error(run, EntityType.VIDEO, None, exc.error_type, str(exc))
                 self._finish_run(
@@ -145,9 +148,10 @@ class RecommendationService(CollectionService):
             "missing": False,
         }
         try:
-            payload["raw"] = self._provider.extract_recommendations(
-                video.url or video_url
-            )
+            with run_context(run.run_id):
+                payload["raw"] = self._provider.extract_recommendations(
+                    video.url or video_url
+                )
         except RecommendationUnsupportedError as exc:
             payload["unsupported"] = exc
         except AcquisitionError as exc:
@@ -201,7 +205,6 @@ class RecommendationService(CollectionService):
         # the frozen settings - otherwise the Speed presets never affect the
         # bulk phase that dominates large crawls.
         concurrency = max(1, concurrency or self._enrichment_concurrency())
-        throttle = _RateLimiter(self._request_delay())
 
         # Every bulk scrape is registered as sub-runs under ONE parent (the run
         # that triggered it, or a synthetic anchor run when none is given) so
@@ -237,7 +240,6 @@ class RecommendationService(CollectionService):
                         parent_run_id,
                         dedupe_run_ids,
                         existing_pairs,
-                        throttle,
                     )
                 ] = video_id
 
@@ -375,7 +377,6 @@ class RecommendationService(CollectionService):
         parent_run_id: str | None,
         dedupe_run_ids: list[str] | None,
         existing_pairs: set[tuple[str, str]] | None,
-        throttle: _RateLimiter,
     ) -> dict[str, Any]:
         """Worker-thread network phase for one video.
 
@@ -402,18 +403,18 @@ class RecommendationService(CollectionService):
         }
         if video is None:
             try:
-                throttle.wait()
-                payload["source_info"] = self._provider.extract_video(
-                    _watch_url(video_id)
-                )
+                with run_context(parent_run_id):
+                    payload["source_info"] = self._provider.extract_video(
+                        _watch_url(video_id)
+                    )
                 payload["missing"] = False
             except AcquisitionError:
                 pass
         try:
-            throttle.wait()
-            payload["raw"] = self._provider.extract_recommendations(
-                video.url if video else _watch_url(video_id)
-            )
+            with run_context(parent_run_id):
+                payload["raw"] = self._provider.extract_recommendations(
+                    video.url if video else _watch_url(video_id)
+                )
             payload["missing"] = False
         except RecommendationUnsupportedError as exc:
             payload["unsupported"] = exc
@@ -911,7 +912,7 @@ class RecommendationService(CollectionService):
             )
 
     def _fetch_target_video(
-        self, video_id: str, throttle: _RateLimiter
+        self, video_id: str, run_id: str | None = None
     ) -> dict[str, Any]:
         """Network phase for deep-enriching one recommended target.
 
@@ -920,8 +921,8 @@ class RecommendationService(CollectionService):
         thread so the store is never written concurrently.
         """
         try:
-            throttle.wait()
-            info = self._provider.extract_video(_watch_url(video_id))
+            with run_context(run_id):
+                info = self._provider.extract_video(_watch_url(video_id))
         except AcquisitionError as exc:
             return {"video_id": video_id, "info": None, "error": exc}
         return {"video_id": video_id, "info": info, "error": None}
@@ -944,7 +945,6 @@ class RecommendationService(CollectionService):
         never leaves a broken stub behind.
         """
         concurrency = max(1, self._enrichment_concurrency())
-        throttle = _RateLimiter(self._request_delay())
         pool = ThreadPoolExecutor(
             max_workers=concurrency, thread_name_prefix="rec-enrich"
         )
@@ -952,7 +952,7 @@ class RecommendationService(CollectionService):
             pending_futures: dict = {}
             for video_id in targets:
                 pending_futures[
-                    pool.submit(self._fetch_target_video, video_id, throttle)
+                    pool.submit(self._fetch_target_video, video_id, None)
                 ] = video_id
 
             _FUTURE_TIMEOUT = 120

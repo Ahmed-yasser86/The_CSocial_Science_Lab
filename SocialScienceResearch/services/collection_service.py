@@ -21,8 +21,6 @@ interfaces - never on yt-dlp or Excel directly.
 
 from __future__ import annotations
 
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Protocol
@@ -253,32 +251,10 @@ def _is_live_or_upcoming(raw: dict[str, Any]) -> bool:
     return raw.get("live_status") in _LIVE_NO_COMMENTS_STATUSES
 
 
-class _RateLimiter:
-    """Shared time-based throttle bounding the aggregate network request rate.
-
-    ``min_interval`` is the minimum wall-clock spacing between *consecutive*
-    network requests across all enrichment workers (``request_delay_seconds``).
-    A worker that arrives early blocks only until its slot is due; workers do
-    not sleep when the interval has already elapsed, so independent requests
-    overlap and the pacing never serializes the whole enrichment step.
-    """
-
-    def __init__(self, min_interval: float) -> None:
-        self._min_interval = min_interval
-        self._lock = threading.Lock()
-        self._next_slot = 0.0
-
-    def wait(self) -> None:
-        """Block until this worker may issue its next network request."""
-        if self._min_interval <= 0:
-            return
-        with self._lock:
-            now = time.monotonic()
-            slot = max(self._next_slot, now)
-            self._next_slot = slot + self._min_interval
-        delay = slot - now
-        if delay > 0:
-            time.sleep(delay)
+from SocialScienceResearch.concurrency.budget_controller import (
+    BudgetController,
+    run_context,
+)
 
 
 class CollectionService:
@@ -293,10 +269,20 @@ class CollectionService:
         provider: AcquisitionProvider,
         repos: Repositories,
         settings: SocialScienceSettings | None = None,
+        *,
+        budget_controller: BudgetController | None = None,
     ) -> None:
         self._provider = provider
         self._repos = repos
         self._settings = settings or SocialScienceSettings()
+        # Shared process-global admission controller. In production build_services
+        # injects ONE instance into every service so all jobs draw from the same
+        # bucket. When omitted (e.g. directly-constructed tests), a fresh
+        # controller is derived from this service's settings.
+        self._budget = budget_controller or BudgetController(
+            min_interval=self._settings.scraper.request_delay_seconds,
+            max_ytdl_contexts=self._settings.scraper.budget_max_ytdl_contexts,
+        )
 
     def set_runtime_config(self, config) -> None:
         self._runtime_config = config
@@ -389,7 +375,8 @@ class CollectionService:
         run = self._begin_run(RunType.CHANNEL, channel_url, spec)
         errors: list[CollectionError] = []
         try:
-            extract = self._provider.extract_channel(channel_url)
+            with run_context(run.run_id):
+                extract = self._provider.extract_channel(channel_url)
         except AcquisitionError as exc:
             errors.append(
                 self._record_error(
@@ -559,7 +546,6 @@ class CollectionService:
         # persists each result as its future completes (order is not
         # deterministic, but counters stay correct).
         if tasks:
-            throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
             comment_total, skipped = self._enrich_and_persist(
                 run,
                 tasks,
@@ -568,7 +554,6 @@ class CollectionService:
                 reporter,
                 comment_total,
                 skipped,
-                throttle,
                 concurrency,
             )
 
@@ -590,9 +575,8 @@ class CollectionService:
     ) -> None:
         """Scrape and persist recommendations for a single video."""
         try:
-            throttle = _RateLimiter(self._settings.scraper.request_delay_seconds)
-            throttle.wait()
-            raw_recommendations = self._provider.extract_recommendations(video.url)
+            with run_context(run.run_id):
+                raw_recommendations = self._provider.extract_recommendations(video.url)
         except RecommendationUnsupportedError as exc:
             err = self._record_error(
                 run,
@@ -626,7 +610,7 @@ class CollectionService:
         video,
         raw: dict[str, Any],
         effective: dict[str, Any],
-        throttle: _RateLimiter,
+        run_id: str | None,
     ) -> dict[str, Any]:
         """Network phase of deep enrichment for one video (worker thread).
 
@@ -646,11 +630,11 @@ class CollectionService:
             "transcript_error": None,
         }
         try:
-            throttle.wait()
-            info = self._provider.extract_video(
-                video.url,
-                include_comments=bool(effective.get("collect_comments")),
-            )
+            with run_context(run_id):
+                info = self._provider.extract_video(
+                    video.url,
+                    include_comments=bool(effective.get("collect_comments")),
+                )
         except LiveEventSkipError:
             result["skip_reason"] = _LIVE_SKIP_REASON
             return result
@@ -672,10 +656,10 @@ class CollectionService:
                 result["transcript_reused"] = True
             else:
                 try:
-                    throttle.wait()
-                    result["transcript"] = self._provider.extract_transcript(
-                        video.url, lang=lang
-                    )
+                    with run_context(run_id):
+                        result["transcript"] = self._provider.extract_transcript(
+                            video.url, lang=lang
+                        )
                 except TranscriptUnsupportedError as exc:
                     result["transcript_error"] = exc
                 except AcquisitionError as exc:
@@ -691,7 +675,6 @@ class CollectionService:
         reporter: ProgressReporter | None,
         comment_total: int,
         skipped: list[dict[str, Any]],
-        throttle: _RateLimiter,
         concurrency: int,
     ) -> tuple[int, list[dict[str, Any]]]:
         """Deep-enrich ``tasks`` concurrently and persist every outcome.
@@ -705,7 +688,7 @@ class CollectionService:
             max_workers=concurrency, thread_name_prefix="enrich"
         ) as pool:
             futures = {
-                pool.submit(self._enrich_video_task, t["video"], t["raw"], effective, throttle): t
+                pool.submit(self._enrich_video_task, t["video"], t["raw"], effective, run.run_id): t
                 for t in tasks
             }
             for future in as_completed(futures):
@@ -789,10 +772,11 @@ class CollectionService:
         run = self._begin_run(RunType.VIDEO, video_url, spec)
         errors: list[CollectionError] = []
         try:
-            info = self._provider.extract_video(
-                video_url,
-                include_comments=bool(effective.get("collect_comments")),
-            )
+            with run_context(run.run_id):
+                info = self._provider.extract_video(
+                    video_url,
+                    include_comments=bool(effective.get("collect_comments")),
+                )
         except AcquisitionError as exc:
             errors.append(
                 self._record_error(
@@ -1032,7 +1016,8 @@ class CollectionService:
             )
             return
         try:
-            extract = self._provider.extract_transcript(video.url, lang=lang)
+            with run_context(run.run_id):
+                extract = self._provider.extract_transcript(video.url, lang=lang)
         except LiveEventSkipError:
             # The stream has not aired, so no captions exist yet: that is a
             # missing availability outcome, never an error.

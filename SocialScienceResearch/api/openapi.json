@@ -3420,6 +3420,24 @@
               "title": "Job Ids"
             },
             "description": "Comma-separated job ids: the run scope becomes the union of those jobs' child runs (AND-combined with any run scope)."
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Weight spec token, e.g. `recommendation:observation_count` (default behaviour) or `recommendation:reciprocal_position:min_max`. See GET /network/weights/options. Unknown spec -> 400.",
+              "title": "Weight"
+            },
+            "description": "Weight spec token, e.g. `recommendation:observation_count` (default behaviour) or `recommendation:reciprocal_position:min_max`. See GET /network/weights/options. Unknown spec -> 400."
           }
         ],
         "responses": {
@@ -3438,6 +3456,217 @@
                   ],
                   "title": "Response Network Graph Api V1 Social Science Network Graph Get"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/centralities": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Centralities",
+        "description": "Per-node centrality battery for the rendered graph slice (N0).\n\nReturns ``degree``, ``closeness``, ``eigenvector``, ``betweenness`` and\n``community_id`` for every node in the same subgraph ``/network/graph``\nwould render for the given scope. These are research-grade positions:\nbetweenness flags brokerage across clusters, eigenvector the core of the\nrecommendation space, degree the recommender's view of popularity.\n\nMirrors the scope parsing of ``/network/graph`` so the centralities always\ndescribe exactly what is on screen.",
+        "operationId": "network_centralities_api_v1_social_science_network_centralities_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Id"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "channel_scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "source",
+              "title": "Channel Scope"
+            }
+          },
+          {
+            "name": "layer_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer Index"
+            }
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "video",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Weight spec token (e.g. recommendation:reciprocal_position:min_max). See GET /network/weights/options. Unknown spec -> 400.",
+              "title": "Weight"
+            },
+            "description": "Weight spec token (e.g. recommendation:reciprocal_position:min_max). See GET /network/weights/options. Unknown spec -> 400."
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "When true and a `weight` spec is supplied, centralities use the spec's edge weights (eigenvector/betweenness/degree).",
+              "default": false,
+              "title": "Weighted"
+            },
+            "description": "When true and a `weight` spec is supplied, centralities use the spec's edge weights (eigenvector/betweenness/degree)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/weights/options": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Weight Options",
+        "description": "Catalog of legal weight specs for the active scope (N1).\n\nReturns every ``edge_type \u00d7 weight_mode`` combination the network engine\nunderstands, the normalizations and params each accepts, and a coarse\nper-scope ``available`` flag with ``unavailable_signals`` when the required\nraw data is absent. The UI renders this directly into the weight dropdown\ninstead of hardcoding options. The authoritative per-edge coverage is still\nsurfaced at computation time via ``weight_provenance.unavailable_signals``.",
+        "operationId": "network_weight_options_api_v1_social_science_network_weights_options_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3795,6 +4024,24 @@
               "title": "Scraped"
             },
             "description": "Node filter by recommendation-scrape state: 'scraped' | 'unscraped' | None = all"
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Weight spec token, e.g. `recommendation:observation_count` (default behaviour) or `recommendation:reciprocal_position:min_max`. See GET /network/weights/options. Unknown spec -> 400.",
+              "title": "Weight"
+            },
+            "description": "Weight spec token, e.g. `recommendation:observation_count` (default behaviour) or `recommendation:reciprocal_position:min_max`. See GET /network/weights/options. Unknown spec -> 400."
           }
         ],
         "responses": {
@@ -5085,6 +5332,92 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/budget/events": {
+      "get": {
+        "tags": [
+          "budget"
+        ],
+        "summary": "Get Budget Events",
+        "description": "Return the most recent budget events.\n\nOne entry per admission decision / rate-limit signal, newest last. Use\n``run_id`` to scope to a single run. This is the raw detail stream - not an\naggregate - so every individual request decision is visible.",
+        "operationId": "get_budget_events_api_v1_social_science_budget_events_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 500,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Budget Events Api V1 Social Science Budget Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/budget/state": {
+      "get": {
+        "tags": [
+          "budget"
+        ],
+        "summary": "Get Budget State",
+        "description": "Return the controller's live counters (admits, 429 count, waited total).",
+        "operationId": "get_budget_state_api_v1_social_science_budget_state_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Budget State Api V1 Social Science Budget State Get"
                 }
               }
             }
@@ -12331,6 +12664,11 @@
               }
             ],
             "title": "Title"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight",
+            "default": 1.0
           }
         },
         "additionalProperties": true,
@@ -13766,6 +14104,18 @@
             "type": "integer",
             "title": "Edge Count",
             "default": 0
+          },
+          "weight_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Spec"
           }
         },
         "additionalProperties": true,

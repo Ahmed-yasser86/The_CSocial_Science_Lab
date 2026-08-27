@@ -46,6 +46,7 @@ def _service(request: Request) -> ContentHomophilyService:
             request.app.state.services["repos"],
             settings=request.app.state.settings,
             jobs=request.app.state.services["jobs"],
+            budget_controller=request.app.state.budget_controller,
         ),
     )
 

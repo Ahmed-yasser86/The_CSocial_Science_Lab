@@ -9,6 +9,7 @@ import type {
   ChannelProjection,
   EdgeRow,
   GraphProjection,
+  NetworkCentralities,
   NetworkExportFormat,
   NetworkGraphPayload,
   NetworkMetrics,
@@ -196,6 +197,61 @@ export function useNetworkMetrics(runId?: string, topN = 10, options = {}) {
     queryFn: () => getNetworkMetrics(runId, topN),
     retry: 1,
     ...options,
+  });
+}
+
+export function getNetworkCentralities(
+  params: {
+    run_id?: string;
+    channel_id?: string;
+    channel_ids?: string[];
+    channel_scope?: string;
+    layer_index?: number;
+    video_ids?: string[];
+    projection?: GraphProjection;
+  } = {},
+): Promise<NetworkCentralities> {
+  return request(
+    `/network/centralities${toQuery({
+      run_id: params.run_id,
+      channel_id: params.channel_id,
+      channel_ids: params.channel_ids?.join(","),
+      channel_scope: params.channel_scope,
+      layer_index: params.layer_index,
+      video_ids: params.video_ids?.join(","),
+      projection: params.projection,
+    })}`,
+  );
+}
+
+export function useNetworkCentralities(
+  params: {
+    run_id?: string;
+    channel_id?: string;
+    channel_ids?: string[];
+    channel_scope?: string;
+    layer_index?: number;
+    video_ids?: string[];
+    projection?: GraphProjection;
+    enabled?: boolean;
+  } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "full",
+      "centralities",
+      params.run_id ?? "all",
+      params.channel_id ?? "all",
+      (params.channel_ids ?? []).join(",") || "all",
+      params.channel_scope ?? "source",
+      params.layer_index ?? "all",
+      (params.video_ids ?? []).join(",") || "all",
+      params.projection ?? "video",
+    ] as const,
+    queryFn: () => getNetworkCentralities(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
   });
 }
 

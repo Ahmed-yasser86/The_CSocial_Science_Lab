@@ -65,3 +65,59 @@ def retry_policy(
         reraise=True,
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
+
+
+def retry_policy_budgeted(
+    budget: Any,
+    operation: str,
+    run_id: str | None = None,
+    retries: int = 10,
+    backoff: float = 5.0,
+    max_wait: float = 120.0,
+    budget_on_first: bool = True,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Retry policy that routes *every* attempt through the Global Budget
+    Controller, so retries never bypass the shared bucket, and records
+    rate-limit outcomes via ``budget.on_rate_limited``.
+
+    ``budget_on_first`` controls whether the very first attempt is also charged
+    to the budget. When the caller already gates the first attempt (e.g. the
+    service layer), set it ``False`` to avoid double-charging; the default
+    ``True`` makes the provider the single source of truth for pacing.
+    """
+
+    def _before(retry_state: object) -> None:
+        attempt = getattr(retry_state, "attempt_number", 1) or 1
+        if attempt == 1 and not budget_on_first:
+            return
+        budget.acquire(operation, run_id=run_id, cost=1.0)
+
+    def _after(retry_state: object) -> None:
+        outcome = getattr(retry_state, "outcome", None)
+        if outcome is not None and outcome.failed:
+            exc = outcome.exception()
+            if isinstance(exc, RateLimitError):
+                budget.on_rate_limited(
+                    operation=operation,
+                    run_id=run_id,
+                    detail={"retry_after": getattr(exc, "retry_after", None)},
+                )
+
+    def _wait_for(retry_state: object) -> float:
+        attempt = getattr(retry_state, "attempt_number", 1) or 1
+        outcome = getattr(retry_state, "outcome", None)
+        exc = outcome.exception() if outcome is not None else None
+        if isinstance(exc, RateLimitError) and exc.retry_after:
+            return float(exc.retry_after)
+        base = min(backoff * (2 ** (attempt - 1)), max_wait)
+        return base + random.uniform(0, min(base, 2.0))
+
+    return retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(max(retries, 1)),
+        wait=_wait_for,
+        before=_before,
+        after=_after,
+        reraise=True,
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )

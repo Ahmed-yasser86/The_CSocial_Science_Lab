@@ -87,4 +87,37 @@ test.describe("Network export mirrors the active filter view", () => {
     const header = text.trim().split("\n")[0];
     expect(header).toBe("source,target,weight,relationship_type");
   });
+
+  test("weighted export adds weight_definition column and differs from default", async ({ request }) => {
+    const def = await request.get(`${API}/network/export?format=csv`);
+    expect(def.ok()).toBeTruthy();
+    const defText = (await def.text()).replace(/\r\n/g, "\n").trim();
+    expect(defText.split("\n")[0]).toBe("source,target,weight,relationship_type");
+
+    const w = await request.get(
+      `${API}/network/export?format=csv&weight=recommendation:reciprocal_position`,
+    );
+    expect(w.ok()).toBeTruthy();
+    const wText = (await w.text()).replace(/\r\n/g, "\n").trim();
+    expect(wText.split("\n")[0]).toContain("weight_definition");
+
+    const defWeights = defText.split("\n").slice(1).map((l) => l.split(",")[2]);
+    const wWeights = wText.split("\n").slice(1).map((l) => l.split(",")[2]);
+    expect(wWeights.some((v, i) => v !== defWeights[i])).toBeTruthy();
+  });
+
+  test("graph echoes weight_spec and produces non-default edge weights", async ({ request }) => {
+    const resp = await request.get(
+      `${API}/network/graph?weight=recommendation:reciprocal_position`,
+    );
+    expect(resp.ok()).toBeTruthy();
+    const body = await resp.json();
+    expect(body.weight_spec.weight_mode).toBe("reciprocal_position");
+    expect(body.edges.some((e: any) => e.weight !== 1)).toBeTruthy();
+  });
+
+  test("invalid weight spec -> 400", async ({ request }) => {
+    const resp = await request.get(`${API}/network/graph?weight=bogus:mode`);
+    expect(resp.status()).toBe(400);
+  });
 });

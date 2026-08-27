@@ -26,6 +26,7 @@ import {
   DegreeDistributionPanel,
   RankingPanel,
 } from "@/components/features/network-full/network-metrics-tiles";
+import { CentralitiesPanel } from "@/components/features/network-full/centralities-panel";
 import { TemporalOverlay } from "@/components/features/network-full/temporal-overlay";
 import { EdgeTable } from "@/components/features/network-full/edge-table";
 import { useNetworkMetrics, getNetworkExportUrl, useNetworkGraph, useScrapeNetwork } from "@/services/networkFull";
@@ -652,6 +653,7 @@ export function FullNetworkView() {
                 <RankingPanel title="Most recommended" videos={metrics.data.most_recommended} valueLabel="×" />
                 <RankingPanel title="Most active sources" videos={metrics.data.most_active_sources} valueLabel="→" />
               </div>
+              <CentralitiesPanel runId={runId} />
             </>
           ) : (
             <LoadingState label="Loading network metrics…" />

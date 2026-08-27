@@ -62,7 +62,7 @@ from SocialScienceResearch.domain.models import CollectionRun
 from SocialScienceResearch.utils.idgen import new_id, utcnow
 from SocialScienceResearch.utils.logger import get_logger
 
-from .collection_service import ProgressReporter, _RateLimiter
+from .collection_service import ProgressReporter
 from .recommendation_service import RecommendationService
 from .results import CollectionResult
 
@@ -321,14 +321,12 @@ class LayerScrapeService(RecommendationService):
         new_edges = self._repos.recommendations.list_recommendation_edges(
             run_ids=run_ids,
         )
-        throttle = _RateLimiter(self._request_delay())
         errors: list = []
         discovered = self._enrich_new_targets(
             new_edges,
             run_ids,
             layer_index,
             collect_comments=collect_comments,
-            throttle=throttle,
             errors=errors,
             reporter=reporter,
             extra_target_ids=incomplete_frontier,
@@ -661,7 +659,6 @@ class LayerScrapeService(RecommendationService):
         new_edges = self._repos.recommendations.list_recommendation_edges(
             run_ids=run_ids,
         )
-        throttle = _RateLimiter(self._request_delay())
         errors: list = []
         discovered = self._enrich_new_targets(
             new_edges,
@@ -670,7 +667,6 @@ class LayerScrapeService(RecommendationService):
             collect_comments=filters.collect_comments,
             include_existing=not filters.only_new_targets,
             comment_config=comment_config,
-            throttle=throttle,
             errors=errors,
             reporter=reporter,
         )
@@ -1071,7 +1067,6 @@ class LayerScrapeService(RecommendationService):
         collect_comments: bool,
         include_existing: bool = False,
         comment_config: dict[str, Any] | None = None,
-        throttle: _RateLimiter,
         errors: list,
         reporter: ProgressReporter | None,
         extra_target_ids: set[str] | None = None,
@@ -1177,7 +1172,7 @@ class LayerScrapeService(RecommendationService):
         try:
             for video_id in new_targets:
                 pending_futures[
-                    pool.submit(self._fetch_target_video, video_id, throttle)
+                    pool.submit(self._fetch_target_video, video_id, None)
                 ] = video_id
 
             # Process futures in batches: wait up to 120 s per round so a

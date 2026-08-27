@@ -26,7 +26,7 @@ DEFAULT_DATASET_NAME = "youtube_research"
 DEFAULT_RETRIES = 10
 DEFAULT_RETRY_BACKOFF = 5.0
 DEFAULT_SOCKET_TIMEOUT = 30.0
-DEFAULT_REQUEST_DELAY_SECONDS = 0.25
+DEFAULT_REQUEST_DELAY_SECONDS = 0.5
 DEFAULT_ENRICHMENT_CONCURRENCY = 6
 #: Cap on how many recommended/new target videos are deep-enriched (full
 #: stats + comments) per scrape. Bounds the wall-clock cost of a crawl so a
@@ -165,6 +165,15 @@ class ScraperSettings:
     max_enrich_targets: int = field(
         default_factory=lambda: _env_int(
             "SOCIAL_MAX_ENRICH_TARGETS", DEFAULT_MAX_ENRICH_TARGETS
+        )
+    )
+    #: Cap on simultaneously-active YoutubeDL contexts across the whole process
+    #: (all services, all jobs). Enforced by the process-global context limiter;
+    #: the budget controller paces *when* work starts, this bounds *how many*
+    #: contexts run at once so independent pools/jobs cannot fan out unbounded.
+    budget_max_ytdl_contexts: int = field(
+        default_factory=lambda: _env_int(
+            "SOCIAL_BUDGET_MAX_YTDL_CONTEXTS", 4
         )
     )
     """Hard cap on deep-enriched target videos per scrape (0 = unlimited).
