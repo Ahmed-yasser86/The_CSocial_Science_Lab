@@ -74,6 +74,34 @@ def _resolve_weight(weight: str | None, min_shared: int | None, top_n: int | Non
     return ws.to_token()
 
 
+def _job_run_ids(request: Request, job_ids_param: str | None) -> list[str] | None:
+    """Resolve a comma-separated ``job_ids`` filter to the union of those jobs'
+    child-run ids (plan-J1 linkage). Unknown job ids resolve to no runs, which
+    keeps the AND semantics with any explicit ``run_ids`` intact."""
+    ids = [j.strip() for j in (job_ids_param or "").split(",") if j.strip()]
+    if not ids:
+        return None
+    wanted = set(ids)
+    repos = request.app.state.services["repos"]
+    return [
+        run.run_id for run in repos.runs.list_runs() if getattr(run, "job_id", None) in wanted
+    ]
+
+
+def _resolve_run_scope(
+    request: Request, run_ids_param: str | None, job_ids_param: str | None
+) -> list[str] | None:
+    """Combine ``run_ids`` and ``job_ids`` into a single run scope (AND when both
+    are given: the intersection of explicit runs with the job's runs)."""
+    run_ids = _id_list(run_ids_param)
+    job_runs = _job_run_ids(request, job_ids_param)
+    if job_runs is None:
+        return run_ids or None
+    if run_ids:
+        return sorted(set(run_ids) & set(job_runs)) or None
+    return job_runs or None
+
+
 @router.get(
     "/network/commenters/overlap",
     tags=["network"],
@@ -125,6 +153,11 @@ def commenter_network_graph(
     ),
     channel_ids: str | None = Query(None, description="Comma-separated channel ids"),
     run_ids: str | None = Query(None, description="Comma-separated collection run ids"),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; the scope becomes the union "
+        "of those jobs' child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query(
         "commenter",
         description="commenter | co_comment_video | co_comment_channel | heterogeneous",
@@ -154,7 +187,7 @@ def commenter_network_graph(
     return _network_service(request).graph(
         video_ids=_id_list(video_ids),
         channel_ids=_id_list(channel_ids),
-        run_ids=_id_list(run_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
         projection=projection,
         weight=spec,
         weighted=weighted,
@@ -171,6 +204,11 @@ def commenter_network_metrics(
     video_ids: str | None = Query(None),
     channel_ids: str | None = Query(None),
     run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query("commenter"),
     weight: str | None = Query(None),
     min_shared: int | None = Query(None, ge=1),
@@ -192,7 +230,7 @@ def commenter_network_metrics(
     return _network_service(request).metrics(
         video_ids=_id_list(video_ids),
         channel_ids=_id_list(channel_ids),
-        run_ids=_id_list(run_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
         projection=projection,
         weight=spec,
         weighted=weighted,
@@ -208,6 +246,11 @@ def commenter_network_roles(
     video_ids: str | None = Query(None),
     channel_ids: str | None = Query(None),
     run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query("commenter"),
     weight: str | None = Query(None),
     min_shared: int | None = Query(None, ge=1),
@@ -225,7 +268,7 @@ def commenter_network_roles(
     return _network_service(request).roles(
         video_ids=_id_list(video_ids),
         channel_ids=_id_list(channel_ids),
-        run_ids=_id_list(run_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
         projection=projection,
         weight=spec,
         weighted=weighted,
@@ -242,6 +285,11 @@ def commenter_network_community_insights(
     video_ids: str | None = Query(None),
     channel_ids: str | None = Query(None),
     run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query("commenter"),
     weight: str | None = Query(None),
     min_shared: int | None = Query(None, ge=1),
@@ -258,7 +306,7 @@ def commenter_network_community_insights(
     return _network_service(request).community_insights(
         video_ids=_id_list(video_ids),
         channel_ids=_id_list(channel_ids),
-        run_ids=_id_list(run_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
         projection=projection,
         weight=spec,
         weighted=weighted,
@@ -274,6 +322,11 @@ def commenter_network_communities(
     video_ids: str | None = Query(None),
     channel_ids: str | None = Query(None),
     run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query("commenter"),
     weight: str | None = Query(None),
     min_shared: int | None = Query(None, ge=1),
@@ -291,7 +344,7 @@ def commenter_network_communities(
     return _network_service(request).communities(
         video_ids=_id_list(video_ids),
         channel_ids=_id_list(channel_ids),
-        run_ids=_id_list(run_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
         projection=projection,
         weight=spec,
         weighted=weighted,
@@ -309,6 +362,11 @@ def commenter_network_export(
     video_ids: str | None = Query(None),
     channel_ids: str | None = Query(None),
     run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
     projection: str = Query("commenter"),
     weight: str | None = Query(None),
     min_shared: int | None = Query(None, ge=1),
@@ -337,7 +395,7 @@ def commenter_network_export(
             format=format,
             video_ids=_id_list(video_ids),
             channel_ids=_id_list(channel_ids),
-            run_ids=_id_list(run_ids),
+            run_ids=_resolve_run_scope(request, run_ids, job_ids),
             projection=projection,
             weight=spec,
             weighted=weighted,

@@ -56,6 +56,71 @@ DEFAULT_ENRICH_VIDEO_STATS = True
 DEFAULT_MAX_VIDEOS_TO_ENRICH = 50
 DEFAULT_TRANSCRIPT_LANG = "en"  # best-effort transcript language preference
 
+# Content Homophily embedding rate limits (SocialScienceResearch project ONLY).
+# The Gemini free tier that failed earlier is bounded by a *request* quota
+# (``embed_content_free_tier_requests`` = 100/min), NOT a token quota. So the
+# real 429 guard is the request limiter below. The token budget is kept high
+# enough that normal transcripts embed in a single window (no crawling); it
+# only ever queues (never drops) an oversized transcript across windows. The
+# ingestion pipeline keeps its own (separate) ``TokenRateLimiter`` instance and
+# is NOT affected by these values.
+DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE = 900_000
+DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_REQUESTS_PER_MINUTE = 90
+
+# CSS embedding chunk size. Kept large on purpose: a 500k-token transcript at the
+# ingestion default (1000 tokens/chunk) yields ~1200 chunks, which LangChain fans
+# out into ~12 ``batchEmbedContents`` HTTP requests PER VIDEO and blows the
+# Gemini 100 req/min free-tier quota. At 8000 tokens/chunk a video stays under
+# 100 chunks (one batch request), so the global request limiter is accurate.
+DEFAULT_CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE = 8000
+DEFAULT_CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP = 200
+
+
+def _css_env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+#: Resolved CSS embedding TPM budget (env-overridable). Ingestion is unaffected.
+CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE = _css_env_int(
+    "CONTENT_HOMOPHILY_EMBED_TPM",
+    DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE,
+)
+
+#: Resolved CSS embedding request/min budget (env-overridable). This is the
+#: genuine guard against the Gemini ``429 RESOURCE_EXHAUSTED`` quota error.
+CONTENT_HOMOPHILY_EMBED_MAX_REQUESTS_PER_MINUTE = _css_env_int(
+    "CONTENT_HOMOPHILY_EMBED_RPM",
+    DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_REQUESTS_PER_MINUTE,
+)
+
+#: Resolved CSS embedding chunk size/overlap (env-overridable).
+CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE = _css_env_int(
+    "CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE",
+    DEFAULT_CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE,
+)
+CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP = _css_env_int(
+    "CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP",
+    DEFAULT_CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP,
+)
+
+#: Retries for a CSS embedding call before a chunk is declared lost. Transient
+#: Gemini 429s are queued (waited out) and retried, never dropped. 0 disables.
+DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_RETRIES = 5
+
+CONTENT_HOMOPHILY_EMBED_MAX_RETRIES = _css_env_int(
+    "CONTENT_HOMOPHILY_EMBED_RETRIES",
+    DEFAULT_CONTENT_HOMOPHILY_EMBED_MAX_RETRIES,
+)
+
+
+
+
 # Persistence defaults
 DEFAULT_MAX_ROWS_PER_SHEET = 1048570  # Excel hard limit is 1048576; leave headroom
 DEFAULT_FLUSH_EVERY = 1000  # write-through rows before auto-saving the workbook

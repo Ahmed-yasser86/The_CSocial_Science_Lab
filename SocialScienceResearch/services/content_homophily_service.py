@@ -51,6 +51,24 @@ from SocialScienceResearch.domain.models import TranscriptRecord
 from SocialScienceResearch.utils.idgen import new_id, utcnow
 from SocialScienceResearch.utils.logger import get_logger
 
+from SocialScienceResearch.config.settings import (
+    CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE,
+    CONTENT_HOMOPHILY_EMBED_MAX_RETRIES,
+)
+
+# Project-specific embedding TOKEN gate (SocialScienceResearch only). Request
+# pacing is handled globally on the shared Gemini embedder (see
+# Ingestion_Pipline.infra.embeddings) because the free-tier request quota is
+# shared across the whole project; a per-caller limiter cannot prevent the
+# shared 429. Ingestion keeps its own (separate, higher) TokenRateLimiter.
+_css_embed_token_limiter = None
+if CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE and CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE > 0:
+    from Ingestion_Pipline.infra.rate_limiter import TokenRateLimiter
+
+    _css_embed_token_limiter = TokenRateLimiter(
+        max_tokens_per_minute=CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE
+    )
+
 logger = get_logger(__name__)
 
 #: Computational sampling policy defaults (spec §7). These bound COST; they do
@@ -395,17 +413,28 @@ class ContentHomophilyNullModelService:
 # Ingestion_Pipline reuse (chunking + embeddings) - NO duplicate pipeline
 # ---------------------------------------------------------------------------
 def _ingestion_chunker(text: str, *, source: str) -> list[str]:
-    """Chunk one transcript via the EXISTING Ingestion_Pipline splitter."""
+    """Chunk one transcript via the EXISTING Ingestion_Pipline splitter.
+
+    Uses a CSS-specific (large) chunk size so a long transcript stays under
+    ~100 chunks and therefore fits in a single ``batchEmbedContents`` request,
+    keeping the global Gemini request limiter accurate (see
+    Ingestion_Pipline.infra.embeddings).
+    """
     from langchain_core.documents import Document
 
     from Ingestion_Pipline.config.settings import ChunkingSettings
     from Ingestion_Pipline.ingestion.chunking import split_text
 
+    from SocialScienceResearch.config.settings import (
+        CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE,
+        CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP,
+    )
+
     settings = ChunkingSettings()
     docs = split_text(
         [Document(page_content=text, metadata={"source": source})],
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
+        chunk_size=CONTENT_HOMOPHILY_EMBED_CHUNK_SIZE or settings.chunk_size,
+        chunk_overlap=CONTENT_HOMOPHILY_EMBED_CHUNK_OVERLAP or settings.chunk_overlap,
         encoding_name=settings.encoding_name,
     )
     return [doc.page_content for doc in docs]
@@ -466,6 +495,7 @@ class VideoEmbeddingAdapter:
         cached = self._load_cache(video_id, digest)
         if cached is not None:
             self.embeddings_reused += 1
+            logger.info("content-homophily embedding REUSED from cache: %s", video_id)
             return cached
         try:
             if self._embedder is None:
@@ -473,14 +503,51 @@ class VideoEmbeddingAdapter:
             chunks = _ingestion_chunker(text, source=f"youtube:{video_id}")
             if not chunks:
                 self.embedding_failures += 1
+                logger.warning("content-homophily no chunks to embed: %s", video_id)
                 return None
-            vectors = self._embedder.embed_documents(chunks)
+            n_tokens = (
+                _css_embed_token_limiter.count_tokens_text(chunks)
+                if _css_embed_token_limiter is not None else 0
+            )
+            logger.info(
+                "content-homophily embedding START %s: %d chunk(s), %d token(s)",
+                video_id, len(chunks), n_tokens,
+            )
+            # Request pacing is handled globally on the shared Gemini embedder
+            # (Ingestion_Pipline.infra.embeddings) because the free-tier request
+            # quota is project-wide; nothing to do here.
+            # Token gate (CSS-only politeness budget; ingestion is unaffected).
+            if _css_embed_token_limiter is not None:
+                _css_embed_token_limiter.throttle(n_tokens)
+            # Queue + retry on transient failures (e.g. Gemini 429) so a chunk is
+            # never dropped: it is waited out and retried, not lost.
+            vectors = None
+            max_retries = CONTENT_HOMOPHILY_EMBED_MAX_RETRIES
+            for attempt in range(max(1, max_retries + 1)):
+                try:
+                    vectors = self._embedder.embed_documents(chunks)
+                    break
+                except Exception as exc:  # noqa: BLE001 - queue, don't drop
+                    if attempt >= max_retries:
+                        raise
+                    wait = self._embedding_retry_delay(exc, attempt)
+                    logger.warning(
+                        "content-homophily embedding queued (retry %d/%d) for "
+                        "%s: %s; waiting %.1fs",
+                        attempt + 1, max_retries, video_id, exc, wait,
+                    )
+                    time.sleep(wait)
             if not vectors:
                 self.embedding_failures += 1
+                logger.warning("content-homophily embedding produced no vectors: %s", video_id)
                 return None
             pooled = np.mean(np.asarray(vectors, dtype=float), axis=0)
             self.embeddings_generated += 1
             self._write_cache(video_id, digest, pooled)
+            logger.info(
+                "content-homophily embedding GENERATED: %s (%d vector(s))",
+                video_id, len(vectors),
+            )
             return pooled
         except Exception as exc:  # noqa: BLE001 - a failed video never aborts the run
             logger.warning(
@@ -488,6 +555,24 @@ class VideoEmbeddingAdapter:
             )
             self.embedding_failures += 1
             return None
+
+    @staticmethod
+    def _embedding_retry_delay(exc: Exception, attempt: int) -> float:
+        """How long to wait before re-queuing a failed embedding.
+
+        Honours a server ``Retry-After`` / ``retryDelay`` when present (Gemini
+        embeds surface ``retry in 55.0s`` or ``retryDelay: '55s'``), otherwise
+        falls back to exponential backoff.
+        """
+        import re
+
+        text = str(exc)
+        match = re.search(r"retry in\s*([0-9]+(?:\.[0-9]+)?)\s*s", text)
+        if not match:
+            match = re.search(r"retryDelay['\"]?\s*:\s*['\"]?([0-9]+(?:\.[0-9]+)?)", text)
+        if match:
+            return float(match.group(1)) + 0.5
+        return min(2.0 * (2 ** attempt), 60.0)
 
     def _cache_path(self, video_id: str) -> Path:
         return self.cache_dir / f"{video_id}.json"
@@ -1248,6 +1333,18 @@ class ContentHomophilyService:
         for index, video_id in enumerate(embedded_list):
             if self._stop_requested(job_id_holder):
                 raise OperationCancelled()
+            # Show the video being processed immediately so the UI never looks
+            # frozen on the previous video while a large transcript is throttled.
+            progress.update({
+                "videos_processed": index,
+                "current_video": video_id,
+                "embedding_model": adapter.model_name,
+            })
+            self._save(record)
+            logger.info(
+                "content-homophily embedding %d/%d: %s",
+                index + 1, len(embedded_list), video_id,
+            )
             vector = adapter.video_vector(video_id, selected_texts[video_id])
             if vector is not None:
                 vectors[video_id] = vector

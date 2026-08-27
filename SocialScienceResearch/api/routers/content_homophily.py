@@ -30,6 +30,9 @@ from SocialScienceResearch.api.schemas import (
 from SocialScienceResearch.services.content_homophily_service import (
     ContentHomophilyService,
 )
+from SocialScienceResearch.services.community_export_service import (
+    CommunityExportService,
+)
 from SocialScienceResearch.services.pagination import Paginated, page_sorted
 
 router = APIRouter()
@@ -100,6 +103,45 @@ def list_analyses(
                        key_func=key, total=len(full))
     return Paginated(items=page.items, next_cursor=page.next_cursor,
                      has_more=page.has_more, total=page.total)
+
+
+@router.get(
+    "/network/content-homophily/export-communities",
+    tags=["content_homophily"],
+)
+def export_communities(
+    request: Request,
+    run_id: str | None = Query(None, description="Network scope run id"),
+    analysis_id: str | None = Query(None, description="Optional content-homophily analysis to attach as reference"),
+    video_ids: str | None = Query(None, description="Optional comma-separated video-id ego scope"),
+):
+    """Export a ZIP of per-community node/edge lists, the global edge list, and a
+    DETAILED per-community-pair content-similarity analysis (reused cached
+    embeddings, no new model calls)."""
+    try:
+        svc = CommunityExportService(
+            repos=request.app.state.services["repos"],
+            settings=request.app.state.settings,
+        )
+        scope_ids = None
+        if video_ids:
+            scope_ids = [v.strip() for v in video_ids.split(",") if v.strip()]
+        data = svc.export_zip(
+            run_id=run_id, video_ids=scope_ids, analysis_id=analysis_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"export failed: {exc}")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                'attachment; filename="communities_export.zip"'
+            )
+        },
+    )
 
 
 @router.get(

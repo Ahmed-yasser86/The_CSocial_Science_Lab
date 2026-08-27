@@ -30,6 +30,7 @@ import {
   listContentHomophily,
   startContentHomophily,
   exportContentHomophilySample,
+  exportContentHomophilyCommunities,
   useContentHomophily,
   type ContentHomophilyRecord,
   type ContentHomophilyResults,
@@ -276,6 +277,8 @@ export function ContentHomophilySection() {
   const [maxTranscriptVideos, setMaxTranscriptVideos] = useState(200);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportingCommunities, setExportingCommunities] = useState(false);
+  const [exportCommunitiesError, setExportCommunitiesError] = useState<string | null>(null);
 
   async function handleExportSample(format: "csv" | "json") {
     if (!record) return;
@@ -302,6 +305,29 @@ export function ContentHomophilySection() {
       setExportError(e instanceof Error ? e.message : String(e));
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleExportCommunities() {
+    setExportingCommunities(true);
+    setExportCommunitiesError(null);
+    try {
+      const blob = await exportContentHomophilyCommunities({
+        runId: runId || ((record?.params?.run_id as string | undefined) ?? null),
+        analysisId: record?.analysis_id ?? null,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "communities_export.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportCommunitiesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingCommunities(false);
     }
   }
   const [analysisId, setAnalysisId] = useState<string | null>(null);
@@ -549,6 +575,21 @@ export function ContentHomophilySection() {
                   {exportError ? (
                     <span className="text-sm text-destructive">
                       {exportError}
+                    </span>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleExportCommunities}
+                    disabled={exportingCommunities || running}
+                    data-testid="chh-export-communities"
+                  >
+                    <Download className="size-4" aria-hidden />
+                    {exportingCommunities ? "Exporting communities…" : "Export communities (ZIP)"}
+                  </Button>
+                  {exportCommunitiesError ? (
+                    <span className="text-sm text-destructive">
+                      {exportCommunitiesError}
                     </span>
                   ) : null}
                 </div>

@@ -176,6 +176,32 @@ export async function exportContentHomophilySample(
   return res.text();
 }
 
+/**
+ * Download the per-community export as a ZIP (node/edge lists per community,
+ * global edge list, and a detailed per-community-pair content-similarity
+ * analysis). Returns the response so the caller can stream it to a blob.
+ */
+export async function exportContentHomophilyCommunities(params: {
+  runId?: string | null;
+  analysisId?: string | null;
+  videoIds?: string[] | null;
+} = {}): Promise<Blob> {
+  const search = new URLSearchParams();
+  if (params.runId) search.set("run_id", params.runId);
+  if (params.analysisId) search.set("analysis_id", params.analysisId);
+  if (params.videoIds && params.videoIds.length) {
+    search.set("video_ids", params.videoIds.join(","));
+  }
+  const res = await fetch(
+    `${API_BASE}/network/content-homophily/export-communities?${search.toString()}`,
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, detail || "Communities export failed");
+  }
+  return res.blob();
+}
+
 function isTerminal(status: string | undefined): boolean {
   return (
     status === "observed" ||
