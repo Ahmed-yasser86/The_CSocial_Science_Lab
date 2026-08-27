@@ -13,6 +13,7 @@ import {
   useScraperConfig,
   useUpdateScraperConfig,
 } from "@/services/scraperConfig";
+import { BudgetDashboard } from "@/components/features/network-layer/budget-dashboard";
 
 function detectPreset(
   config: { request_delay_seconds: number; enrichment_concurrency: number } | undefined,
@@ -181,6 +182,9 @@ export function ScraperConfigPanel() {
               Current: {config.request_delay_seconds}s delay, {config.enrichment_concurrency} workers, {config.socket_timeout}s timeout
             </p>
           )}
+
+          {/* Live budget telemetry (Phase 5) */}
+          <BudgetDashboard />
         </div>
       )}
     </Card>
