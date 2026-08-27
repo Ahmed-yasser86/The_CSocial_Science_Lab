@@ -59,6 +59,12 @@ ABSOLUTE_MAX_PAIR_CAP = 10_000
 DEFAULT_NUM_PERMUTATIONS = 1_000
 #: Cap on analyzed videos per community (replacement-sampling limit, spec §3).
 DEFAULT_MAX_VIDEOS_PER_COMMUNITY = 40
+#: Replacement-sampling bounds (spec §3): keep the target usable sample by
+#: swapping unavailable videos for same-community peers. Bounded so we never
+#: scrape an entire community hunting for replacements.
+REPLACEMENT_TRIES_PER_VIDEO = 5
+MAX_REPLACEMENT_SWEEPS = 4
+REPLACEMENT_BUDGET_MIN = 20
 #: Community detection reused from NetworkAnalyticsService (seeded louvain).
 COMMUNITY_ALGORITHM = "louvain_communities(seed=42)"
 
@@ -297,6 +303,7 @@ class ContentHomophilyNullModelService:
         *,
         num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
         seed: int = 42,
+        max_videos_per_community: int = DEFAULT_MAX_VIDEOS_PER_COMMUNITY,
         observed_difference: float | None = None,
         progress: Callable[[int], None] | None = None,
         stop_requested: Callable[[], bool] | None = None,
@@ -314,6 +321,13 @@ class ContentHomophilyNullModelService:
             groups: dict[Any, list[str]] = {}
             for vid, label in shuffled.items():
                 groups.setdefault(label, []).append(vid)
+            # Same per-community cap as the observed pipeline (spec §3) so the
+            # null re-applies the identical sampling constraints.
+            if max_videos_per_community and max_videos_per_community > 0:
+                groups = {
+                    c: sorted(m)[:max_videos_per_community]
+                    for c, m in groups.items()
+                }
             within = sampler.sample_within(groups, rng)
             between = sampler.sample_between(groups, rng)
             diff = self._difference(vectors, within.pairs, between.pairs)
@@ -782,6 +796,163 @@ class ContentHomophilyService:
         except Exception as exc:  # noqa: BLE001
             logger.warning("transcript record save failed for %s: %s", video_id, exc)
 
+    # -- replacement sampling (spec §3) ------------------------------------
+    @staticmethod
+    def _replacement_candidates(
+        members: list[str], missing: str, other: str,
+        vectors: dict[str, Any], used_videos: set[str],
+        known_missing: set[str],
+    ) -> list[str]:
+        """Deterministic same-community candidate ordering for ``missing``.
+
+        Excludes the missing video itself, the pair's other video (no
+        self-pairs), and any video already known to be unavailable (we never
+        re-fetch a transcript that already failed). Prefers videos that are
+        ALREADY embedded (guaranteed usable, zero extra scraping) and, among
+        those, peers not already used by another selected pair (avoids reusing
+        selected videos whenever practical). Unembedded peers are a bounded
+        fallback that triggers a single targeted fetch.
+        """
+        base = [
+            v for v in members
+            if v != missing and v != other and v not in known_missing
+        ]
+        unused = [v for v in base if v not in used_videos]
+        used = [v for v in base if v in used_videos]
+        embedded = lambda vs: [v for v in vs if v in vectors]
+        fresh = lambda vs: [v for v in vs if v not in vectors]
+        return (
+            embedded(unused) + embedded(used) +
+            fresh(unused) + fresh(used)
+        )
+
+    def _run_replacement_sampling(
+        self, record, analysis_id, capped_groups, labels,
+        within_pairs, between_pairs, adapter, vectors, rng,
+        known_missing: set[str],
+    ) -> dict[str, Any]:
+        """Fill the target usable sample by swapping unavailable videos.
+
+        Pairs are sampled FIRST; we only ever collect transcripts/embeddings
+        for (a) the originally sampled videos and (b) the minimal set of same-
+        community replacements needed to reach the target usable sample. For
+        each sampled pair whose video is unavailable, a replacement is drawn
+        from the SAME community (preserving within/between semantics) and tried.
+        A given missing video is substituted by the SAME peer everywhere (a
+        consistent ``replacement_map``), so the comparison structure is stable
+        and we never re-fetch a confirmed-missing video. Replacement is bounded
+        (per-video tries + a global fetch budget) and reproducible (deterministic
+        candidate ordering, no RNG consumption beyond the sampling ``rng``).
+        Never treats a missing transcript as zero.
+        """
+        meta = {
+            "pairs_original_within": len(within_pairs),
+            "pairs_original_between": len(between_pairs),
+            "replacement_attempts": 0,
+            "replacement_successes": 0,
+            "replacement_fetches": 0,
+            "replacement_budget": max(
+                REPLACEMENT_BUDGET_MIN,
+                2 * (len(within_pairs) + len(between_pairs)),
+            ),
+            "budget_exhausted": False,
+            "pairs_dropped": 0,
+        }
+        replacement_map: dict[str, str] = {}
+
+        def _pick(missing, other) -> str | None:
+            community = labels.get(missing)
+            if community is None:
+                return None
+            members = capped_groups.get(community, [])
+            used_videos = {
+                v for p in (within_pairs + between_pairs) for v in p
+            }
+            selected_pairs = {
+                frozenset(p) for p in (within_pairs + between_pairs)
+            }
+            order = self._replacement_candidates(
+                members, missing, other, vectors, used_videos, known_missing)
+            # Prefer a candidate that yields a non-duplicate pair.
+            for cand in order:
+                if frozenset({cand, other}) not in selected_pairs:
+                    return cand
+            # Fallback: accept an embedded duplicate rather than drop the pair.
+            for cand in order:
+                if cand in vectors:
+                    return cand
+            return None
+
+        def _replace_one(lst, idx, missing, other) -> bool:
+            if missing in replacement_map:
+                cand = replacement_map[missing]
+                if cand in vectors:
+                    self._apply_replacement(lst, idx, missing, cand)
+                    meta["replacement_successes"] += 1
+                    return True
+                # Mapped candidate lost (shouldn't happen); clear and redo.
+                del replacement_map[missing]
+            cand = _pick(missing, other)
+            if cand is None:
+                return False
+            # A fresh candidate needs a single targeted fetch (bounded).
+            if cand not in vectors:
+                if meta["replacement_fetches"] >= meta["replacement_budget"]:
+                    return False
+                meta["replacement_fetches"] += 1
+                meta["replacement_attempts"] += 1
+                text = self._ensure_transcript(cand, analysis_id)
+                if not text or not text.strip():
+                    known_missing.add(cand)
+                    return False
+                vector = adapter.video_vector(cand, text)
+                if vector is None:
+                    known_missing.add(cand)
+                    return False
+                vectors[cand] = vector
+            replacement_map[missing] = cand
+            self._apply_replacement(lst, idx, missing, cand)
+            meta["replacement_successes"] += 1
+            self._log(record,
+                      f"replaced {missing} (community {labels.get(missing)}) "
+                      f"-> {cand}")
+            return True
+
+        for _ in range(MAX_REPLACEMENT_SWEEPS):
+            progress = False
+            for lst in (within_pairs, between_pairs):
+                for idx in range(len(lst)):
+                    a, b = lst[idx]
+                    if a in vectors and b in vectors:
+                        continue
+                    targets = []
+                    if a not in vectors:
+                        targets.append((a, b))
+                    if b not in vectors:
+                        targets.append((b, a))
+                    for missing, other in targets:
+                        if _replace_one(lst, idx, missing, other):
+                            progress = True
+                            break
+            if not progress:
+                break
+
+        for lst in (within_pairs, between_pairs):
+            for a, b in lst:
+                if a not in vectors or b not in vectors:
+                    meta["pairs_dropped"] += 1
+        meta["budget_exhausted"] = (
+            meta["replacement_fetches"] >= meta["replacement_budget"])
+        return meta
+
+    @staticmethod
+    def _apply_replacement(lst, idx, missing, cand) -> None:
+        cur = lst[idx]
+        if missing == cur[0]:
+            lst[idx] = [cand, cur[1]]
+        else:
+            lst[idx] = [cur[0], cand]
+
     # -- the pipeline ------------------------------------------------------
     def _run_analysis(self, analysis_id: str, job_id_holder: dict[str, str]) -> dict[str, Any]:
         record = self.get(analysis_id)
@@ -1001,17 +1172,40 @@ class ContentHomophilyService:
                 reason="fewer than two successful embeddings",
                 videos_without_transcript=without_transcript)
 
-        # 4b. Keep only sampled pairs whose both videos were embedded.
-        within_usable = [p for p in within.pairs if p[0] in vectors and p[1] in vectors]
-        between_usable = [p for p in between.pairs if p[0] in vectors and p[1] in vectors]
+        # 4b. Same-community replacement sampling: instead of dropping a pair
+        # when one of its videos has no transcript/embedding, swap that video
+        # for a peer from the SAME community and try it. Bounded + reproducible.
+        within_pairs = [list(p) for p in within.pairs]
+        between_pairs = [list(p) for p in between.pairs]
+        # Videos already known to be unavailable (failed the initial targeted
+        # collection) must never be re-fetched as replacement candidates.
+        known_missing = {vid for _, vid in needed if vid not in selected_texts}
+        replacement_meta = self._run_replacement_sampling(
+            record, record["analysis_id"], capped_groups, labels,
+            within_pairs, between_pairs, adapter, vectors, rng, known_missing)
+        within_usable = [(a, b) for a, b in within_pairs
+                         if a in vectors and b in vectors]
+        between_usable = [(a, b) for a, b in between_pairs
+                          if a in vectors and b in vectors]
         self._log(record,
-                  f"pairs usable after collection: within {len(within_usable)}/"
-                  f"{within.sampled}, between {len(between_usable)}/{between.sampled}")
+                  f"pairs after replacement: within {len(within_usable)}/"
+                  f"{within.sampled}, between {len(between_usable)}/"
+                  f"{between.sampled} "
+                  f"(replacements={replacement_meta['replacement_successes']}, "
+                  f"dropped={replacement_meta['pairs_dropped']})")
         if not within_usable and not between_usable:
-            return self._insufficient(record, params,
-                                      reason="no usable sampled pairs after "
-                                             "collection",
-                                      videos_without_transcript=without_transcript)
+            return self._insufficient(
+                record, params,
+                reason="no usable sampled pairs after replacement sampling",
+                videos_without_transcript=without_transcript,
+                status="insufficient_sample",
+                extra={
+                    "pairs_available_within": within.available,
+                    "pairs_sampled_within": within.sampled,
+                    "pairs_available_between": between.available,
+                    "pairs_sampled_between": between.sampled,
+                    **replacement_meta,
+                })
 
         # 5. Similarity calculation.
         self._stage(record, "similarity_calculation", "running")
@@ -1056,6 +1250,7 @@ class ContentHomophilyService:
         null_result = null_service.run(
             vectors, {v: labels[v] for v in vectors}, sampler,
             num_permutations=params["num_permutations"], seed=seed,
+            max_videos_per_community=params["max_videos_per_community"],
             observed_difference=observed_difference,
             progress=_perm_progress,
             stop_requested=lambda: self._stop_requested(job_id_holder),
@@ -1070,8 +1265,12 @@ class ContentHomophilyService:
         z_score = null_result.z_score
         if z_score is not None and math.isinf(z_score):
             z_score = None  # never serialize inf/NaN (spec §16)
+        # When replacement sampling could not recover the full target usable
+        # sample we still compute the analysis but flag it honestly.
+        status = ("insufficient_sample"
+                  if replacement_meta["pairs_dropped"] > 0 else "observed")
         results: dict[str, Any] = {
-            "status": "observed",
+            "status": status,
             "label": "CONTENT EVIDENCE",
             "within_mean_similarity": within_mean,
             "between_mean_similarity": between_mean,
@@ -1091,7 +1290,18 @@ class ContentHomophilyService:
             "null_permutations_completed": null_result.num_permutations,
             "videos_with_transcript": total_analyzed,
             "videos_without_transcript": without_transcript,
+            "videos_analyzed": len(vectors),
             "transcript_coverage": coverage,
+            "pairs_usable_within": len(within_usable),
+            "pairs_usable_between": len(between_usable),
+            "pairs_original_within": replacement_meta["pairs_original_within"],
+            "pairs_original_between": replacement_meta["pairs_original_between"],
+            "replacement_attempts": replacement_meta["replacement_attempts"],
+            "replacement_successes": replacement_meta["replacement_successes"],
+            "replacement_fetches": replacement_meta["replacement_fetches"],
+            "replacement_budget": replacement_meta["replacement_budget"],
+            "replacement_budget_exhausted": replacement_meta["budget_exhausted"],
+            "pairs_dropped_after_replacement": replacement_meta["pairs_dropped"],
             "embedding_model": adapter.model_name,
             "embedding_model_version": adapter.model_version,
             "embeddings_reused": adapter.embeddings_reused,
@@ -1155,14 +1365,15 @@ class ContentHomophilyService:
 
     def _insufficient(self, record, params, *, reason: str,
                       videos_without_transcript: int = 0,
-                      extra: dict[str, Any] | None = None) -> dict[str, Any]:
+                      extra: dict[str, Any] | None = None,
+                      status: str = "insufficient_data") -> dict[str, Any]:
         """Small-dataset handling (spec §8): honest, never fabricated zeros."""
         for name in STAGES:
             if record["progress"]["stages"].get(name) == "pending":
                 record["progress"]["stages"][name] = "skipped"
         self._log(record, f"insufficient data: {reason}")
         results: dict[str, Any] = {
-            "status": "insufficient_data",
+            "status": status,
             "label": "CONTENT EVIDENCE",
             "reason": reason,
             "within_mean_similarity": None,

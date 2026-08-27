@@ -42,6 +42,7 @@ from SocialScienceResearch.acquisition.normalization import (
     normalize_video,
     normalize_video_observation,
 )
+from pathlib import Path
 from SocialScienceResearch.config.settings import SocialScienceSettings
 from SocialScienceResearch.domain.collection import CollectionSpec
 from SocialScienceResearch.domain.enums import (
@@ -664,15 +665,21 @@ class CollectionService:
             return result
         result["info"] = info
         if effective["collect_transcripts"]:
-            try:
-                throttle.wait()
-                result["transcript"] = self._provider.extract_transcript(
-                    video.url, lang=lang
-                )
-            except TranscriptUnsupportedError as exc:
-                result["transcript_error"] = exc
-            except AcquisitionError as exc:
-                result["transcript_error"] = exc
+            # Local-first: reuse an already-collected transcript instead of
+            # re-scraping (defense against 429 rate-limiting).
+            text, existing_lang = self._read_local_transcript(video.video_id)
+            if text is not None:
+                result["transcript_reused"] = True
+            else:
+                try:
+                    throttle.wait()
+                    result["transcript"] = self._provider.extract_transcript(
+                        video.url, lang=lang
+                    )
+                except TranscriptUnsupportedError as exc:
+                    result["transcript_error"] = exc
+                except AcquisitionError as exc:
+                    result["transcript_error"] = exc
         return result
 
     def _enrich_and_persist(
@@ -738,6 +745,15 @@ class CollectionService:
                 elif result["transcript"] is not None:
                     self._persist_transcript_extract(
                         run, video, result["transcript"], reporter, lang=lang
+                    )
+                elif result.get("transcript_reused"):
+                    # Already on disk/DB: report it without re-scraping.
+                    self._report(
+                        reporter,
+                        "transcripts",
+                        succeeded=1,
+                        message=f"transcript for {video.video_id} reused from "
+                                f"local store (skipped scrape)",
                     )
         return comment_total, skipped
 
@@ -950,6 +966,38 @@ class CollectionService:
     # ------------------------------------------------------------------
     # Transcript persistence (explicit availability, never fabricated)
     # ------------------------------------------------------------------
+    def _read_local_transcript(
+        self, video_id: str
+    ) -> tuple[str | None, str | None]:
+        """Local-first lookup for an already-collected transcript.
+
+        Returns ``(text, lang)`` when a transcript with ``AVAILABLE`` status is
+        present in the store (and its artifact is readable); otherwise
+        ``(None, None)``. This mirrors the content-homophily guard so the main
+        collection pipeline never re-scrapes a transcript it already has on
+        disk/DB - the primary defense against redundant upstream calls and the
+        ``429`` rate-limiting that has been plaguing collection.
+        """
+        try:
+            record = self._repos.transcripts.get_transcript(video_id)
+        except Exception:  # noqa: BLE001
+            return None, None
+        if record is None or record.status != TranscriptStatus.AVAILABLE:
+            return None, None
+        text: str | None = None
+        reader = getattr(self._repos.transcripts, "read_artifact", None)
+        if reader is not None:
+            text = reader(video_id)
+        elif record.path:
+            path = Path(self._settings.repository.data_dir) / record.path
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                text = None
+        if not text or not text.strip():
+            return None, None
+        return text, getattr(record, "lang", None)
+
     def _collect_transcript(
         self,
         run: CollectionRun,
@@ -966,6 +1014,23 @@ class CollectionService:
         availability outcome, not a collection failure.
         """
         lang = self._settings.scraper.transcript_lang
+        # Local-first: reuse an already-collected transcript instead of
+        # re-scraping. Skipping the upstream call is the main defense against
+        # redundant requests and 429 rate-limiting.
+        text, existing_lang = self._read_local_transcript(video.video_id)
+        if text is not None:
+            log_success(
+                f"video {video.video_id}: transcript reused from local store "
+                f"(skip upstream scrape)"
+            )
+            self._report(
+                reporter,
+                "transcripts",
+                succeeded=1,
+                message=f"transcript for {video.video_id} reused from local "
+                        f"store (skipped scrape)",
+            )
+            return
         try:
             extract = self._provider.extract_transcript(video.url, lang=lang)
         except LiveEventSkipError:
