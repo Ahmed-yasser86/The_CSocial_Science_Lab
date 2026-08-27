@@ -659,6 +659,14 @@ def create_app(
         retry_backoff=settings.scraper.retry_backoff,
         transcript_provider=settings.scraper.transcript_provider,
     )
+    # Load any persisted proxy credentials from the workspace data dir.
+    from SocialScienceResearch.config.runtime_config import (
+        init_proxy_persistence,
+        load_proxy_fields,
+    )
+
+    init_proxy_persistence(settings.repository.data_dir)
+    load_proxy_fields(runtime_scraper_config)
     budget_controller = None
     circuit_breaker = None
     task_queue = None
@@ -703,6 +711,7 @@ def create_app(
             budget_controller=budget_controller,
             circuit_breaker=circuit_breaker,
             task_queue=task_queue,
+            runtime_config=runtime_scraper_config,
         )
         _free = (
             FreeTranscriptApiProvider(

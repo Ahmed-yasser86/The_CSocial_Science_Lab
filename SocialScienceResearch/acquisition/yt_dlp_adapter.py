@@ -193,6 +193,7 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         budget_controller: "BudgetController | None" = None,
         circuit_breaker: "CircuitBreakerRegistry | None" = None,
         task_queue: "PriorityTaskQueue | None" = None,
+        runtime_config: Any = None,
     ) -> None:
         self._settings = settings or ScraperSettings()
         self._collection = collection or CollectionSettings()
@@ -202,6 +203,7 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         )
         self._circuit_breaker = circuit_breaker
         self._task_queue = task_queue
+        self._runtime_config: Any = runtime_config
 
     # ------------------------------------------------------------------
     # Public interface (routed through the budgeted retry policy, the optional
@@ -210,6 +212,18 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
     def _session_key(self) -> str:
         """Identity the Circuit Breaker keys on: the configured proxy, or default."""
         return self._settings.proxy or "default"
+
+    def set_runtime_config(self, config: Any) -> None:
+        """Receive the mutable runtime config so proxy changes apply live."""
+        self._runtime_config = config
+
+    def _resolve_proxy(self) -> str | None:
+        """Active proxy URL: runtime config wins, else the frozen settings value."""
+        if self._runtime_config is not None:
+            url = self._runtime_config.proxy_url()
+            if url:
+                return url
+        return self._settings.proxy or None
 
     def _priority_for(self, operation: str) -> int:
         """Map an operation to its pipeline priority (lower = higher priority)."""
@@ -900,6 +914,32 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             opts["remote_components"] = ["ejs:github"]
         if self._settings.proxy:
             opts["proxy"] = self._settings.proxy
+        proxy_url = self._resolve_proxy()
+        if proxy_url:
+            opts["proxy"] = proxy_url
+        # YouTube authentication cookies - required to clear the
+        # "Sign in to confirm you're not a bot" challenge. The runtime config
+        # carries the mode/browser/path; the frozen settings value is the
+        # fallback so cookies can also be pinned via environment config.
+        cookie_mode = (
+            getattr(self._runtime_config, "youtube_cookies_mode", None)
+            or getattr(self._settings, "youtube_cookies_mode", None)
+            or "none"
+        )
+        if cookie_mode == "browser":
+            browser = (
+                getattr(self._runtime_config, "youtube_cookies_browser", None)
+                or getattr(self._settings, "youtube_cookies_browser", None)
+                or "chrome"
+            )
+            opts["cookiesfrombrowser"] = (browser,)
+        elif cookie_mode == "file":
+            cookie_path = (
+                getattr(self._runtime_config, "youtube_cookies_path", None)
+                or getattr(self._settings, "youtube_cookies_path", None)
+            )
+            if cookie_path:
+                opts["cookiefile"] = cookie_path
         if self._settings.impersonate:
             opts["impersonate"] = self._settings.impersonate
         return opts

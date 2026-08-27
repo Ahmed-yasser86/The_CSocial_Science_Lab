@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FlaskConical,
   GitCompare,
+  Globe,
   Layers,
   LayoutDashboard,
   ListOrdered,
@@ -68,6 +69,11 @@ const COLLECT_ENTRY: NavEntry = {
   icon: Compass,
 };
 const DOCS_ENTRY: NavEntry = { href: "/docs", label: "Docs", icon: BookOpen };
+const PROXY_ENTRY: NavEntry = {
+  href: "/proxy",
+  label: "Proxy IP",
+  icon: Globe,
+};
 
 const ANALYZE_ENTRIES: NavEntry[] = [
   { href: "/network", label: "Overview", icon: Network },
@@ -91,6 +97,7 @@ const TOP_LEVEL_ENTRIES: NavEntry[] = [
   WORKSPACE_ENTRY,
   COLLECT_ENTRY,
   DOCS_ENTRY,
+  PROXY_ENTRY,
 ];
 
 function routeIsActive(pathname: string, href: string): boolean {
@@ -295,6 +302,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <NavLink
                   entry={DOCS_ENTRY}
                   active={routeIsActive(pathname, DOCS_ENTRY.href)}
+                  context={context}
+                />
+                <NavLink
+                  entry={PROXY_ENTRY}
+                  active={routeIsActive(pathname, PROXY_ENTRY.href)}
                   context={context}
                 />
               </div>
