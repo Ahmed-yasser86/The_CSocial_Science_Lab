@@ -35,6 +35,7 @@ import { exportVideoMetadata, type ExportNode } from "@/lib/export-graph";
 import { NetworkGraph, type GraphLink, type GraphNode, type NetworkGraphProps } from "@/components/features/network-graph";
 import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
 import { StatisticalTestPanel } from "@/components/features/network-full/statistical-test-panel";
+import { ReproducibilityFooter } from "@/components/features/network-full/reproducibility-footer";
 import { LayerPanel } from "@/components/features/network-layer/layer-panel";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
 import { ExpansionPanel } from "@/components/features/network-expansion/expansion-panel";
@@ -549,6 +550,18 @@ export function FullNetworkView() {
 
   const graphProps = activeGraphProps();
 
+  // N5: reproducibility footer for the current slice (shared across tabs).
+  const graphRunIds = graphQuery.data?.runs?.map((r) => r.run_id) ?? [];
+  const graphWeightSpec = graphQuery.data?.weight_spec ?? null;
+  const reproducibilityFooter = graphQuery.data ? (
+    <ReproducibilityFooter
+      algorithm="networkx"
+      seed={42}
+      weightSpec={graphWeightSpec}
+      runIds={graphRunIds}
+    />
+  ) : null;
+
   // All video metadata for the currently visible network slice (client-side
   // export, independent of the server-side /network/export endpoint).
   const metadataNodes: ExportNode[] | null = useMemo(() => {
@@ -770,6 +783,7 @@ export function FullNetworkView() {
           ) : (
             <LoadingState label="Loading network metrics…" />
           )}
+          {reproducibilityFooter}
         </TabsContent>
 
         <TabsContent value="insights" className="mt-4 space-y-4">
@@ -781,6 +795,7 @@ export function FullNetworkView() {
           <NetworkRolesPanel runId={runId} />
           <NetworkCommunityInsightsPanel runId={runId} />
           <StatisticalTestPanel runId={runId} />
+          {reproducibilityFooter}
         </TabsContent>
 
         <TabsContent value="temporal" className="mt-4 space-y-4">
@@ -1122,7 +1137,8 @@ export function FullNetworkView() {
                 />
               </div>
             ) : null}
-          </Card>
+            </Card>
+          {reproducibilityFooter}
         </TabsContent>
         <TabsContent value="layers" className="mt-4">
           <LayerPanel runId={runId ?? graphRunId} />

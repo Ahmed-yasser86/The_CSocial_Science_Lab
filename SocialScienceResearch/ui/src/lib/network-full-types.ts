@@ -200,6 +200,7 @@ export interface NetworkGraphPayload {
   channels: ChannelFacet[];
   node_count: number;
   edge_count: number;
+  weight_spec?: Record<string, unknown> | null;
 }
 
 export interface ChannelGraphNode {
@@ -235,6 +236,7 @@ export interface ChannelGraphPayload {
   node_count: number;
   edge_count: number;
   unattributed_edges: number;
+  weight_spec?: Record<string, unknown> | null;
 }
 
 export type GraphProjection = "video" | "channel";

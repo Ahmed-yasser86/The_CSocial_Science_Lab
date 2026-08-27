@@ -32,6 +32,7 @@ import {
   CommenterCommunityInsightsPanel,
   CommenterRolesPanel,
 } from "@/components/features/network-full/roles-community-panels";
+import { ReproducibilityFooter } from "@/components/features/network-full/reproducibility-footer";
 import {
   EXPORT_FORMATS,
   type CommenterProjection,
@@ -63,7 +64,13 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export function AudienceNetworkView({ runId }: { runId: string | null }) {
+export function AudienceNetworkView({
+  runId,
+  jobIds,
+}: {
+  runId: string | null;
+  jobIds?: string[] | null;
+}) {
   const [tab, setTab] = useState<"graph" | "metrics">("graph");
   const [projection, setProjection] = useState<CommenterProjection>("commenter");
   const [weight, setWeight] = useState<string>("co_comment:jaccard");
@@ -71,23 +78,27 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
   const [topN, setTopN] = useState<number>(200);
   const [weighted, setWeighted] = useState<boolean>(true);
 
+  const hasScope = !!runId || !!(jobIds && jobIds.length > 0);
+
   const graphQuery = useCommenterNetworkGraph({
     runId,
+    jobIds,
     projection,
     weight,
     minShared,
     topN,
     weighted,
-    enabled: !!runId,
+    enabled: hasScope,
   });
   const metricsQuery = useCommenterNetworkMetrics({
     runId,
+    jobIds,
     projection,
     weight,
     minShared,
     topN,
     weighted,
-    enabled: !!runId,
+    enabled: hasScope,
   });
 
   const graphNodes = useMemo<GraphNode[]>(() => {
@@ -140,12 +151,23 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
     return comm ? new Set(comm.node_ids) : null;
   }, [highlightedCommunityId, audienceCommunities]);
 
-  if (!runId) {
+  // N5: reproducibility footer for the current audience slice.
+  const audienceWeightSpec = graphQuery.data?.weight_spec ?? null;
+  const reproducibilityFooter = graphQuery.data ? (
+    <ReproducibilityFooter
+      algorithm="networkx"
+      seed={42}
+      weightSpec={audienceWeightSpec}
+      runIds={runId ? [runId] : []}
+    />
+  ) : null;
+
+  if (!hasScope) {
     return (
       <Card className="p-4">
         <EmptyState
-          title="Select a collection run"
-          description="Choose a collection run from the Scope picker above to build the audience (commenter) network for that slice."
+          title="Select a scope"
+          description="Choose a collection run (or a collection job) from the Scope picker above to build the audience (commenter) network for that slice."
           className="min-h-32"
         />
       </Card>
@@ -300,6 +322,7 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
                     </span>
                   ))}
                 </div>
+                {reproducibilityFooter}
               </>
             )}
           </Card>
@@ -365,6 +388,7 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
                 </div>
               </>
             )}
+            {reproducibilityFooter}
           </Card>
         </TabsContent>
 
