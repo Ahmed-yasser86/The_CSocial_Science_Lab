@@ -7,6 +7,9 @@ import {
   ExternalLink,
   FilterX,
   Loader2,
+  Maximize2,
+  Minus,
+  Plus,
   Search,
   Sparkles,
   Users,
@@ -48,10 +51,25 @@ import {
   GRAPH_NODE_SIZE_MIN,
 } from "@/lib/lab-session";
 
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
+const ForceGraph2DImpl = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
   loading: () => <LoadingState label="Rendering network…" />,
 });
+
+// react-force-graph-2d's published types omit the node drag callbacks that the
+// library supports at runtime. Augment the component type locally (without
+// weakening type-safety for the rest of the props) so drag handlers compile.
+type ForceGraph2DDragProps = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onNodeDragStart?: (node: any) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onNodeDrag?: (node: any) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onNodeDragEnd?: (node: any) => void;
+};
+const ForceGraph2D = ForceGraph2DImpl as unknown as React.ComponentType<
+  React.ComponentProps<typeof ForceGraph2DImpl> & ForceGraph2DDragProps
+>;
 
 export interface GraphNode {
   id: string;
@@ -233,7 +251,7 @@ export interface GraphNodeFilter {
 /** Label rendering policy: hover-only (default) or always-on. */
 export type GraphLabelsMode = "hover" | "always";
 
-const MIN_HIT_RADIUS = 7;
+const MIN_HIT_RADIUS = 9;
 
 /** Decide whether a node's composite text label is drawn this frame.
  * Labels are hidden by default to declutter dense graphs; they appear for the
@@ -519,6 +537,24 @@ export function NetworkGraph({
     }
   }
 
+  // Camera (viewport) zoom controls, independent of per-node size. force-graph
+  // exposes an absolute `zoom(k)` setter and a `zoom()` getter for the current
+  // scale; we step multiplicatively so each click feels linear to the user.
+  function currentZoom(): number {
+    const z = graphRef.current?.zoom?.();
+    return typeof z === "number" && z > 0 ? z : 1;
+  }
+
+  function zoomBy(factor: number) {
+    const g = graphRef.current;
+    if (!g?.zoom) return;
+    g.zoom(Math.min(12, Math.max(0.15, currentZoom() * factor)), 250);
+  }
+
+  function zoomToFit() {
+    graphRef.current?.zoomToFit?.(350, 48);
+  }
+
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
     const g = graphRef.current;
@@ -716,6 +752,39 @@ export function NetworkGraph({
               Labels
             </label>
             <div
+              className="flex items-center gap-1"
+              role="group"
+              aria-label="Zoom the graph layout (camera)"
+            >
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => zoomBy(1 / 1.4)}
+                aria-label="Zoom out"
+                title="Zoom out"
+              >
+                <Minus className="size-3.5" aria-hidden />
+              </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={zoomToFit}
+                aria-label="Fit graph to view"
+                title="Fit graph to view"
+              >
+                <Maximize2 className="size-3.5" aria-hidden />
+              </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => zoomBy(1.4)}
+                aria-label="Zoom in"
+                title="Zoom in"
+              >
+                <Plus className="size-3.5" aria-hidden />
+              </Button>
+            </div>
+            <div
               className="flex flex-wrap items-center gap-x-3 gap-y-1"
               role="group"
               aria-label="Filter by node kind"
@@ -900,6 +969,17 @@ export function NetworkGraph({
               x?: number;
               y?: number;
             }) => {
+              const id = String(node?.id ?? "");
+              // Treat a near-zero-travel drag as a click (trackpad jitter):
+              // the pre-drag position is the last recorded layout position.
+              const start = positionsRef.current.get(id);
+              if (start) {
+                const moved = Math.hypot(
+                  (node.x ?? 0) - start.x,
+                  (node.y ?? 0) - start.y,
+                );
+                if (moved < 3) setInspectId(id);
+              }
               rememberPosition(node);
             }}
             onEngineStop={() => {

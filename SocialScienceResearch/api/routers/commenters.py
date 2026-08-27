@@ -200,6 +200,72 @@ def commenter_network_metrics(
 
 
 @router.get(
+    "/network/commenters/roles",
+    tags=["network"],
+)
+def commenter_network_roles(
+    request: Request,
+    video_ids: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    run_ids: str | None = Query(None),
+    projection: str = Query("commenter"),
+    weight: str | None = Query(None),
+    min_shared: int | None = Query(None, ge=1),
+    top_n: int | None = Query(None, ge=1, le=1000),
+    weighted: bool = Query(True),
+    role_model: str = Query("core_broker_periphery_bridge"),
+):
+    """Structural roles for the audience graph (N3): core / broker / bridge / periphery."""
+    if projection not in _COMMENTER_PROJECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"projection must be one of {_COMMENTER_PROJECTIONS}",
+        )
+    spec = _resolve_weight(weight, min_shared, top_n)
+    return _network_service(request).roles(
+        video_ids=_id_list(video_ids),
+        channel_ids=_id_list(channel_ids),
+        run_ids=_id_list(run_ids),
+        projection=projection,
+        weight=spec,
+        weighted=weighted,
+        role_model=role_model,
+    )
+
+
+@router.get(
+    "/network/commenters/community-insights",
+    tags=["network"],
+)
+def commenter_network_community_insights(
+    request: Request,
+    video_ids: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    run_ids: str | None = Query(None),
+    projection: str = Query("commenter"),
+    weight: str | None = Query(None),
+    min_shared: int | None = Query(None, ge=1),
+    top_n: int | None = Query(None, ge=1, le=1000),
+    weighted: bool = Query(True),
+):
+    """Per-community composition for the audience graph (N3)."""
+    if projection not in _COMMENTER_PROJECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"projection must be one of {_COMMENTER_PROJECTIONS}",
+        )
+    spec = _resolve_weight(weight, min_shared, top_n)
+    return _network_service(request).community_insights(
+        video_ids=_id_list(video_ids),
+        channel_ids=_id_list(channel_ids),
+        run_ids=_id_list(run_ids),
+        projection=projection,
+        weight=spec,
+        weighted=weighted,
+    )
+
+
+@router.get(
     "/network/commenters/export",
     tags=["network"],
 )

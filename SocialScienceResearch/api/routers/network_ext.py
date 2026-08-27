@@ -385,13 +385,14 @@ def network_centralities(
         "the spec's edge weights (eigenvector/betweenness/degree).",
     ),
 ):
-    """Per-node centrality battery for the rendered graph slice (N0).
+    """Full research-grade centrality battery for the rendered graph slice (N0/N3).
 
-    Returns ``degree``, ``closeness``, ``eigenvector``, ``betweenness`` and
-    ``community_id`` for every node in the same subgraph ``/network/graph``
-    would render for the given scope. These are research-grade positions:
-    betweenness flags brokerage across clusters, eigenvector the core of the
-    recommendation space, degree the recommender's view of popularity.
+    Returns, per node, ``degree``, ``closeness``, ``eigenvector``, ``betweenness``,
+    ``pagerank``, ``harmonic``, ``constraint`` (Burt), ``effective_size`` (Burt),
+    ``bridging`` (normalised betweenness) and ``clustering``, plus ``community_id``.
+    The graph-level ``global`` block carries ``assortativity``. When the slice is
+    larger than the approximation threshold the ``betweenness``/``bridging`` scores
+    are k-sampled and the response is flagged ``approximate: true``.
 
     Mirrors the scope parsing of ``/network/graph`` so the centralities always
     describe exactly what is on screen.
@@ -427,7 +428,7 @@ def network_centralities(
         else None
     )
     channel_filter_ids = parsed_channel_ids or ([channel_id] if channel_id else None)
-    nodes = service.centralities(
+    return service.centralities(
         run_id=run_id,
         channel_id=channel_id,
         channel_ids=channel_filter_ids,
@@ -438,11 +439,129 @@ def network_centralities(
         weight_spec=weight,
         weighted=weighted,
     )
-    return {
-        "nodes": nodes,
-        "algorithm": "networkx",
-        "computed_at": utcnow().isoformat(),
-    }
+
+
+def _parse_network_scope(
+    *,
+    run_id: str | None,
+    channel_id: str | None,
+    channel_ids: str | None,
+    channel_scope: str,
+    layer_index: int | None,
+    video_ids: str | None,
+    projection: str,
+    weight: str | None,
+    weighted: bool,
+    role_model: str | None = None,
+) -> dict[str, object]:
+    """Validate + normalise the shared ``/network/*`` scope query params."""
+    from fastapi import HTTPException
+
+    if projection not in ("video", "channel"):
+        raise HTTPException(status_code=400, detail="projection must be video or channel")
+    if channel_scope not in ("source", "target", "either"):
+        raise HTTPException(
+            status_code=400, detail="channel_scope must be source, target or either"
+        )
+    if weight is not None:
+        from SocialScienceResearch.services.weight_spec import (
+            WeightSpecError,
+            parse_weight_spec,
+        )
+
+        try:
+            parse_weight_spec(weight)
+        except WeightSpecError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    parsed_channel_ids = (
+        [c for c in (p.strip() for p in (channel_ids or "").split(",")) if c]
+        if channel_ids
+        else None
+    )
+    parsed_video_ids = (
+        [v for v in (p.strip() for p in (video_ids or "").split(",")) if v]
+        if video_ids
+        else None
+    )
+    channel_filter_ids = parsed_channel_ids or ([channel_id] if channel_id else None)
+    kwargs: dict[str, object] = dict(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_filter_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        video_ids=parsed_video_ids,
+        projection=projection,
+        weight_spec=weight,
+        weighted=weighted,
+    )
+    if role_model is not None:
+        kwargs["role_model"] = role_model
+    return kwargs
+
+
+@router.get(
+    "/network/roles",
+    tags=["network"],
+)
+def network_roles(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    channel_scope: str = Query("source"),
+    layer_index: int | None = Query(None, ge=0),
+    video_ids: str | None = Query(None),
+    projection: str = Query("video"),
+    weight: str | None = Query(None),
+    weighted: bool = Query(False),
+    role_model: str = Query("core_broker_periphery_bridge"),
+):
+    """Structural roles for the rendered slice (N3): core / broker / bridge / periphery."""
+    kwargs = _parse_network_scope(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        video_ids=video_ids,
+        projection=projection,
+        weight=weight,
+        weighted=weighted,
+        role_model=role_model,
+    )
+    return _service(request).roles(**kwargs)
+
+
+@router.get(
+    "/network/community-insights",
+    tags=["network"],
+)
+def network_community_insights(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    channel_scope: str = Query("source"),
+    layer_index: int | None = Query(None, ge=0),
+    video_ids: str | None = Query(None),
+    projection: str = Query("video"),
+    weight: str | None = Query(None),
+    weighted: bool = Query(False),
+):
+    """Per-community composition (dominant channels, top centralities) for the slice (N3)."""
+    kwargs = _parse_network_scope(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        video_ids=video_ids,
+        projection=projection,
+        weight=weight,
+        weighted=weighted,
+    )
+    return _service(request).community_insights(**kwargs)
 
 
 @router.get(

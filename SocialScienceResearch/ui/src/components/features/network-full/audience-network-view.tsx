@@ -28,6 +28,10 @@ import {
   useCommenterNetworkMetrics,
 } from "@/services/networkFull";
 import {
+  CommenterCommunityInsightsPanel,
+  CommenterRolesPanel,
+} from "@/components/features/network-full/roles-community-panels";
+import {
   EXPORT_FORMATS,
   type CommenterProjection,
 } from "@/lib/network-full-types";
@@ -206,6 +210,8 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
         <TabsList>
           <TabsTrigger value="graph">Graph</TabsTrigger>
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
+          <TabsTrigger value="roles">Roles</TabsTrigger>
+          <TabsTrigger value="communities">Communities</TabsTrigger>
         </TabsList>
 
         <TabsContent value="graph" className="mt-4 space-y-4">
@@ -319,6 +325,18 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
               </>
             )}
           </Card>
+        </TabsContent>
+
+        <TabsContent value="roles" className="mt-4 space-y-4">
+          <CommenterRolesPanel runId={runId} projection={projection} weight={weight} />
+        </TabsContent>
+
+        <TabsContent value="communities" className="mt-4 space-y-4">
+          <CommenterCommunityInsightsPanel
+            runId={runId}
+            projection={projection}
+            weight={weight}
+          />
         </TabsContent>
       </Tabs>
     </div>

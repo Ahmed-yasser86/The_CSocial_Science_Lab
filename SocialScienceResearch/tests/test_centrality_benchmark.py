@@ -74,7 +74,7 @@ def test_centrality_matches_networkx_reference(tmp_path) -> None:
     repos = build_excel_repositories(RepositorySettings(data_dir=str(tmp_path), dataset_name="kc"))
     _seed_karate(repos)
     svc = NetworkAnalyticsService(repos)
-    got = svc.centralities()
+    got = svc.centralities()["nodes"]
 
     G = _reference_digraph()
     ref_deg = nx.degree_centrality(G)
@@ -97,7 +97,7 @@ def test_karate_club_known_facts(tmp_path) -> None:
     repos = build_excel_repositories(RepositorySettings(data_dir=str(tmp_path), dataset_name="kc"))
     _seed_karate(repos)
     svc = NetworkAnalyticsService(repos)
-    got = svc.centralities()
+    got = svc.centralities()["nodes"]
 
     deg = {n: c["degree"] for n, c in got.items()}
     bet = {n: c["betweenness"] for n, c in got.items()}
@@ -174,10 +174,41 @@ def test_centralities_endpoint_matches_service(tmp_path) -> None:
 
     # The endpoint must describe exactly what the service computes.
     svc = NetworkAnalyticsService(repos)
-    assert body["nodes"] == svc.centralities(run_id="kc")
+    assert body["nodes"] == svc.centralities(run_id="kc")["nodes"]
 
 
 def test_centralities_endpoint_rejects_bad_projection(tmp_path) -> None:
     client, _ = _client_with_karate(tmp_path)
     resp = client.get(f"{PREFIX}/network/centralities?run_id=kc&projection=bogus")
     assert resp.status_code == 400
+
+
+def test_roles_endpoint_assigns_structural_roles(tmp_path) -> None:
+    client, _ = _client_with_karate(tmp_path)
+    resp = client.get(f"{PREFIX}/network/roles?run_id=kc")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role_model"] == "core_broker_periphery_bridge"
+    roles = {n: d["role"] for n, d in body["nodes"].items()}
+    # Karate-club administrator (33) is the highest-degree actor and lands in
+    # the eigenvector top-quartile -> core. The instructor (0) is the
+    # highest-betweenness actor; it is assigned core or broker depending on the
+    # eigenvector cutoff, both of which are valid structural readings.
+    assert roles["33"] == "core"
+    assert roles["0"] in ("core", "broker")
+    assert "core" in roles.values()
+    assert "periphery" in roles.values()
+    assert set(roles.values()) <= {"core", "broker", "bridge", "periphery"}
+
+
+def test_community_insights_endpoint_reports_composition(tmp_path) -> None:
+    client, _ = _client_with_karate(tmp_path)
+    resp = client.get(f"{PREFIX}/network/community-insights?run_id=kc")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "communities" in body
+    assert len(body["communities"]) >= 1
+    comm = body["communities"][0]
+    assert "dominant_channels" in comm
+    assert "top_eigenvector" in comm
+    assert "top_betweenness" in comm

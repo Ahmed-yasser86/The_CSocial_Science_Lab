@@ -334,12 +334,12 @@ def test_export_nondefault_adds_weight_definition(tmp_path):
 
 def test_centralities_weighted_differs(tmp_path):
     svc, _ = _service_with_karate(tmp_path)
-    base = svc.centralities(run_id="kc")
+    base = svc.centralities(run_id="kc")["nodes"]
     weighted = svc.centralities(
         run_id="kc",
         weight_spec="recommendation:reciprocal_position",
         weighted=True,
-    )
+    )["nodes"]
     assert set(base) == set(weighted)
     # Weighted eigenvector/betweenness diverge from the structural defaults.
     assert any(

@@ -47,6 +47,10 @@ import { Toast } from "@/components/features/state";
 import { JobProgressCard } from "@/components/features/job-progress-card";
 import { AddToProjectDialog } from "@/components/features/network-full/add-to-project-dialog";
 import { NetworkInsightsPanel } from "@/components/features/network-full/network-insights-panel";
+import {
+  NetworkCommunityInsightsPanel,
+  NetworkRolesPanel,
+} from "@/components/features/network-full/roles-community-panels";
 import { NetworkMatrices } from "@/components/features/network-full/network-matrices";
 import { SamplingFeasibility } from "@/components/features/network-full/sampling-feasibility";
 import { ChannelsPanel } from "@/components/features/network-full/channels-panel";
@@ -737,6 +741,8 @@ export function FullNetworkView() {
             graph={graphProjection === "video" && graphQuery.data ? (graphQuery.data as NetworkGraphPayload) : undefined}
             loading={metrics.isLoading}
           />
+          <NetworkRolesPanel runId={runId} />
+          <NetworkCommunityInsightsPanel runId={runId} />
         </TabsContent>
 
         <TabsContent value="temporal" className="mt-4 space-y-4">

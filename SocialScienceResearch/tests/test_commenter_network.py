@@ -248,3 +248,24 @@ def test_export_endpoint_200(client):
 def test_export_invalid_format_400(client):
     resp = client.get(f"{PREFIX}/network/commenters/export?video_ids=v1,v2&format=bogus")
     assert resp.status_code == 400
+
+
+def test_roles_endpoint_200(client):
+    resp = client.get(f"{PREFIX}/network/commenters/roles?video_ids=v1,v2")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role_model"] == "core_broker_periphery_bridge"
+    assert set(body["nodes"]) == {"UCid_alice", "UCid_bob", "Carol"}
+    roles = {n: d["role"] for n, d in body["nodes"].items()}
+    assert set(roles.values()) <= {"core", "broker", "bridge", "periphery"}
+
+
+def test_community_insights_endpoint_200(client):
+    resp = client.get(f"{PREFIX}/network/commenters/community-insights?video_ids=v1,v2")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "communities" in body
+    assert len(body["communities"]) >= 1
+    comm = body["communities"][0]
+    assert "dominant_kinds" in comm
+    assert "top_bridges" in comm

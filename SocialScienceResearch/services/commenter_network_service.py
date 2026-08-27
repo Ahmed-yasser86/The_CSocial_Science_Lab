@@ -43,6 +43,7 @@ from SocialScienceResearch.services.network_analytics_service import (
     GraphNode,
     NetworkAnalyticsService,
     NetworkGraph,
+    _percentile_threshold,
     centrality_battery,
 )
 from SocialScienceResearch.services.weight_spec import (
@@ -98,6 +99,12 @@ class CommenterCentrality(_Base):
     closeness: float = 0.0
     eigenvector: float = 0.0
     betweenness: float = 0.0
+    pagerank: float = 0.0
+    harmonic: float = 0.0
+    constraint: float = 0.0
+    effective_size: float = 0.0
+    bridging: float = 0.0
+    clustering: float = 0.0
     community_id: float = -1.0
 
 
@@ -315,7 +322,7 @@ class CommenterNetworkService:
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
     ) -> CommenterNetworkCentralities:
-        """Per-node centrality battery (degree/closeness/eigenvector/betweenness)."""
+        """Full per-node centrality battery for the audience graph (N0/N3)."""
         built = self._compute(
             video_ids=video_ids,
             channel_ids=channel_ids,
@@ -331,6 +338,12 @@ class CommenterNetworkService:
                 closeness=vals["closeness"],
                 eigenvector=vals["eigenvector"],
                 betweenness=vals["betweenness"],
+                pagerank=vals["pagerank"],
+                harmonic=vals["harmonic"],
+                constraint=vals["constraint"],
+                effective_size=vals["effective_size"],
+                bridging=vals["bridging"],
+                clustering=vals["clustering"],
                 community_id=float(built.node_community.get(nid, -1)),
             )
             for nid, vals in battery.items()
@@ -341,6 +354,127 @@ class CommenterNetworkService:
             algorithm="networkx",
             computed_at=_now(),
         )
+
+    def roles(
+        self,
+        *,
+        video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        projection: str = "commenter",
+        weight: str = "co_comment:jaccard",
+        weighted: bool = True,
+        role_model: str = "core_broker_periphery_bridge",
+    ) -> dict[str, Any]:
+        """Structural roles for the audience graph (N3).
+
+        Mirrors ``NetworkAnalyticsService.roles``: eigenvector top-quartile →
+        ``core`` (core audiences), betweenness top-decile → ``broker`` (bridge
+        audiences), degree bottom-quartile → ``periphery``, else ``bridge``.
+        """
+        built = self._compute(
+            video_ids=video_ids,
+            channel_ids=channel_ids,
+            run_ids=run_ids,
+            projection=projection,
+            weight=weight,
+            weighted=weighted,
+        )
+        if built.G.number_of_nodes() == 0:
+            return {
+                "nodes": {},
+                "role_model": role_model,
+                "algorithm": "networkx",
+                "computed_at": _now(),
+            }
+        approximate = built.G.number_of_nodes() > 5000
+        battery = centrality_battery(built.G, weighted=built.weighted, approximate=approximate)
+        ev_vals = [c["eigenvector"] for c in battery.values()]
+        bt_vals = [c["betweenness"] for c in battery.values()]
+        deg_vals = [c["degree"] for c in battery.values()]
+        ev_q = _percentile_threshold(ev_vals, 0.75)
+        bt_q = _percentile_threshold(bt_vals, 0.90)
+        deg_low = _percentile_threshold(deg_vals, 0.25)
+        nodes: dict[str, dict[str, Any]] = {}
+        for nid, c in battery.items():
+            if c["eigenvector"] >= ev_q:
+                role = "core"
+            elif c["betweenness"] >= bt_q:
+                role = "broker"
+            elif c["degree"] <= deg_low:
+                role = "periphery"
+            else:
+                role = "bridge"
+            nodes[nid] = {
+                "role": role,
+                "community_id": float(built.node_community.get(nid, -1)),
+            }
+        return {
+            "nodes": nodes,
+            "role_model": role_model,
+            "approximate": approximate,
+            "algorithm": "networkx",
+            "computed_at": _now(),
+        }
+
+    def community_insights(
+        self,
+        *,
+        video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        projection: str = "commenter",
+        weight: str = "co_comment:jaccard",
+        weighted: bool = True,
+    ) -> dict[str, Any]:
+        """Per-community composition for the audience graph (N3).
+
+        For each community reports its size, the dominant node *kinds*
+        (commenter/video/channel counts) and the top bridge audiences
+        (highest betweenness commenter nodes) observed in that community.
+        """
+        built = self._compute(
+            video_ids=video_ids,
+            channel_ids=channel_ids,
+            run_ids=run_ids,
+            projection=projection,
+            weight=weight,
+            weighted=weighted,
+        )
+        if built.G.number_of_nodes() == 0:
+            return {"communities": [], "algorithm": "networkx", "computed_at": _now()}
+        battery = centrality_battery(built.G, weighted=built.weighted)
+        by_community: dict[int, list[str]] = {}
+        for nid in built.G.nodes:
+            cid = int(built.node_community.get(nid, -1))
+            by_community.setdefault(cid, []).append(nid)
+        communities = []
+        for cid, members in by_community.items():
+            kind_counts: Counter = Counter(
+                built.node_meta.get(m, {}).get("kind", "other") for m in members
+            )
+            top_bt = sorted(
+                (m for m in members if built.node_meta.get(m, {}).get("kind") == "commenter"),
+                key=lambda m: battery[m]["betweenness"],
+                reverse=True,
+            )[:10]
+            communities.append(
+                {
+                    "community_id": cid,
+                    "size": len(members),
+                    "dominant_kinds": dict(kind_counts),
+                    "top_bridges": [
+                        {
+                            "id": m,
+                            "label": built.node_meta.get(m, {}).get("label"),
+                            "betweenness": battery[m]["betweenness"],
+                        }
+                        for m in top_bt
+                    ],
+                }
+            )
+        communities.sort(key=lambda c: c["size"], reverse=True)
+        return {"communities": communities, "algorithm": "networkx", "computed_at": _now()}
 
     def export_network(
         self,

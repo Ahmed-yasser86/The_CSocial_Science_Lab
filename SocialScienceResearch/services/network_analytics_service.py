@@ -58,15 +58,22 @@ from threading import RLock
 from typing import Any
 
 import networkx as nx
+from collections import Counter
 from networkx.algorithms.community import (
     greedy_modularity_communities,
     louvain_communities,
     modularity,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime, timezone
+
+
+def utcnow() -> datetime:
+    """UTC timestamp used for reproducibility footers / provenance."""
+    return datetime.now(timezone.utc)
 
 from SocialScienceResearch.persistence.base import Repositories
-from SocialScienceResearch.services.recommendation_graph_service import (
+from SocialScienceResearch.services.recommendation_graph_service import (  # noqa: E402
     RecommendationGraphService,
 )
 from SocialScienceResearch.services.statistics_service import StatisticsService
@@ -83,16 +90,30 @@ DEFAULT_PAGE_SIZE = 50
 ChannelScope = str  # "source" | "target" | "either"
 
 
+# Beyond this many nodes, betweenness switches to the k-sampling approximation
+# (networkx betweenness_centrality(k=..., seed=42)) and the response is flagged
+# ``approximate: true`` so downstream consumers never mistake it for exact.
+_APPROX_NODE_THRESHOLD = 5000
+
+
 def centrality_battery(
     graph: "nx.Graph",
     *,
     weighted: bool = False,
     weight_attr: str = "weight",
+    approximate: bool = False,
 ) -> dict[str, dict[str, float]]:
     """Per-node centrality vector for an arbitrary networkx graph.
 
-    Returns ``{node_id: {"degree", "closeness", "eigenvector",
-    "betweenness"}}`` using networkx over ``graph`` (directed or undirected).
+    Returns ``{node_id: {degree, closeness, eigenvector, betweenness,
+    pagerank, harmonic, constraint, effective_size, bridging,
+    clustering}}`` using networkx over ``graph`` (directed or undirected).
+
+    The Burt structural-hole measures (``constraint``/``effective_size``) and
+    ``clustering`` are computed over the undirected projection, since they are
+    defined for undirected ego neighbourhoods. ``bridging`` is the betweenness
+    score normalised to ``[0, 1]`` by the most central node (a defensible
+    brokerage score; networkx has no builtin bridging centrality).
 
     Shared by the recommendation ``centralities()`` and the commenter-network
     service so the two network families compute identical math (no copy-paste
@@ -101,6 +122,7 @@ def centrality_battery(
     """
     if graph.number_of_nodes() == 0:
         return {}
+    w = weight_attr if weighted else None
     if weighted:
         total = sum(d for _, d in graph.degree(weight=weight_attr))
         degree = {
@@ -111,23 +133,84 @@ def centrality_battery(
         degree = nx.degree_centrality(graph)
     closeness = nx.closeness_centrality(graph)
     try:
-        eigenvector = nx.eigenvector_centrality(
-            graph, max_iter=1000, weight=weight_attr if weighted else None
-        )
+        eigenvector = nx.eigenvector_centrality(graph, max_iter=1000, weight=w)
     except (nx.PowerIterationFailedConvergence, nx.NetworkXError):
         eigenvector = {n: 0.0 for n in graph.nodes}
-    betweenness = nx.betweenness_centrality(
-        graph, weight=weight_attr if weighted else None
-    )
+    try:
+        betweenness = nx.betweenness_centrality(
+            graph, weight=w, k=500 if approximate else None, seed=42
+        )
+    except (nx.NetworkXError, nx.PowerIterationFailedConvergence):
+        betweenness = nx.betweenness_centrality(graph, weight=w)
+    try:
+        pagerank = nx.pagerank(graph, weight=w, max_iter=1000)
+    except (nx.PowerIterationFailedConvergence, nx.NetworkXError):
+        pagerank = {n: 1.0 / graph.number_of_nodes() for n in graph.nodes}
+    harmonic = nx.harmonic_centrality(graph)
+    ug = graph.to_undirected()
+    try:
+        constraint = nx.constraint(ug)
+    except (nx.NetworkXError, nx.PowerIterationFailedConvergence):
+        constraint = {n: 0.0 for n in graph.nodes}
+    try:
+        effective_size = nx.effective_size(ug)
+    except (nx.NetworkXError, nx.PowerIterationFailedConvergence):
+        effective_size = {n: 0.0 for n in graph.nodes}
+    try:
+        clustering = nx.clustering(ug, weight=w)
+    except (nx.NetworkXError, nx.PowerIterationFailedConvergence):
+        clustering = {n: 0.0 for n in graph.nodes}
+    max_bt = max(betweenness.values()) if betweenness else 0.0
+    bridging = {
+        n: (betweenness.get(n, 0.0) / max_bt if max_bt else 0.0)
+        for n in graph.nodes
+    }
     return {
         nid: {
             "degree": degree.get(nid, 0.0),
             "closeness": closeness.get(nid, 0.0),
             "eigenvector": eigenvector.get(nid, 0.0),
             "betweenness": betweenness.get(nid, 0.0),
+            "pagerank": pagerank.get(nid, 0.0),
+            "harmonic": harmonic.get(nid, 0.0),
+            "constraint": constraint.get(nid, 0.0),
+            "effective_size": effective_size.get(nid, 0.0),
+            "bridging": bridging.get(nid, 0.0),
+            "clustering": clustering.get(nid, 0.0),
         }
         for nid in graph.nodes
     }
+
+
+def global_network_coefficients(
+    graph: "nx.Graph",
+    *,
+    weighted: bool = False,
+    weight_attr: str = "weight",
+) -> dict[str, float | None]:
+    """Graph-level coefficients that complement the per-node battery."""
+    w = weight_attr if weighted else None
+    try:
+        assortativity = nx.degree_assortativity_coefficient(graph, weight=w)
+    except (nx.NetworkXError, nx.PowerIterationFailedConvergence, ValueError):
+        assortativity = None
+    return {"assortativity": assortativity}
+
+
+def _percentile_threshold(
+    values: list[float], quantile: float
+) -> float:
+    """Return the ``quantile``-th percentile of ``values`` (linear interpolation)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * quantile
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    frac = rank - low
+    return ordered[low] * (1 - frac) + ordered[high] * frac
 
 
 
@@ -1194,8 +1277,16 @@ class NetworkAnalyticsService:
             else:
                 G.add_edge(e.source, e.target)
         if G.number_of_nodes() == 0:
-            return {}
-        battery = centrality_battery(G, weighted=use_weight)
+            return {
+                "nodes": {},
+                "global": {},
+                "approximate": False,
+                "algorithm": "networkx",
+                "computed_at": utcnow().isoformat(),
+            }
+        approximate = G.number_of_nodes() > _APPROX_NODE_THRESHOLD
+        battery = centrality_battery(G, weighted=use_weight, approximate=approximate)
+        global_coeffs = global_network_coefficients(G, weighted=use_weight)
         result: dict[str, dict[str, float]] = {}
         for node in payload.nodes:
             nid = node.channel_id if projection == "channel" else node.video_id
@@ -1205,9 +1296,233 @@ class NetworkAnalyticsService:
                 "closeness": vals.get("closeness", 0.0),
                 "eigenvector": vals.get("eigenvector", 0.0),
                 "betweenness": vals.get("betweenness", 0.0),
+                "pagerank": vals.get("pagerank", 0.0),
+                "harmonic": vals.get("harmonic", 0.0),
+                "constraint": vals.get("constraint", 0.0),
+                "effective_size": vals.get("effective_size", 0.0),
+                "bridging": vals.get("bridging", 0.0),
+                "clustering": vals.get("clustering", 0.0),
                 "community_id": float(node.community_id if node.community_id is not None else -1),
             }
-        return result
+        return {
+            "nodes": result,
+            "global": global_coeffs,
+            "approximate": approximate,
+            "algorithm": "networkx",
+            "computed_at": utcnow().isoformat(),
+        }
+
+    def _slice_graph(
+        self,
+        *,
+        run_id: str | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        video_ids: list[str] | None = None,
+        projection: str = "video",
+        weight_spec: str | None = None,
+        weighted: bool = False,
+    ):
+        """Build the directed slice graph + payload used by centralities/roles/insights."""
+        if projection == "channel":
+            payload = self.channel_graph(
+                run_id=run_id,
+                layer_index=layer_index,
+                channel_id=channel_id,
+                channel_ids=channel_ids,
+                channel_scope=channel_scope,
+            )
+        else:
+            payload = self.graph(
+                run_id=run_id,
+                channel_id=channel_id,
+                channel_ids=channel_ids,
+                channel_scope=channel_scope,
+                layer_index=layer_index,
+                video_ids=video_ids,
+                weight_spec=weight_spec,
+            )
+        use_weight = bool(weighted and weight_spec)
+        G = nx.DiGraph()
+        for e in payload.edges:
+            w = getattr(e, "weight", None)
+            if use_weight and w is not None:
+                G.add_edge(e.source, e.target, weight=w)
+            else:
+                G.add_edge(e.source, e.target)
+        node_id = (
+            (lambda n: n.channel_id) if projection == "channel" else (lambda n: n.video_id)
+        )
+        return G, payload, use_weight, node_id
+
+    def roles(
+        self,
+        *,
+        run_id: str | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        video_ids: list[str] | None = None,
+        projection: str = "video",
+        weight_spec: str | None = None,
+        weighted: bool = False,
+        role_model: str = "core_broker_periphery_bridge",
+    ) -> dict[str, object]:
+        """Structural-role assignment for every node in the rendered slice (N3).
+
+        Deterministic given the same scope: eigenvector top-quartile → ``core``,
+        betweenness top-decile → ``broker``, degree bottom-quartile →
+        ``periphery``, otherwise ``bridge``. ``community_id`` is copied from the
+        rendered graph view so roles line up with the communities panel.
+        """
+        G, payload, use_weight, node_id = self._slice_graph(
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_ids=channel_ids,
+            channel_scope=channel_scope,
+            layer_index=layer_index,
+            video_ids=video_ids,
+            projection=projection,
+            weight_spec=weight_spec,
+            weighted=weighted,
+        )
+        if G.number_of_nodes() == 0:
+            return {
+                "nodes": {},
+                "role_model": role_model,
+                "algorithm": "networkx",
+                "computed_at": utcnow().isoformat(),
+            }
+        approximate = G.number_of_nodes() > _APPROX_NODE_THRESHOLD
+        battery = centrality_battery(G, weighted=use_weight, approximate=approximate)
+        ev_vals = [c["eigenvector"] for c in battery.values()]
+        bt_vals = [c["betweenness"] for c in battery.values()]
+        deg_vals = [c["degree"] for c in battery.values()]
+        ev_q = _percentile_threshold(ev_vals, 0.75)
+        bt_q = _percentile_threshold(bt_vals, 0.90)
+        deg_low = _percentile_threshold(deg_vals, 0.25)
+        nodes: dict[str, dict[str, object]] = {}
+        for node in payload.nodes:
+            nid = node_id(node)
+            c = battery.get(nid, {})
+            if c.get("eigenvector", 0.0) >= ev_q:
+                role = "core"
+            elif c.get("betweenness", 0.0) >= bt_q:
+                role = "broker"
+            elif c.get("degree", 0.0) <= deg_low:
+                role = "periphery"
+            else:
+                role = "bridge"
+            nodes[nid] = {
+                "role": role,
+                "community_id": float(
+                    node.community_id if node.community_id is not None else -1
+                ),
+            }
+        return {
+            "nodes": nodes,
+            "role_model": role_model,
+            "approximate": approximate,
+            "algorithm": "networkx",
+            "computed_at": utcnow().isoformat(),
+        }
+
+    def community_insights(
+        self,
+        *,
+        run_id: str | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        video_ids: list[str] | None = None,
+        projection: str = "video",
+        weight_spec: str | None = None,
+        weighted: bool = False,
+    ) -> dict[str, object]:
+        """Per-community composition for the rendered slice (N3).
+
+        For every community (id taken from the rendered graph view) reports its
+        size, the dominant channels (observed only, never fabricated), and the
+        top eigenvector/betweenness nodes so a researcher can characterise what
+        each community is about. Unavailable signals are reported as
+        ``missing``/``unsupported`` rather than zeroed.
+        """
+        G, payload, use_weight, node_id = self._slice_graph(
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_ids=channel_ids,
+            channel_scope=channel_scope,
+            layer_index=layer_index,
+            video_ids=video_ids,
+            projection=projection,
+            weight_spec=weight_spec,
+            weighted=weighted,
+        )
+        if G.number_of_nodes() == 0:
+            return {
+                "communities": [],
+                "algorithm": "networkx",
+                "computed_at": utcnow().isoformat(),
+            }
+        battery = centrality_battery(G, weighted=use_weight)
+        by_community: dict[int, list[str]] = {}
+        meta: dict[str, dict[str, object]] = {}
+        for node in payload.nodes:
+            nid = node_id(node)
+            cid = int(node.community_id if node.community_id is not None else -1)
+            by_community.setdefault(cid, []).append(nid)
+            meta[nid] = {
+                "channel_id": getattr(node, "channel_id", None),
+                "label": getattr(node, "title", None) or nid,
+            }
+        communities = []
+        for cid, members in by_community.items():
+            ch_counts: Counter = Counter(
+                meta[m]["channel_id"] for m in members if meta[m]["channel_id"]
+            )
+            dominant_channels = [
+                {"channel_id": ch, "count": int(cnt)}
+                for ch, cnt in ch_counts.most_common(5)
+            ]
+            top_ev = sorted(
+                members, key=lambda m: battery[m]["eigenvector"], reverse=True
+            )[:5]
+            top_bt = sorted(
+                members, key=lambda m: battery[m]["betweenness"], reverse=True
+            )[:5]
+            communities.append(
+                {
+                    "community_id": cid,
+                    "size": len(members),
+                    "dominant_channels": dominant_channels,
+                    "top_eigenvector": [
+                        {
+                            "id": m,
+                            "label": meta[m]["label"],
+                            "value": battery[m]["eigenvector"],
+                        }
+                        for m in top_ev
+                    ],
+                    "top_betweenness": [
+                        {
+                            "id": m,
+                            "label": meta[m]["label"],
+                            "value": battery[m]["betweenness"],
+                        }
+                        for m in top_bt
+                    ],
+                }
+            )
+        communities.sort(key=lambda c: c["size"], reverse=True)
+        return {
+            "communities": communities,
+            "algorithm": "networkx",
+            "computed_at": utcnow().isoformat(),
+        }
 
     # ------------------------------------------------------------------
     def export_edges(

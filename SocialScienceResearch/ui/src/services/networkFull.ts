@@ -7,15 +7,18 @@ import { request, toQuery } from "@/services/api";
 import type {
   ChannelGraphPayload,
   ChannelProjection,
+  CommenterCommunityInsights,
   CommenterNetworkGraph,
   CommenterNetworkMetrics,
   CommenterProjection,
+  CommunityInsights,
   EdgeRow,
   GraphProjection,
   NetworkCentralities,
   NetworkExportFormat,
   NetworkGraphPayload,
   NetworkMetrics,
+  NetworkRoles,
   Paginated,
   TemporalResult,
 } from "@/lib/network-full-types";
@@ -505,4 +508,172 @@ export function getCommenterNetworkExportUrl(
     format: params.format ?? "graphml",
   });
   return `/network/commenters/export${q}`;
+}
+
+// ---------------------------------------------------------------------------
+// Structural roles + community insights (N3)
+// ---------------------------------------------------------------------------
+export interface NetworkScopeParams {
+  runId?: string;
+  channelId?: string;
+  channelIds?: string[];
+  channelScope?: string;
+  layerIndex?: number;
+  videoIds?: string[];
+  projection?: GraphProjection;
+  weight?: string;
+  weighted?: boolean;
+  roleModel?: string;
+}
+
+function networkScopeQuery(params: NetworkScopeParams) {
+  return toQuery({
+    run_id: params.runId,
+    channel_id: params.channelId,
+    channel_ids: params.channelIds?.join(","),
+    channel_scope: params.channelScope,
+    layer_index: params.layerIndex,
+    video_ids: params.videoIds?.join(","),
+    projection: params.projection,
+    weight: params.weight,
+    weighted: params.weighted,
+    role_model: params.roleModel,
+  });
+}
+
+export function getNetworkRoles(
+  params: NetworkScopeParams = {},
+): Promise<NetworkRoles> {
+  return request(`/network/roles${networkScopeQuery(params)}`);
+}
+
+export function useNetworkRoles(
+  params: NetworkScopeParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "full",
+      "roles",
+      params.runId ?? "all",
+      params.channelId ?? "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.channelScope ?? "source",
+      params.layerIndex ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      params.projection ?? "video",
+      params.weight ?? "all",
+      params.roleModel ?? "core_broker_periphery_bridge",
+    ] as const,
+    queryFn: () => getNetworkRoles(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getNetworkCommunityInsights(
+  params: NetworkScopeParams = {},
+): Promise<CommunityInsights> {
+  return request(`/network/community-insights${networkScopeQuery(params)}`);
+}
+
+export function useNetworkCommunityInsights(
+  params: NetworkScopeParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "full",
+      "community-insights",
+      params.runId ?? "all",
+      params.channelId ?? "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.channelScope ?? "source",
+      params.layerIndex ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      params.projection ?? "video",
+      params.weight ?? "all",
+    ] as const,
+    queryFn: () => getNetworkCommunityInsights(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getCommenterNetworkRoles(
+  params: CommenterNetworkParams = {},
+): Promise<NetworkRoles> {
+  return request(
+    `/network/commenters/roles${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      min_shared: params.minShared,
+      top_n: params.topN,
+      weighted: params.weighted,
+    })}`,
+  );
+}
+
+export function useCommenterNetworkRoles(
+  params: CommenterNetworkParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "commenters",
+      "roles",
+      params.runId ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.projection ?? "commenter",
+      params.weight ?? "co_comment:jaccard",
+      params.minShared ?? "all",
+      params.topN ?? "all",
+    ] as const,
+    queryFn: () => getCommenterNetworkRoles(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getCommenterNetworkCommunityInsights(
+  params: CommenterNetworkParams = {},
+): Promise<CommenterCommunityInsights> {
+  return request(
+    `/network/commenters/community-insights${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      min_shared: params.minShared,
+      top_n: params.topN,
+      weighted: params.weighted,
+    })}`,
+  );
+}
+
+export function useCommenterNetworkCommunityInsights(
+  params: CommenterNetworkParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "commenters",
+      "community-insights",
+      params.runId ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.projection ?? "commenter",
+      params.weight ?? "co_comment:jaccard",
+      params.minShared ?? "all",
+      params.topN ?? "all",
+    ] as const,
+    queryFn: () => getCommenterNetworkCommunityInsights(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
 }

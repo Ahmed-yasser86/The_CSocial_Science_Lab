@@ -52,11 +52,66 @@ export interface NodeCentrality {
   closeness: number;
   eigenvector: number;
   betweenness: number;
+  pagerank: number;
+  harmonic: number;
+  constraint: number;
+  effective_size: number;
+  bridging: number;
+  clustering: number;
   community_id: number | null;
+}
+
+/** All centrality measures exposed by the full battery (N3), in display order. */
+export const CENTRALITY_MEASURES: {
+  key: keyof NodeCentrality;
+  label: string;
+  meaning: string;
+}[] = [
+  { key: "degree", label: "Degree", meaning: "How often a node is connected; popularity in the recommender's eye." },
+  { key: "closeness", label: "Closeness", meaning: "How quickly reachable from anywhere; hub reach." },
+  { key: "eigenvector", label: "Eigenvector", meaning: "Connected to other well-connected nodes — core of the network space." },
+  { key: "betweenness", label: "Betweenness", meaning: "Broker between clusters — funnels viewers across topical silos." },
+  { key: "pagerank", label: "PageRank", meaning: "Iterative importance; being recommended by important nodes compounds." },
+  { key: "harmonic", label: "Harmonic", meaning: "Closeness variant robust across disconnected components." },
+  { key: "constraint", label: "Constraint (Burt)", meaning: "Low constraint = structural-hole spanner with agenda-setting potential." },
+  { key: "effective_size", label: "Effective size (Burt)", meaning: "Non-redundant reach of a node's network neighbourhood." },
+  { key: "bridging", label: "Bridging", meaning: "Normalised brokerage (betweenness / most central node)." },
+  { key: "clustering", label: "Clustering", meaning: "Triadic closure; cohesive vs brokerage neighbourhoods." },
+];
+
+export type NetworkRole = "core" | "broker" | "bridge" | "periphery";
+
+export interface NodeRole {
+  role: NetworkRole;
+  community_id: number | null;
+}
+
+export interface NetworkRoles {
+  nodes: Record<string, NodeRole>;
+  role_model: string;
+  approximate?: boolean;
+  algorithm: string;
+  computed_at: string;
+}
+
+export interface CommunityInsight {
+  community_id: number;
+  size: number;
+  dominant_channels: { channel_id: string; count: number }[];
+  top_eigenvector: { id: string; label: string | null; value: number }[];
+  top_betweenness: { id: string; label: string | null; value: number }[];
+}
+
+export interface CommunityInsights {
+  communities: CommunityInsight[];
+  algorithm: string;
+  computed_at: string;
 }
 
 export interface NetworkCentralities {
   nodes: Record<string, NodeCentrality>;
+  global?: { assortativity?: number | null };
+  approximate?: boolean;
   algorithm: string;
   computed_at: string;
 }
@@ -229,6 +284,12 @@ export interface CommenterCentrality {
   closeness: number;
   eigenvector: number;
   betweenness: number;
+  pagerank: number;
+  harmonic: number;
+  constraint: number;
+  effective_size: number;
+  bridging: number;
+  clustering: number;
   community_id: number;
 }
 
@@ -237,6 +298,19 @@ export interface CommenterNetworkCentralities {
   weight_spec?: Record<string, unknown> | null;
   algorithm: string;
   computed_at?: string | null;
+}
+
+export interface CommenterCommunityInsight {
+  community_id: number;
+  size: number;
+  dominant_kinds: Record<string, number>;
+  top_bridges: { id: string; label?: string | null; betweenness: number }[];
+}
+
+export interface CommenterCommunityInsights {
+  communities: CommenterCommunityInsight[];
+  algorithm: string;
+  computed_at: string;
 }
 
 export interface BridgeRank {

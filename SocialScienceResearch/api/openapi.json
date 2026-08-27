@@ -575,6 +575,318 @@
         }
       }
     },
+    "/api/v1/social-science/network/commenters/roles": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Commenter Network Roles",
+        "description": "Structural roles for the audience graph (N3): core / broker / bridge / periphery.",
+        "operationId": "commenter_network_roles_api_v1_social_science_network_commenters_roles_get",
+        "parameters": [
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "commenter",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "min_shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Shared"
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Top N"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Weighted"
+            }
+          },
+          {
+            "name": "role_model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "core_broker_periphery_bridge",
+              "title": "Role Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/commenters/community-insights": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Commenter Network Community Insights",
+        "description": "Per-community composition for the audience graph (N3).",
+        "operationId": "commenter_network_community_insights_api_v1_social_science_network_commenters_community_insights_get",
+        "parameters": [
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "commenter",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "min_shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Shared"
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Top N"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Weighted"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/network/commenters/export": {
       "get": {
         "tags": [
@@ -1583,6 +1895,92 @@
                 "schema": {
                   "$ref": "#/components/schemas/Paginated_dict_"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/content-homophily/export-communities": {
+      "get": {
+        "tags": [
+          "content_homophily"
+        ],
+        "summary": "Export Communities",
+        "description": "Export a ZIP of per-community node/edge lists, the global edge list, and a\nDETAILED per-community-pair content-similarity analysis (reused cached\nembeddings, no new model calls).",
+        "operationId": "export_communities_api_v1_social_science_network_content_homophily_export_communities_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Network scope run id",
+              "title": "Run Id"
+            },
+            "description": "Network scope run id"
+          },
+          {
+            "name": "analysis_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional content-homophily analysis to attach as reference",
+              "title": "Analysis Id"
+            },
+            "description": "Optional content-homophily analysis to attach as reference"
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional comma-separated video-id ego scope",
+              "title": "Video Ids"
+            },
+            "description": "Optional comma-separated video-id ego scope"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -3961,7 +4359,7 @@
           "network"
         ],
         "summary": "Network Centralities",
-        "description": "Per-node centrality battery for the rendered graph slice (N0).\n\nReturns ``degree``, ``closeness``, ``eigenvector``, ``betweenness`` and\n``community_id`` for every node in the same subgraph ``/network/graph``\nwould render for the given scope. These are research-grade positions:\nbetweenness flags brokerage across clusters, eigenvector the core of the\nrecommendation space, degree the recommender's view of popularity.\n\nMirrors the scope parsing of ``/network/graph`` so the centralities always\ndescribe exactly what is on screen.",
+        "description": "Full research-grade centrality battery for the rendered graph slice (N0/N3).\n\nReturns, per node, ``degree``, ``closeness``, ``eigenvector``, ``betweenness``,\n``pagerank``, ``harmonic``, ``constraint`` (Burt), ``effective_size`` (Burt),\n``bridging`` (normalised betweenness) and ``clustering``, plus ``community_id``.\nThe graph-level ``global`` block carries ``assortativity``. When the slice is\nlarger than the approximation threshold the ``betweenness``/``bridging`` scores\nare k-sampled and the response is flagged ``approximate: true``.\n\nMirrors the scope parsing of ``/network/graph`` so the centralities always\ndescribe exactly what is on screen.",
         "operationId": "network_centralities_api_v1_social_science_network_centralities_get",
         "parameters": [
           {
@@ -4094,6 +4492,334 @@
               "title": "Weighted"
             },
             "description": "When true and a `weight` spec is supplied, centralities use the spec's edge weights (eigenvector/betweenness/degree)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/roles": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Roles",
+        "description": "Structural roles for the rendered slice (N3): core / broker / bridge / periphery.",
+        "operationId": "network_roles_api_v1_social_science_network_roles_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Id"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "channel_scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "source",
+              "title": "Channel Scope"
+            }
+          },
+          {
+            "name": "layer_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer Index"
+            }
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "video",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Weighted"
+            }
+          },
+          {
+            "name": "role_model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "core_broker_periphery_bridge",
+              "title": "Role Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/community-insights": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Community Insights",
+        "description": "Per-community composition (dominant channels, top centralities) for the slice (N3).",
+        "operationId": "network_community_insights_api_v1_social_science_network_community_insights_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Id"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "channel_scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "source",
+              "title": "Channel Scope"
+            }
+          },
+          {
+            "name": "layer_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Layer Index"
+            }
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "video",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Weighted"
+            }
           }
         ],
         "responses": {
