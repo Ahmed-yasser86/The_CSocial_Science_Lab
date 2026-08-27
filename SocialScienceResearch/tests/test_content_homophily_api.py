@@ -305,8 +305,12 @@ def test_start_requires_scope_and_validates_params(tmp_path) -> None:
     client = TestClient(create_app(_settings(tmp_path), provider=FakeProvider()))
     _inject_service(client, tmp_path)
 
-    resp = client.post(f"{PREFIX}/network/content-homophily", json={})
-    assert resp.status_code in (400, 422)
+    # `run_id` is optional by design (whole-network scope allowed); an unknown
+    # field is rejected by the schema's `extra="forbid"`.
+    resp = client.post(
+        f"{PREFIX}/network/content-homophily", json={"bogus_field": 1}
+    )
+    assert resp.status_code == 422
 
     resp = client.post(
         f"{PREFIX}/network/content-homophily",

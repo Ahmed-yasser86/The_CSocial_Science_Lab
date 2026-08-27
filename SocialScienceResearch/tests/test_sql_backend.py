@@ -455,6 +455,49 @@ class TestTranscriptRepository:
         assert [r.transcript_id for r in repos.transcripts.list_transcripts("v_t")] == ["tr1", "tr2"]
         assert len(repos.transcripts.list_transcripts()) == 2
 
+    def test_mixed_language_transcript_preserved_whole(self, tmp_path):
+        # One video whose captions mix multiple languages (speakers using
+        # English + Arabic + Spanish in the same transcript). The entire file
+        # must be stored as-is and read back intact so downstream chunking
+        # embeds the full mixed text.
+        repos = build_sql_repositories(TEST_DATABASE_URL, transcripts_dir=tmp_path)
+        try:
+            video_id = "v_mixed"
+            mixed = (
+                "Hello everyone, welcome to the channel. "
+                "مرحبا بالجميع في هذا الفيديو. "
+                "Hola a todos, hoy hablamos de comunidades. " * 4
+            )
+            path = repos.transcripts.write_artifact(video_id, mixed)
+            assert path.exists()
+            # Entire mixed transcript is preserved verbatim.
+            assert repos.transcripts.read_artifact(video_id) == mixed
+            # Metadata round-trips and points at the stored file.
+            repos.transcripts.save_transcript(
+                TranscriptRecord(
+                    transcript_id="tr_mixed",
+                    video_id=video_id,
+                    collection_run_id="run_sql_001",
+                    path=path.name,
+                    status=TranscriptStatus.AVAILABLE,
+                    observed_at=utcnow(),
+                )
+            )
+            record = repos.transcripts.get_transcript(video_id)
+            assert record is not None
+            assert record.status == TranscriptStatus.AVAILABLE
+            # Reading for chunking/embedding returns the full mixed text.
+            assert repos.transcripts.read_artifact(video_id) == mixed
+        finally:
+            repos.close()
+
+    def test_read_artifact_none_when_absent(self, tmp_path):
+        repos = build_sql_repositories(TEST_DATABASE_URL, transcripts_dir=tmp_path)
+        try:
+            assert repos.transcripts.read_artifact("v_missing") is None
+        finally:
+            repos.close()
+
 
 # ---------------------------------------------------------------------------
 # Datasets
