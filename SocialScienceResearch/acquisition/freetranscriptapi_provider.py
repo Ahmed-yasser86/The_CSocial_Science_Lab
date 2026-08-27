@@ -67,6 +67,13 @@ class FreeTranscriptApiProvider(AcquisitionProvider):
             + urllib.parse.urlencode({"video_url": video_url, "lang": lang})
         )
         req = urllib.request.Request(url)
+        # The API sits behind Cloudflare, which rejects the default
+        # "Python-urllib" UA with 403 (error code 1010). Send a browser-like UA.
+        req.add_header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
         if self._api_key:
             req.add_header("Authorization", f"Bearer {self._api_key}")
         status = None

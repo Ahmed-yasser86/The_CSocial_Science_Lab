@@ -316,3 +316,23 @@ def test_start_requires_scope_and_validates_params(tmp_path) -> None:
 
     unknown = client.get(f"{PREFIX}/network/content-homophily/chh_missing")
     assert unknown.status_code == 404
+
+
+def test_transcript_collection_targets_only_sampled_pairs(tmp_path) -> None:
+    run_id = _seed_network(tmp_path)
+    client = TestClient(create_app(_settings(tmp_path), provider=FakeProvider()))
+    _inject_service(client, tmp_path)
+    resp = client.post(f"{PREFIX}/network/content-homophily", json={
+        "run_id": run_id,
+        "sampling_fraction": 0.5,
+        "num_permutations": 10,
+        "random_seed": 7,
+    })
+    record = _wait_terminal(client, resp.json()["analysis_id"])
+    assert record["status"] == "observed", record.get("error")
+    r = record["results"]
+    fetched = r["videos_with_transcript"] + r["videos_without_transcript"]
+    pairs = r["pairs_sampled_within"] + r["pairs_sampled_between"]
+    # Targeted collection: only the videos appearing in the sampled pairs are
+    # fetched (|union| <= 2*pairs), never the whole network scope.
+    assert fetched <= 2 * pairs + 2

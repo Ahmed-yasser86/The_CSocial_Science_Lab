@@ -83,3 +83,20 @@ def test_500_raises_network_error() -> None:
     ):
         with pytest.raises(NetworkError):
             _provider().extract_transcript("vid")
+
+
+def test_sends_browser_user_agent() -> None:
+    captured = {}
+
+    def _capture(req, timeout=None):
+        captured["req"] = req
+        return _fake_response(200, '{"language":"en","transcript":[{"text":"hi","start":0.0,"duration":1.0}]}')
+
+    with patch(
+        "SocialScienceResearch.acquisition.freetranscriptapi_provider.urllib.request.urlopen",
+        side_effect=_capture,
+    ):
+        _provider().extract_transcript("vid")
+    hdr = {k.lower(): v for k, v in captured["req"].headers.items()}
+    assert "user-agent" in hdr
+    assert "Mozilla" in hdr["user-agent"]

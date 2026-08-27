@@ -849,11 +849,46 @@ class ContentHomophilyService:
         if len(nodes) < 2:
             return self._insufficient(record, params,
                                       reason="fewer than two eligible videos")
-        progress["videos_total"] = sum(
-            min(len(v), params["max_videos_per_community"]) for v in groups.values()
-        )
+        # 2. Sample target pairs FIRST (community structure only - no transcripts
+        # needed yet). Transcript/embedding collection is then limited to exactly
+        # the videos appearing in those sampled pairs, so we never scrape the
+        # whole network (spec: "Transcript collection is targeted").
+        capped_groups: dict[int, list[str]] = {
+            c: groups[c][: params["max_videos_per_community"]]
+            for c in sorted(groups)
+        }
+        total_eligible = sum(len(v) for v in capped_groups.values())
+        if total_eligible < 2:
+            return self._insufficient(record, params,
+                                      reason="fewer than two eligible videos")
 
-        # 2. Targeted transcript collection with replacement sampling.
+        sampler = PairSamplingService(params["sampling_fraction"],
+                                      params["max_pair_cap"])
+        seed = params["random_seed"]
+        rng = random.Random(seed)
+        within = sampler.sample_within(capped_groups, rng)
+        between = sampler.sample_between(capped_groups, rng)
+        self._log(record,
+                  f"pairs sampled (pre-collection): within "
+                  f"{within.sampled}/{within.available}, between "
+                  f"{between.sampled}/{between.available}")
+        self._stage(record, "pair_sampling", "done")
+
+        # Union of videos required by the sampled pairs (each video once).
+        needed: list[tuple[str, str]] = []  # (community, video_id)
+        seen_videos: set[str] = set()
+        for pairs in (within.pairs, between.pairs):
+            for a, b in pairs:
+                for vid in (a, b):
+                    if vid not in seen_videos:
+                        seen_videos.add(vid)
+                        needed.append((labels.get(vid), vid))
+        if not needed:
+            return self._insufficient(record, params,
+                                      reason="no videos in sampled pairs")
+        progress["videos_total"] = len(needed)
+
+        # 3. Targeted transcript collection (only the sampled-pair videos).
         self._stage(record, "transcript_collection", "running")
         self._save(record)
         selected_texts: dict[str, str] = {}
@@ -863,23 +898,13 @@ class ContentHomophilyService:
         # channel is effectively untranscribable) rather than burning time.
         channel_failures: dict[str, int] = {}
         channel_skipped: set[str] = set()
-        # Flatten the selection plan (bounded by max_videos_per_community).
-        plan: list[tuple[str, str]] = []  # (community, video_id)
-        for community in sorted(groups):
-            limit = min(len(groups[community]),
-                        params["max_videos_per_community"])
-            usable = 0
-            for video_id in groups[community]:
-                if usable >= limit:
-                    break
-                plan.append((community, video_id))
         # Concurrent, cancel-aware fetching with bounded workers.
         # Cap at 5 simultaneous linguistic-analysis (transcript) requests so we
         # never overwhelm the upstream provider.
-        workers = max(1, min(5, len(plan)))
+        workers = max(1, min(5, len(needed)))
         processed = 0
-        progress["transcripts_in_hand"] = len(selected_texts)
-        progress["transcripts_remaining"] = len(plan)
+        progress["transcripts_in_hand"] = 0
+        progress["transcripts_remaining"] = len(needed)
         self._save(record)
 
         def _fetch_one(item: tuple[str, str]) -> tuple[str, str, str | None, bool]:
@@ -894,7 +919,7 @@ class ContentHomophilyService:
             return (community, video_id, text, text is None or not text.strip())
 
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = {ex.submit(_fetch_one, item): item for item in plan}
+            futures = {ex.submit(_fetch_one, item): item for item in needed}
             for fut in as_completed(futures):
                 if self._stop_requested(job_id_holder):
                     for f in futures:
@@ -918,17 +943,15 @@ class ContentHomophilyService:
                         channel_failures.pop(channel_id, None)
                 if text and text.strip():
                     selected_texts[video_id] = text
-                    usable = len(selected_texts)
                     self._log(record, f"transcript loaded: {video_id}")
                 else:
                     without_transcript += 1
                     self._log(record,
-                              f"transcript unavailable for {video_id}; "
-                              "replacement candidate attempted")
+                              f"transcript unavailable for {video_id}")
                 progress["videos_processed"] = processed
                 progress["transcripts_in_hand"] = len(selected_texts)
-                progress["transcripts_remaining"] = len(plan) - processed
-                self._touch_eta(record, processed, len(plan), started)
+                progress["transcripts_remaining"] = len(needed) - processed
+                self._touch_eta(record, processed, len(needed), started)
                 self._save(record)
         self._stage(record, "transcript_collection", "done")
         self._log(record,
@@ -942,7 +965,7 @@ class ContentHomophilyService:
                        "as zero similarity)",
                 videos_without_transcript=without_transcript)
 
-        # 3. Embedding preparation (reuse/generate; on-demand only).
+        # 4. Embedding preparation (only the collected transcripts).
         self._stage(record, "embedding_preparation", "running")
         self._save(record)
         adapter = VideoEmbeddingAdapter(
@@ -952,7 +975,8 @@ class ContentHomophilyService:
             if self._embedder is not None else None,
         )
         vectors: dict[str, np.ndarray] = {}
-        for index, video_id in enumerate(sorted(selected_texts)):
+        embedded_list = sorted(selected_texts)
+        for index, video_id in enumerate(embedded_list):
             if self._stop_requested(job_id_holder):
                 raise OperationCancelled()
             vector = adapter.video_vector(video_id, selected_texts[video_id])
@@ -966,7 +990,7 @@ class ContentHomophilyService:
                 "embedding_failures": adapter.embedding_failures,
                 "embedding_model": adapter.model_name,
             })
-            self._touch_eta(record, index + 1, len(selected_texts), started)
+            self._touch_eta(record, index + 1, len(embedded_list), started)
             self._save(record)
             self._log(record, f"embedding ready: {video_id}")
         progress.pop("current_video", None)
@@ -977,45 +1001,25 @@ class ContentHomophilyService:
                 reason="fewer than two successful embeddings",
                 videos_without_transcript=without_transcript)
 
-        eligible_groups = {
-            c: [v for v in members if v in vectors]
-            for c, members in groups.items()
-        }
-        eligible_groups = {c: m for c, m in eligible_groups.items() if len(m) >= 2}
-        embedded_n = len(vectors)
-        within_available_total = sum(
-            math.comb(len(m), 2) for m in eligible_groups.values()
-        )
-        between_available_total = (
-            math.comb(embedded_n, 2) - within_available_total
-        )
-        if within_available_total < 1 and between_available_total < 1:
-            return self._insufficient(record, params,
-                                      reason="not enough embedded videos",
-                                      videos_without_transcript=without_transcript)
-
-        sampler = PairSamplingService(params["sampling_fraction"],
-                                      params["max_pair_cap"])
-        seed = params["random_seed"]
-
-        # 4. Pair sampling (seeded; balanced within; stratified between).
-        self._stage(record, "pair_sampling", "running")
-        self._save(record)
-        rng = random.Random(seed)
-        within = sampler.sample_within(eligible_groups, rng)
-        between = sampler.sample_between(eligible_groups, rng)
+        # 4b. Keep only sampled pairs whose both videos were embedded.
+        within_usable = [p for p in within.pairs if p[0] in vectors and p[1] in vectors]
+        between_usable = [p for p in between.pairs if p[0] in vectors and p[1] in vectors]
         self._log(record,
-                  f"pairs sampled: within {within.sampled}/{within.available}, "
-                  f"between {between.sampled}/{between.available}")
-        self._stage(record, "pair_sampling", "done")
+                  f"pairs usable after collection: within {len(within_usable)}/"
+                  f"{within.sampled}, between {len(between_usable)}/{between.sampled}")
+        if not within_usable and not between_usable:
+            return self._insufficient(record, params,
+                                      reason="no usable sampled pairs after "
+                                             "collection",
+                                      videos_without_transcript=without_transcript)
 
         # 5. Similarity calculation.
         self._stage(record, "similarity_calculation", "running")
         self._save(record)
         within_mean, within_n = SemanticSimilarityService.mean_similarity(
-            vectors, within.pairs)
+            vectors, within_usable)
         between_mean, between_n = SemanticSimilarityService.mean_similarity(
-            vectors, between.pairs)
+            vectors, between_usable)
         self._stage(record, "similarity_calculation", "done")
 
         # 6. Observed difference.
