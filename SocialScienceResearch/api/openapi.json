@@ -5339,6 +5339,58 @@
         }
       }
     },
+    "/api/v1/social-science/budget/circuit-breakers/reset": {
+      "post": {
+        "tags": [
+          "budget"
+        ],
+        "summary": "Reset Circuit Breakers",
+        "description": "Clear Circuit Breaker state (all sessions, or a single ``key``).\n\nUse this to recover immediately if a breaker is stuck OPEN and you have reason\nto believe the session is healthy again (e.g. you rotated a proxy). The breaker\nre-learns health from subsequent requests.",
+        "operationId": "reset_circuit_breakers_api_v1_social_science_budget_circuit_breakers_reset_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reset Circuit Breakers Api V1 Social Science Budget Circuit Breakers Reset Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/budget/events": {
       "get": {
         "tags": [

@@ -38,8 +38,8 @@ def test_provider_records_success_on_healthy_session():
     assert cb.state("default")["state"] == CircuitState.CLOSED.value
 
 
-def test_provider_circuit_breaker_opens_and_short_circuits():
-    cb = CircuitBreakerRegistry(failure_threshold=2, cooldown=100.0)
+def test_provider_circuit_breaker_opens_and_probes():
+    cb = CircuitBreakerRegistry(failure_threshold=2, cooldown=0.05)
     provider = _provider(circuit_breaker=cb)
     calls: list[str] = []
 
@@ -54,10 +54,12 @@ def test_provider_circuit_breaker_opens_and_short_circuits():
             provider.extract_video("https://youtube.com/watch?v=v1")
     # After 2 consecutive failures the breaker for this session is OPEN.
     assert cb.state("default")["state"] == CircuitState.OPEN.value
-    # The next attempt is short-circuited by the breaker without hitting yt-dlp.
+    # The next attempt no longer hard-rejects (which used to spin tenacity forever);
+    # it waits out the (short) cooldown and probes, hitting yt-dlp again and still
+    # failing. So the breaker still protects, but self-heals instead of freezing.
     with pytest.raises(RateLimitError):
         provider.extract_video("https://youtube.com/watch?v=v1")
-    assert len(calls) == 2
+    assert len(calls) == 3
 
 
 def test_provider_routes_through_priority_queue():
@@ -67,3 +69,17 @@ def test_provider_routes_through_priority_queue():
     out = provider.extract_video("https://youtube.com/watch?v=v1")
     assert out == {"id": "v1"}
     queue.shutdown()
+
+
+def test_guarded_waits_out_open_breaker_then_probes():
+    # An OPEN breaker must not hard-reject (which made tenacity spin forever);
+    # _guarded should wait out the cooldown cooperatively and then probe.
+    cb = CircuitBreakerRegistry(failure_threshold=1, cooldown=0.05)
+    provider = _provider(circuit_breaker=cb)
+    cb.record_failure("default")  # -> OPEN
+    assert cb.state("default")["state"] == CircuitState.OPEN.value
+    result = provider._guarded("extract_transcript", lambda: "probed")
+    assert result == "probed"
+    # Successful probe closes the breaker (HALF_OPEN -> CLOSED).
+    assert cb.state("default")["state"] == CircuitState.CLOSED.value
+

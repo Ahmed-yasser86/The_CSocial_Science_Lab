@@ -682,7 +682,7 @@ def create_app(
         )
         from SocialScienceResearch.concurrency.priority_queue import PriorityTaskQueue
 
-        circuit_breaker = CircuitBreakerRegistry()
+        circuit_breaker = CircuitBreakerRegistry(failure_threshold=8, cooldown=120.0)
         budget_controller = BudgetController(
             min_interval=settings.scraper.request_delay_seconds,
             max_ytdl_contexts=settings.scraper.budget_max_ytdl_contexts,

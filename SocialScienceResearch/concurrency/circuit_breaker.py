@@ -123,6 +123,27 @@ class CircuitBreakerRegistry:
                 return False
             return True
 
+    def wait_until_allowed(self, key: str, poll: float = 0.5) -> None:
+        """Block until the breaker allows a request (cooldown elapsed -> HALF_OPEN).
+
+        This lets the provider treat an OPEN breaker as a *cooperative, bounded*
+        backoff: it waits out the remaining cooldown once and then probes, instead
+        of raising an error that tenacity would retry forever. The call returns as
+        soon as the breaker is no longer OPEN (HALF_OPEN or CLOSED).
+        """
+        while True:
+            with self._lock:
+                b = self._get(key)
+                if b.state != CircuitState.OPEN:
+                    return
+                remaining = b.cooldown - (time.monotonic() - b.opened_at)
+            if remaining <= 0:
+                # Cooldown elapsed; allow_request() will flip OPEN -> HALF_OPEN.
+                if self.allow_request(key):
+                    return
+                continue
+            time.sleep(min(poll, remaining))
+
     def record_failure(self, key: str, *, operation: str | None = None) -> None:
         with self._lock:
             b = self._get(key)

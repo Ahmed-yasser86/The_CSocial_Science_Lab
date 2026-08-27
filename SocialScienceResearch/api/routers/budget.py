@@ -15,6 +15,21 @@ from fastapi import APIRouter, Request
 router = APIRouter()
 
 
+@router.post("/budget/circuit-breakers/reset", tags=["budget"])
+def reset_circuit_breakers(request: Request, key: str | None = None) -> dict[str, Any]:
+    """Clear Circuit Breaker state (all sessions, or a single ``key``).
+
+    Use this to recover immediately if a breaker is stuck OPEN and you have reason
+    to believe the session is healthy again (e.g. you rotated a proxy). The breaker
+    re-learns health from subsequent requests.
+    """
+    registry = getattr(request.app.state, "circuit_breaker", None)
+    if registry is None:
+        return {"reset": False, "reason": "circuit breaker not configured"}
+    registry.reset(key)
+    return {"reset": True, "key": key}
+
+
 @router.get("/budget/events", tags=["budget"])
 def get_budget_events(
     request: Request,

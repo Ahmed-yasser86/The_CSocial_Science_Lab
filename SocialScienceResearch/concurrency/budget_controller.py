@@ -391,8 +391,16 @@ class BudgetController:
                 detail={"min_interval": self._min_interval},
             )
         if self._circuit_breaker is not None:
-            key = str(session) if session is not None else "default"
-            self._circuit_breaker.record_failure(key, operation=operation)
+            # Only feed the per-session breaker when the failure is *persistent*: AIMD
+            # has already backed the global rate off to its ceiling and we are STILL
+            # being rate-limited. That is the genuine "session unhealthy" signal. A
+            # transient 429 during the normal backoff ramp is handled by the
+            # budget/tenacity and must NOT trip the breaker - otherwise a single
+            # throttle event would freeze the entire session for the cooldown window.
+            saturated = self._min_interval >= self._ceiling * 0.9
+            if saturated:
+                key = str(session) if session is not None else "default"
+                self._circuit_breaker.record_failure(key, operation=operation)
         self._emit(
             "rate_limit",
             operation=operation,

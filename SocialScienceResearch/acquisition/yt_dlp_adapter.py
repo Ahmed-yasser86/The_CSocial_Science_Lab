@@ -235,22 +235,25 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
     def _guarded(self, operation: str, func: Any):
         """Apply the per-session Circuit Breaker gate, then run ``func``.
 
-        If the breaker for this session is OPEN we raise a rate-limit error so the
-        retry policy (and therefore AIMD + breaker failure recording) treats it as
-        a 429 and backs off, rather than hitting YouTube from an unhealthy
-        identity. On success we record a success with the breaker.
+        If the breaker for this session is OPEN (cooldown window), we do NOT reject:
+        instead we wait out the remaining cooldown cooperatively and then probe as
+        HALF_OPEN. This turns the breaker into a *bounded* backoff that self-heals,
+        rather than raising a rate-limit error that tenacity would retry forever
+        (which previously froze the whole session for the cooldown). On success we
+        record a success with the breaker.
         """
-        if self._circuit_breaker is not None:
+        cb = self._circuit_breaker
+        if cb is not None:
             key = self._session_key()
-            if not self._circuit_breaker.allow_request(key):
-                raise RateLimitError(f"session {key} circuit breaker OPEN")
+            if not cb.allow_request(key):
+                cb.wait_until_allowed(key)
         try:
             result = func()
         except RateLimitError:
             raise
         else:
-            if self._circuit_breaker is not None:
-                self._circuit_breaker.record_success(self._session_key())
+            if cb is not None:
+                cb.record_success(self._session_key())
             return result
 
     def _dispatch(self, operation: str, priority: int, real_func: Any, run_id: str | None):
