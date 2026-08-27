@@ -35,6 +35,7 @@ from SocialScienceResearch.concurrency.budget_controller import (
     OPER_EXTRACT_RECOMMENDATIONS,
     OPER_EXTRACT_TRANSCRIPT,
     OPER_EXTRACT_VIDEO,
+    OPER_EXTRACT_VIDEO_COMMENTS,
     BudgetController,
 )
 from SocialScienceResearch.domain.enums import TranscriptStatus
@@ -207,9 +208,19 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         ``include_comments`` overrides the global collection policy per call:
         crawls that opted out of comments must not pay the comment-pagination
         cost inside yt-dlp (up to ``max_comments_per_video`` network pages).
-        ``None`` keeps the configured default behaviour.
+        ``None`` keeps the configured default behaviour. The budget cost reflects
+        whether comments are paginated (Phase 3 weighted cost).
         """
-        return self._budgeted(OPER_EXTRACT_VIDEO)(self._extract_video)(
+        effective_comments = (
+            self._collection.collect_comments if include_comments is None
+            else include_comments
+        )
+        op = (
+            OPER_EXTRACT_VIDEO_COMMENTS
+            if effective_comments
+            else OPER_EXTRACT_VIDEO
+        )
+        return self._budgeted(op)(self._extract_video)(
             video_url, include_comments=include_comments
         )
 

@@ -41,6 +41,20 @@ OPER_EXTRACT_TRANSCRIPT = "extract_transcript"
 OPER_EXTRACT_RECOMMENDATIONS = "extract_recommendations"
 OPER_RETRY = "retry"
 
+# Phase 3: weighted cost per operation. These are *estimates of extraction /
+# network pressure* (how many YouTube requests an operation tends to trigger),
+# NOT exact HTTP counts. A heavier operation reserves proportionally more of the
+# shared timeline: ``next_slot += min_interval * cost``. Override per-process via
+# ``BudgetController(operation_costs=...)``.
+DEFAULT_OPERATION_COSTS: dict[str, float] = {
+    OPER_EXTRACT_CHANNEL: 4.0,          # discovery: multiple playlist tabs
+    OPER_EXTRACT_VIDEO: 2.0,           # metadata only
+    OPER_EXTRACT_VIDEO_COMMENTS: 6.0,  # full comment pagination
+    OPER_EXTRACT_TRANSCRIPT: 1.5,      # caption track + single fetch
+    OPER_EXTRACT_RECOMMENDATIONS: 1.5, # sidebar / innertube fallback
+    OPER_RETRY: 1.0,                   # a retry is ~one attempt's worth
+}
+
 # Run-context for budget events. The service sets the active run id before
 # calling the acquisition provider; the provider's budget hooks read it so that
 # retries (and the first attempt) are attributed to the correct run without
@@ -167,9 +181,11 @@ class BudgetController:
         max_ytdl_contexts: int = 4,
         event_sinks: list[EventSink] | None = None,
         jsonl_path: str | Path | None = None,
+        operation_costs: dict[str, float] | None = None,
     ) -> None:
         self._min_interval = float(min_interval)
         self._max_ytdl_contexts = int(max_ytdl_contexts)
+        self._operation_costs = dict(operation_costs or DEFAULT_OPERATION_COSTS)
         self._lock = threading.Lock()
         self._next_slot = 0.0
         # Always keep the ring buffer so the query API has something to read.
@@ -208,6 +224,12 @@ class BudgetController:
     def max_ytdl_contexts(self) -> int:
         return self._max_ytdl_contexts
 
+    def _resolve_cost(self, operation: str, cost: float | None) -> float:
+        """Resolve the effective cost: explicit override else the operation's weight."""
+        if cost is not None:
+            return float(cost)
+        return float(self._operation_costs.get(operation, 1.0))
+
     # ------------------------------------------------------------------
     # Core admission
     # ------------------------------------------------------------------
@@ -216,15 +238,22 @@ class BudgetController:
         operation: str,
         *,
         run_id: str | None = None,
-        cost: float = 1.0,
+        cost: float | None = None,
     ) -> float:
-        """Block until one unit of work may proceed; return seconds waited."""
+        """Block until the controller admits one `cost` unit of work.
+
+        ``cost`` defaults to the operation's weighted cost (see
+        ``DEFAULT_OPERATION_COSTS``); a heavier operation reserves proportionally
+        more of the shared timeline: ``next_slot += min_interval * cost``.
+        Returns seconds waited.
+        """
+        cost = self._resolve_cost(operation, cost)
         waited = 0.0
         if self._min_interval > 0:
             with self._lock:
                 now = time.monotonic()
                 slot = max(self._next_slot, now)
-                self._next_slot = slot + self._min_interval
+                self._next_slot = slot + self._min_interval * cost
             waited = slot - now
             if waited > 0:
                 time.sleep(waited)

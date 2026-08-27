@@ -433,3 +433,100 @@ def test_provider_routes_retries_through_shared_controller():
         e["operation"] == "extract_channel" and e["run_id"] == "R9"
         for e in controller.events()
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: weighted cost per operation.
+# ---------------------------------------------------------------------------
+def test_weighted_cost_reserves_proportional_spacing():
+    """Heavier operations reserve proportionally more of the shared timeline.
+
+    The first admit is immediate; every *subsequent* admit waits for the slot the
+    previous op reserved (``min_interval * previous_op_cost``).
+    """
+    from SocialScienceResearch.concurrency.budget_controller import (
+        BudgetController,
+        OPER_EXTRACT_CHANNEL,
+        OPER_EXTRACT_RECOMMENDATIONS,
+        OPER_EXTRACT_VIDEO,
+    )
+
+    ctrl = BudgetController(min_interval=0.1, max_ytdl_contexts=4)
+    # video(2.0) then recs(1.5) then channel(4.0).
+    t0 = time.monotonic()
+    ctrl.acquire(OPER_EXTRACT_VIDEO)          # immediate
+    t1 = time.monotonic()
+    ctrl.acquire(OPER_EXTRACT_RECOMMENDATIONS)  # waits video's 0.2
+    t2 = time.monotonic()
+    ctrl.acquire(OPER_EXTRACT_CHANNEL)          # waits recs' 0.15
+    t3 = time.monotonic()
+
+    gap_first = t1 - t0          # immediate -> ~0
+    gap_video = t2 - t1          # 2.0 * 0.1 = 0.2
+    gap_recs = t3 - t2           # 1.5 * 0.1 = 0.15
+    assert gap_first <= 0.02
+    assert 0.2 - 0.03 <= gap_video <= 0.2 + 0.05
+    assert 0.15 - 0.03 <= gap_recs <= 0.15 + 0.05
+
+    costs = [e["cost"] for e in ctrl.events()]
+    assert costs == [2.0, 1.5, 4.0]
+
+
+def test_explicit_cost_overrides_weight_and_unknown_op_defaults_to_one():
+    from SocialScienceResearch.concurrency.budget_controller import (
+        BudgetController,
+        OPER_EXTRACT_VIDEO,
+    )
+
+    # Explicit cost=10 on the 2nd op -> the 3rd op waits 1.0s for that slot.
+    ctrl = BudgetController(min_interval=0.1, max_ytdl_contexts=4)
+    ctrl.acquire(OPER_EXTRACT_VIDEO)                 # immediate, reserves 0.2
+    ctrl.acquire(OPER_EXTRACT_VIDEO, cost=10.0)      # reserves 1.0
+    t = time.monotonic()
+    ctrl.acquire("some_future_op")                   # waits the 1.0 slot
+    gap = time.monotonic() - t
+    assert 1.0 - 0.03 <= gap <= 1.0 + 0.05
+    assert ctrl.events()[1]["cost"] == 10.0
+
+    # A fresh controller: unknown op with no explicit cost falls back to unit cost.
+    ctrl2 = BudgetController(min_interval=0.1, max_ytdl_contexts=4)
+    ctrl2.acquire("op_a")                            # unknown, cost 1.0, reserves 0.1
+    t2 = time.monotonic()
+    ctrl2.acquire("op_b")                            # waits the 0.1 slot
+    assert time.monotonic() - t2 >= 0.1 - 0.03
+    assert ctrl2.events()[-1]["cost"] == 1.0
+
+
+def test_provider_uses_comments_weight_for_video_extraction():
+    """extract_video with comments on budgets OPER_EXTRACT_VIDEO_COMMENTS (6.0),
+    without comments budgets OPER_EXTRACT_VIDEO (2.0)."""
+    from SocialScienceResearch.acquisition.yt_dlp_adapter import (
+        YtDlpAcquisitionProvider,
+    )
+    from SocialScienceResearch.config.settings import ScraperSettings
+    from SocialScienceResearch.concurrency.budget_controller import (
+        BudgetController,
+        OPER_EXTRACT_VIDEO,
+        OPER_EXTRACT_VIDEO_COMMENTS,
+        run_context,
+    )
+
+    ctrl = BudgetController(min_interval=0.0, max_ytdl_contexts=4)
+    provider = YtDlpAcquisitionProvider(
+        settings=ScraperSettings(retries=1, retry_backoff=0.0),
+        budget_controller=ctrl,
+    )
+
+    def fake_extract(self, url, opts):  # noqa: ANN001 - monkeypatch
+        return {"_type": "video", "id": "vid", "title": "t"}
+
+    provider._extract = fake_extract.__get__(provider, YtDlpAcquisitionProvider)
+
+    with run_context("RC"):
+        provider.extract_video("https://youtube.com/watch?v=vid", include_comments=True)
+    with run_context("RC"):
+        provider.extract_video("https://youtube.com/watch?v=vid", include_comments=False)
+
+    ops = [e["operation"] for e in ctrl.events()]
+    assert OPER_EXTRACT_VIDEO_COMMENTS in ops
+    assert OPER_EXTRACT_VIDEO in ops

@@ -90,7 +90,8 @@ def retry_policy_budgeted(
         attempt = getattr(retry_state, "attempt_number", 1) or 1
         if attempt == 1 and not budget_on_first:
             return
-        budget.acquire(operation, run_id=run_id, cost=1.0)
+        # cost=None -> the controller applies the operation's weighted cost (Phase 3).
+        budget.acquire(operation, run_id=run_id, cost=None)
 
     def _after(retry_state: object) -> None:
         outcome = getattr(retry_state, "outcome", None)
