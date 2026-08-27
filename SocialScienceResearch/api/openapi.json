@@ -5425,6 +5425,54 @@
         }
       }
     },
+    "/api/v1/social-science/budget/circuit-breakers": {
+      "get": {
+        "tags": [
+          "budget"
+        ],
+        "summary": "Get Circuit Breakers",
+        "description": "Return per-session/proxy Circuit Breaker health (Phase 5).",
+        "operationId": "get_circuit_breakers_api_v1_social_science_budget_circuit_breakers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Circuit Breakers Api V1 Social Science Budget Circuit Breakers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/budget/queue": {
+      "get": {
+        "tags": [
+          "budget"
+        ],
+        "summary": "Get Queue State",
+        "description": "Return priority-queue state: running / queued totals and per-type counts.",
+        "operationId": "get_queue_state_api_v1_social_science_budget_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Queue State Api V1 Social Science Budget Queue Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/search": {
       "get": {
         "tags": [

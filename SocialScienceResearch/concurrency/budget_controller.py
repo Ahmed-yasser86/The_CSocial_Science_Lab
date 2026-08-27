@@ -27,9 +27,12 @@ import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterator, Protocol
+from typing import Any, Iterator, Protocol, TYPE_CHECKING
 
 from SocialScienceResearch.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from SocialScienceResearch.concurrency.circuit_breaker import CircuitBreakerRegistry
 
 logger = get_logger(__name__)
 
@@ -205,10 +208,18 @@ class BudgetController:
         aimd_cooldown: float = AIMD_COOLDOWN,
         aimd_floor_ratio: float = AIMD_FLOOR_RATIO,
         aimd_ceiling_ratio: float = AIMD_CEILING_RATIO,
+        circuit_breaker: "CircuitBreakerRegistry | None" = None,
     ) -> None:
         self._min_interval = float(min_interval)
         self._max_ytdl_contexts = int(max_ytdl_contexts)
         self._operation_costs = dict(operation_costs or DEFAULT_OPERATION_COSTS)
+        self._circuit_breaker = circuit_breaker
+        if self._circuit_breaker is not None:
+            # Surface breaker state transitions through the same event stream.
+            try:
+                self._circuit_breaker._on_transition = self._cb_transition
+            except Exception:  # noqa: BLE001
+                pass
         self._aimd_increase_interval = float(aimd_increase_interval)
         self._aimd_increase_factor = float(aimd_increase_factor)
         self._aimd_decrease_factor = float(aimd_decrease_factor)
@@ -356,6 +367,9 @@ class BudgetController:
         available budget is halved) and increases are blocked for ``aimd_cooldown``
         seconds, so we don't keep speeding up into a wall of 429s. Subsequent 429s
         inside the same window are still counted/observed but don't re-halve.
+
+        The failure is also forwarded to the per-session Circuit Breaker (if any),
+        which independently tracks session/proxy health and may OPEN that identity.
         """
         decreased = False
         with self._lock:
@@ -376,12 +390,23 @@ class BudgetController:
                 reason="aimd_multiplicative_decrease",
                 detail={"min_interval": self._min_interval},
             )
+        if self._circuit_breaker is not None:
+            key = str(session) if session is not None else "default"
+            self._circuit_breaker.record_failure(key, operation=operation)
         self._emit(
             "rate_limit",
             operation=operation,
             run_id=run_id,
             reason=reason,
             detail={"session": str(session), **(detail or {})},
+        )
+
+    def _cb_transition(self, key: str, old: Any, new: Any, detail: dict) -> None:
+        """Forward a Circuit Breaker state transition into the budget event stream."""
+        self._emit(
+            "circuit_breaker",
+            reason="state_change",
+            detail={"key": key, "from": getattr(old, "value", old), "to": getattr(new, "value", new), **detail},
         )
 
     # ------------------------------------------------------------------
@@ -416,6 +441,16 @@ class BudgetController:
     def attach_sink(self, sink: EventSink) -> None:
         self._sinks.append(sink)
 
+    def emit_raw(self, event: dict[str, Any]) -> None:
+        """Emit an already-shaped event dict through the normal sinks.
+
+        Used by companion components (the priority queue, circuit breaker) that
+        build their own event payloads but want them in the same observable
+        stream as the budget events.
+        """
+        kind = str(event.get("kind", "event"))
+        self._emit(kind, detail=event)
+
     def events(
         self, *, limit: int | None = None, run_id: str | None = None
     ) -> list[dict[str, Any]]:
@@ -434,4 +469,7 @@ class BudgetController:
                 "aimd_ceiling": self._ceiling,
                 "in_cooldown": cooldown_remaining > 0,
                 "cooldown_remaining_seconds": round(cooldown_remaining, 1),
+                "circuit_breakers": (
+                    self._circuit_breaker.state() if self._circuit_breaker else {}
+                ),
             }

@@ -97,6 +97,37 @@ describe("BudgetDashboard", () => {
     expect(screen.getByTestId("budget-cooldown")).toHaveTextContent("cooldown");
   });
 
+  it("renders circuit-breaker health and queue state", async () => {
+    stubFetch({
+      "/budget/state": STATE,
+      "/budget/events": EVENTS,
+      "/budget/circuit-breakers": {
+        breakers: {
+          default: {
+            key: "default",
+            state: "open",
+            consecutive_failures: 5,
+            consecutive_successes: 0,
+            total_failures: 5,
+            total_successes: 0,
+            cooldown: 300,
+          },
+        },
+      },
+      "/budget/queue": {
+        running: 2,
+        queued_total: 1,
+        by_type: { video: { queued: 1, running: 1, waiting: 0 } },
+      },
+    });
+    renderWithProviders(<BudgetDashboard />);
+    expect(await screen.findByTestId("budget-breaker")).toHaveTextContent(
+      "default: open",
+    );
+    expect(screen.getByTestId("budget-queue-running")).toHaveTextContent("2");
+    expect(screen.getByTestId("budget-queue-queued")).toHaveTextContent("1");
+  });
+
   it("surfaces an unavailable state without crashing", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response("boom", { status: 500 });

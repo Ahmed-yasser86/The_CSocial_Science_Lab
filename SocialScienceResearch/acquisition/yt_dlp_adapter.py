@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, TYPE_CHECKING
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -37,6 +37,7 @@ from SocialScienceResearch.concurrency.budget_controller import (
     OPER_EXTRACT_VIDEO,
     OPER_EXTRACT_VIDEO_COMMENTS,
     BudgetController,
+    get_current_run_id,
 )
 from SocialScienceResearch.domain.enums import TranscriptStatus
 from SocialScienceResearch.utils.logger import get_logger
@@ -54,6 +55,10 @@ from .errors import (
 )
 from .retry import retry_policy_budgeted
 from .up_next import scan_page_dumps
+
+if TYPE_CHECKING:
+    from SocialScienceResearch.concurrency.circuit_breaker import CircuitBreakerRegistry
+    from SocialScienceResearch.concurrency.priority_queue import PriorityTaskQueue
 
 logger = get_logger(__name__)
 
@@ -186,6 +191,8 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         settings: ScraperSettings | None = None,
         collection: CollectionSettings | None = None,
         budget_controller: "BudgetController | None" = None,
+        circuit_breaker: "CircuitBreakerRegistry | None" = None,
+        task_queue: "PriorityTaskQueue | None" = None,
     ) -> None:
         self._settings = settings or ScraperSettings()
         self._collection = collection or CollectionSettings()
@@ -193,12 +200,98 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             min_interval=self._settings.request_delay_seconds,
             max_ytdl_contexts=self._settings.budget_max_ytdl_contexts,
         )
+        self._circuit_breaker = circuit_breaker
+        self._task_queue = task_queue
 
     # ------------------------------------------------------------------
-    # Public interface (wrapped with the budgeted retry policy)
+    # Public interface (routed through the budgeted retry policy, the optional
+    # priority queue, and the per-session Circuit Breaker)
     # ------------------------------------------------------------------
+    def _session_key(self) -> str:
+        """Identity the Circuit Breaker keys on: the configured proxy, or default."""
+        return self._settings.proxy or "default"
+
+    def _priority_for(self, operation: str) -> int:
+        """Map an operation to its pipeline priority (lower = higher priority)."""
+        from SocialScienceResearch.concurrency.priority_queue import TaskPriority
+
+        return {
+            OPER_EXTRACT_CHANNEL: TaskPriority.DISCOVERY,
+            OPER_EXTRACT_VIDEO: TaskPriority.ENRICHMENT,
+            OPER_EXTRACT_VIDEO_COMMENTS: TaskPriority.COMMENTS,
+            OPER_EXTRACT_TRANSCRIPT: TaskPriority.ENRICHMENT,
+            OPER_EXTRACT_RECOMMENDATIONS: TaskPriority.RECOMMENDATIONS,
+        }.get(operation, TaskPriority.ENRICHMENT)
+
+    def _type_for(self, operation: str) -> str:
+        return {
+            OPER_EXTRACT_CHANNEL: "channel",
+            OPER_EXTRACT_VIDEO: "video",
+            OPER_EXTRACT_VIDEO_COMMENTS: "comments",
+            OPER_EXTRACT_TRANSCRIPT: "transcript",
+            OPER_EXTRACT_RECOMMENDATIONS: "recommendations",
+        }.get(operation, operation or "other")
+
+    def _guarded(self, operation: str, func: Any):
+        """Apply the per-session Circuit Breaker gate, then run ``func``.
+
+        If the breaker for this session is OPEN we raise a rate-limit error so the
+        retry policy (and therefore AIMD + breaker failure recording) treats it as
+        a 429 and backs off, rather than hitting YouTube from an unhealthy
+        identity. On success we record a success with the breaker.
+        """
+        if self._circuit_breaker is not None:
+            key = self._session_key()
+            if not self._circuit_breaker.allow_request(key):
+                raise RateLimitError(f"session {key} circuit breaker OPEN")
+        try:
+            result = func()
+        except RateLimitError:
+            raise
+        else:
+            if self._circuit_breaker is not None:
+                self._circuit_breaker.record_success(self._session_key())
+            return result
+
+    def _dispatch(self, operation: str, priority: int, real_func: Any, run_id: str | None):
+        """Run ``real_func`` through the retry/budget policy, optionally via the queue.
+
+        When a ``task_queue`` is injected, the call is enqueued (priority-ordered,
+        gated by the shared budget) and the result returned synchronously via its
+        Future. Otherwise it runs inline. In both cases the per-session breaker is
+        consulted and successes recorded.
+        """
+        if self._task_queue is None:
+            wrapped = self._budgeted(operation)(lambda: self._guarded(operation, real_func))
+            return wrapped()
+        # Queue path: the queue's own acquire covers the first attempt, so the
+        # retry policy must not re-charge it (budget_on_first=False). Retries
+        # still re-charge via the policy's before-hook.
+        wrapped = retry_policy_budgeted(
+            self._budget,
+            operation,
+            run_id,
+            retries=self._settings.retries,
+            backoff=self._settings.retry_backoff,
+            budget_on_first=False,
+        )(lambda: self._guarded(operation, real_func))
+        future = self._task_queue.enqueue(
+            operation=operation,
+            priority=priority,
+            func=wrapped,
+            run_id=run_id,
+            cost=None,
+            type=self._type_for(operation),
+        )
+        return future.result()
+
     def extract_channel(self, channel_url: str) -> ChannelExtract:
-        return self._budgeted(OPER_EXTRACT_CHANNEL)(self._extract_channel)(channel_url)
+        return self._dispatch(
+            OPER_EXTRACT_CHANNEL,
+            self._priority_for(OPER_EXTRACT_CHANNEL),
+            lambda: self._extract_channel(channel_url),
+            get_current_run_id(),
+        )
 
     def extract_video(
         self, video_url: str, *, include_comments: bool | None = None
@@ -220,20 +313,29 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             if effective_comments
             else OPER_EXTRACT_VIDEO
         )
-        return self._budgeted(op)(self._extract_video)(
-            video_url, include_comments=include_comments
+        return self._dispatch(
+            op,
+            self._priority_for(op),
+            lambda: self._extract_video(video_url, include_comments=include_comments),
+            get_current_run_id(),
         )
 
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
-        return self._budgeted(OPER_EXTRACT_RECOMMENDATIONS)(
-            self._extract_recommendations
-        )(video_url)
+        return self._dispatch(
+            OPER_EXTRACT_RECOMMENDATIONS,
+            self._priority_for(OPER_EXTRACT_RECOMMENDATIONS),
+            lambda: self._extract_recommendations(video_url),
+            get_current_run_id(),
+        )
 
     def extract_transcript(
         self, video_url: str, lang: str | None = None
     ) -> TranscriptExtract:
-        return self._budgeted(OPER_EXTRACT_TRANSCRIPT)(self._extract_transcript)(
-            video_url, lang
+        return self._dispatch(
+            OPER_EXTRACT_TRANSCRIPT,
+            self._priority_for(OPER_EXTRACT_TRANSCRIPT),
+            lambda: self._extract_transcript(video_url, lang),
+            get_current_run_id(),
         )
 
     def _budgeted(self, operation: str):
@@ -242,10 +344,6 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         ``run_id`` is read from the process run-context (set by the caller via
         :func:`run_context`) so retries are attributed to the correct run.
         """
-        from SocialScienceResearch.concurrency.budget_controller import (
-            get_current_run_id,
-        )
-
         return retry_policy_budgeted(
             self._budget,
             operation,

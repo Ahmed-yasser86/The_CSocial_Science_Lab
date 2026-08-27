@@ -40,3 +40,21 @@ def get_budget_state(request: Request) -> dict[str, Any]:
     """Return the controller's live counters (admits, 429 count, waited total)."""
     controller = request.app.state.budget_controller
     return controller.state()
+
+
+@router.get("/budget/circuit-breakers", tags=["budget"])
+def get_circuit_breakers(request: Request) -> dict[str, Any]:
+    """Return per-session/proxy Circuit Breaker health (Phase 5)."""
+    registry = getattr(request.app.state, "circuit_breaker", None)
+    if registry is None:
+        return {"breakers": {}}
+    return {"breakers": registry.state()}
+
+
+@router.get("/budget/queue", tags=["budget"])
+def get_queue_state(request: Request) -> dict[str, Any]:
+    """Return priority-queue state: running / queued totals and per-type counts."""
+    queue = getattr(request.app.state, "task_queue", None)
+    if queue is None:
+        return {"running": 0, "queued_total": 0, "by_type": {}}
+    return queue.queue_state()

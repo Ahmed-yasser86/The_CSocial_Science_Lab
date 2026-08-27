@@ -35,6 +35,22 @@ export interface BudgetEventsResponse {
   max_ytdl_contexts: number;
 }
 
+export interface CircuitBreakerState {
+  key: string;
+  state: "closed" | "open" | "half_open";
+  consecutive_failures: number;
+  consecutive_successes: number;
+  total_failures: number;
+  total_successes: number;
+  cooldown: number;
+}
+
+export interface QueueState {
+  running: number;
+  queued_total: number;
+  by_type: Record<string, { queued: number; running: number; waiting: number }>;
+}
+
 const DEFAULT_REFRESH_MS = 2000;
 
 export function useBudgetState(refreshMs: number = DEFAULT_REFRESH_MS) {
@@ -53,6 +69,25 @@ export function useBudgetEvents(
     queryKey: ["budget", "events", limit],
     queryFn: () =>
       request<BudgetEventsResponse>(`/budget/events?limit=${limit}`),
+    refetchInterval: refreshMs,
+  });
+}
+
+export function useCircuitBreakers(refreshMs: number = DEFAULT_REFRESH_MS) {
+  return useQuery({
+    queryKey: ["budget", "circuit-breakers"],
+    queryFn: () =>
+      request<{ breakers: Record<string, CircuitBreakerState> }>(
+        "/budget/circuit-breakers",
+      ),
+    refetchInterval: refreshMs,
+  });
+}
+
+export function useQueueState(refreshMs: number = DEFAULT_REFRESH_MS) {
+  return useQuery({
+    queryKey: ["budget", "queue"],
+    queryFn: () => request<QueueState>("/budget/queue"),
     refetchInterval: refreshMs,
   });
 }

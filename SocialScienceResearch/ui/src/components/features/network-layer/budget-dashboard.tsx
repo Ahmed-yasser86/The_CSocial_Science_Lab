@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import {
   useBudgetEvents,
   useBudgetState,
+  useCircuitBreakers,
+  useQueueState,
   formatInterval,
   formatRatePerSecond,
 } from "@/services/budget";
@@ -83,12 +85,22 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function breakerVariant(state: string): "outline" | "secondary" | "destructive" {
+  if (state === "open") return "destructive";
+  if (state === "half_open") return "secondary";
+  return "outline";
+}
+
 export function BudgetDashboard() {
   const stateQuery = useBudgetState();
   const eventsQuery = useBudgetEvents(50);
+  const breakersQuery = useCircuitBreakers();
+  const queueQuery = useQueueState();
 
   const state = stateQuery.data;
   const events = eventsQuery.data?.events ?? [];
+  const breakers = breakersQuery.data?.breakers ?? {};
+  const queue = queueQuery.data;
 
   // Sample the effective interval over time so the AIMD trend is visible.
   const samplesRef = useRef<number[]>([]);
@@ -189,6 +201,62 @@ export function BudgetDashboard() {
                     </div>
                   ))
               )}
+            </div>
+          </div>
+
+          {/* Per-session Circuit Breaker health */}
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              Sessions (circuit breaker)
+            </div>
+            {Object.keys(breakers).length === 0 ? (
+              <p className="text-[10px] text-muted-foreground">
+                No session health tracked yet.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {Object.values(breakers).map((b) => (
+                  <Badge
+                    key={b.key}
+                    variant={breakerVariant(b.state)}
+                    className="text-[9px]"
+                    data-testid="budget-breaker"
+                  >
+                    {b.key}: {b.state}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Priority queue state */}
+          <div className="space-y-1">
+            <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              Task queue
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="rounded-md border bg-muted/30 px-2 py-1">
+                <div className="text-[9px] uppercase text-muted-foreground">
+                  Running
+                </div>
+                <div
+                  className="text-xs font-medium tabular-nums"
+                  data-testid="budget-queue-running"
+                >
+                  {queue?.running ?? 0}
+                </div>
+              </div>
+              <div className="rounded-md border bg-muted/30 px-2 py-1">
+                <div className="text-[9px] uppercase text-muted-foreground">
+                  Queued
+                </div>
+                <div
+                  className="text-xs font-medium tabular-nums"
+                  data-testid="budget-queue-queued"
+                >
+                  {queue?.queued_total ?? 0}
+                </div>
+              </div>
             </div>
           </div>
         </>

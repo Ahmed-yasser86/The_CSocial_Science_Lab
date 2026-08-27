@@ -660,6 +660,8 @@ def create_app(
         transcript_provider=settings.scraper.transcript_provider,
     )
     budget_controller = None
+    circuit_breaker = None
+    task_queue = None
     if provider is None:
         from SocialScienceResearch.acquisition import YtDlpAcquisitionProvider
         from SocialScienceResearch.acquisition.freetranscriptapi_provider import (
@@ -675,14 +677,32 @@ def create_app(
         # One controller for the whole process: shared by the acquisition
         # provider (first attempt + every retry), the scraping services, and the
         # homophily service, so nothing bypasses the bucket.
+        from SocialScienceResearch.concurrency.circuit_breaker import (
+            CircuitBreakerRegistry,
+        )
+        from SocialScienceResearch.concurrency.priority_queue import PriorityTaskQueue
+
+        circuit_breaker = CircuitBreakerRegistry()
         budget_controller = BudgetController(
             min_interval=settings.scraper.request_delay_seconds,
             max_ytdl_contexts=settings.scraper.budget_max_ytdl_contexts,
+            circuit_breaker=circuit_breaker,
+        )
+        # One priority queue for the whole process: every extraction is enqueued
+        # (priority-ordered, gated by the shared budget). Worker count is bounded
+        # by the enrichment concurrency so we never oversubscribe the semaphore.
+        task_queue = PriorityTaskQueue(
+            budget_controller,
+            circuit_breaker=circuit_breaker,
+            max_workers=max(1, settings.scraper.enrichment_concurrency or 4),
+            emit=lambda e: budget_controller.emit_raw(e),
         )
         _ytdlp = YtDlpAcquisitionProvider(
             settings=settings.scraper,
             collection=settings.collection,
             budget_controller=budget_controller,
+            circuit_breaker=circuit_breaker,
+            task_queue=task_queue,
         )
         _free = (
             FreeTranscriptApiProvider(
@@ -723,6 +743,9 @@ def create_app(
         yield
         services["repos"].store.close()
         services["jobs"].shutdown()
+        task_queue = getattr(app.state, "task_queue", None)
+        if task_queue is not None:
+            task_queue.shutdown()
 
     app = FastAPI(
         title=settings.api.title,
@@ -736,6 +759,8 @@ def create_app(
     app.state.settings = settings
     app.state.workspace_runtime = runtime
     app.state.budget_controller = services["budget_controller"]
+    app.state.circuit_breaker = circuit_breaker
+    app.state.task_queue = task_queue
 
     # Request-scoped workspace routing: every request is served by the
     # services bound to the ACTIVE workspace's database + data dir. Installed
