@@ -9,7 +9,8 @@ independent, uncoordinated gates.
 Phase 1 keeps the controller at a *fixed* rate (adaptive AIMD arrives in Phase 4)
 and treats every operation as unit cost (weighted costs arrive in Phase 3). The
 interface is deliberately shaped so Phase 2 (retries through the controller) and
-Phase 4 (AIMD) are drop-in changes.
+Phase 4 (AIMD) are drop-in changes. As of Phase 4 the controller also adapts its
+rate via AIMD (additive increase under no 429s, multiplicative decrease on 429s).
 
 Every admission decision and every rate-limit signal is emitted as a structured
 ``BudgetEvent`` to pluggable ``EventSink``s (INFO logs + in-memory ring buffer +
@@ -54,6 +55,22 @@ DEFAULT_OPERATION_COSTS: dict[str, float] = {
     OPER_EXTRACT_RECOMMENDATIONS: 1.5, # sidebar / innertube fallback
     OPER_RETRY: 1.0,                   # a retry is ~one attempt's worth
 }
+
+# Phase 4: AIMD adaptive rate. The controller starts at a conservative baseline
+# ``min_interval`` and learns the highest safe rate over time:
+#   * additive increase  - while healthy (no recent 429), shrink the interval by
+#     ``aimd_increase_factor`` every ``aimd_increase_interval`` seconds (faster);
+#   * multiplicative decrease - on the first 429 within a cooldown window, double
+#     the interval (halve the budget) and block increases for ``aimd_cooldown``.
+# Floor/ceiling bound the interval to ``baseline * aimd_floor_ratio`` (fastest) and
+# ``baseline * aimd_ceiling_ratio`` (slowest). All values are constructor params so
+# the learned behaviour stays configurable, never permanently hardcoded.
+AIMD_INCREASE_INTERVAL = 60.0    # seconds between additive-increase checks
+AIMD_INCREASE_FACTOR = 0.05      # interval shrinks 5% per healthy tick
+AIMD_DECREASE_FACTOR = 2.0       # 429 -> interval doubles (budget halved)
+AIMD_COOLDOWN = 300.0            # seconds increases are blocked after a decrease
+AIMD_FLOOR_RATIO = 0.25          # fastest interval = baseline * this (4x faster)
+AIMD_CEILING_RATIO = 8.0         # slowest interval = baseline * this (8x slower)
 
 # Run-context for budget events. The service sets the active run id before
 # calling the acquisition provider; the provider's budget hooks read it so that
@@ -182,12 +199,33 @@ class BudgetController:
         event_sinks: list[EventSink] | None = None,
         jsonl_path: str | Path | None = None,
         operation_costs: dict[str, float] | None = None,
+        aimd_increase_interval: float = AIMD_INCREASE_INTERVAL,
+        aimd_increase_factor: float = AIMD_INCREASE_FACTOR,
+        aimd_decrease_factor: float = AIMD_DECREASE_FACTOR,
+        aimd_cooldown: float = AIMD_COOLDOWN,
+        aimd_floor_ratio: float = AIMD_FLOOR_RATIO,
+        aimd_ceiling_ratio: float = AIMD_CEILING_RATIO,
     ) -> None:
         self._min_interval = float(min_interval)
         self._max_ytdl_contexts = int(max_ytdl_contexts)
         self._operation_costs = dict(operation_costs or DEFAULT_OPERATION_COSTS)
+        self._aimd_increase_interval = float(aimd_increase_interval)
+        self._aimd_increase_factor = float(aimd_increase_factor)
+        self._aimd_decrease_factor = float(aimd_decrease_factor)
+        self._aimd_cooldown = float(aimd_cooldown)
+        self._aimd_floor_ratio = float(aimd_floor_ratio)
+        self._aimd_ceiling_ratio = float(aimd_ceiling_ratio)
+        # Baseline anchors the floor/ceiling bounds; AIMD only drifts `_min_interval`.
+        self._baseline_interval = self._min_interval
+        self._floor = self._baseline_interval * self._aimd_floor_ratio
+        self._ceiling = self._baseline_interval * self._aimd_ceiling_ratio
         self._lock = threading.Lock()
         self._next_slot = 0.0
+        # AIMD state. First 429 is allowed immediately; additive increase is
+        # scheduled one interval out so fast tests (well under a minute) see no drift.
+        self._next_ai_check = time.monotonic() + self._aimd_increase_interval
+        self._last_decrease_at = -self._aimd_cooldown
+        self._in_cooldown_until = 0.0
         # Always keep the ring buffer so the query API has something to read.
         self._ring = RingBufferSink()
         self._sinks: list[EventSink] = [self._ring]
@@ -206,9 +244,16 @@ class BudgetController:
     # Configuration
     # ------------------------------------------------------------------
     def set_min_interval(self, seconds: float) -> None:
-        """Live-tune the spacing (wired to the UI speed presets)."""
+        """Live-tune the spacing (wired to the UI speed presets).
+
+        Also re-anchors the AIMD floor/ceiling to the new baseline so adaptive
+        drift stays bounded around whatever the operator selected.
+        """
         with self._lock:
             self._min_interval = max(0.0, float(seconds))
+            self._baseline_interval = self._min_interval
+            self._floor = self._baseline_interval * self._aimd_floor_ratio
+            self._ceiling = self._baseline_interval * self._aimd_ceiling_ratio
         self._emit(
             "state_change",
             reason="min_interval_update",
@@ -229,6 +274,30 @@ class BudgetController:
         if cost is not None:
             return float(cost)
         return float(self._operation_costs.get(operation, 1.0))
+
+    def _maybe_aimd_increase(self, now: float) -> None:
+        """Additive-increase step (called from ``acquire`` under ``self._lock``).
+
+        While healthy (no 429 within the cooldown window) shrink the interval by
+        ``aimd_increase_factor`` every ``aimd_increase_interval`` seconds, down to
+        the floor. This is the "increase" half of AIMD; the "decrease" half lives
+        in ``on_rate_limited``.
+        """
+        if now < self._next_ai_check:
+            return
+        self._next_ai_check = now + self._aimd_increase_interval
+        if now < self._in_cooldown_until:
+            return  # a recent 429 blocked increases until cooldown expires
+        new_interval = max(
+            self._floor, self._min_interval * (1.0 - self._aimd_increase_factor)
+        )
+        if new_interval < self._min_interval:
+            self._min_interval = new_interval
+            self._emit(
+                "state_change",
+                reason="aimd_additive_increase",
+                detail={"min_interval": self._min_interval},
+            )
 
     # ------------------------------------------------------------------
     # Core admission
@@ -252,6 +321,7 @@ class BudgetController:
         if self._min_interval > 0:
             with self._lock:
                 now = time.monotonic()
+                self._maybe_aimd_increase(now)
                 slot = max(self._next_slot, now)
                 self._next_slot = slot + self._min_interval * cost
             waited = slot - now
@@ -280,10 +350,32 @@ class BudgetController:
         reason: str = "429/RateLimitError",
         detail: dict[str, Any] | None = None,
     ) -> None:
-        """Record a 429/RateLimitError. Phase 1 = observability only; Phase 4
-        will trigger the multiplicative-decrease here."""
+        """Record a 429/RateLimitError and apply AIMD multiplicative-decrease.
+
+        On the first 429 within a cooldown window the interval is doubled (the
+        available budget is halved) and increases are blocked for ``aimd_cooldown``
+        seconds, so we don't keep speeding up into a wall of 429s. Subsequent 429s
+        inside the same window are still counted/observed but don't re-halve.
+        """
+        decreased = False
         with self._lock:
             self._rate_limited += 1
+            now = time.monotonic()
+            if now - self._last_decrease_at >= self._aimd_cooldown:
+                new_interval = min(
+                    self._ceiling, self._min_interval * self._aimd_decrease_factor
+                )
+                if new_interval > self._min_interval:
+                    self._min_interval = new_interval
+                    decreased = True
+                self._last_decrease_at = now
+                self._in_cooldown_until = now + self._aimd_cooldown
+        if decreased:
+            self._emit(
+                "state_change",
+                reason="aimd_multiplicative_decrease",
+                detail={"min_interval": self._min_interval},
+            )
         self._emit(
             "rate_limit",
             operation=operation,
@@ -331,10 +423,15 @@ class BudgetController:
 
     def state(self) -> dict[str, Any]:
         with self._lock:
+            cooldown_remaining = max(0.0, self._in_cooldown_until - time.monotonic())
             return {
                 "min_interval": self._min_interval,
                 "max_ytdl_contexts": self._max_ytdl_contexts,
                 "admits": self._admits,
                 "rate_limited": self._rate_limited,
                 "total_waited_seconds": round(self._total_waited, 2),
+                "aimd_floor": self._floor,
+                "aimd_ceiling": self._ceiling,
+                "in_cooldown": cooldown_remaining > 0,
+                "cooldown_remaining_seconds": round(cooldown_remaining, 1),
             }

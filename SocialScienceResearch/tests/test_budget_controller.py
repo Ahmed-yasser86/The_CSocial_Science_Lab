@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from SocialScienceResearch.concurrency.budget_controller import (
     BudgetController,
     OPER_EXTRACT_VIDEO,
@@ -530,3 +532,85 @@ def test_provider_uses_comments_weight_for_video_extraction():
     ops = [e["operation"] for e in ctrl.events()]
     assert OPER_EXTRACT_VIDEO_COMMENTS in ops
     assert OPER_EXTRACT_VIDEO in ops
+
+
+# ----------------------------------------------------------------------
+# Phase 4: AIMD adaptive rate
+# ----------------------------------------------------------------------
+def test_aimd_multiplicative_decrease_halves_interval_and_cools_down():
+    # First 429 doubles the interval (halves the budget) and enters cooldown;
+    # a second 429 inside the cooldown window is counted but does not re-halve.
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)
+    ctrl.on_rate_limited(operation=OPER_EXTRACT_VIDEO, run_id="r1")
+    assert ctrl.min_interval == pytest.approx(1.0)
+    assert ctrl.state()["rate_limited"] == 1
+    assert ctrl.state()["in_cooldown"] is True
+
+    ctrl.on_rate_limited(operation=OPER_EXTRACT_VIDEO, run_id="r1")
+    assert ctrl.min_interval == pytest.approx(1.0)  # unchanged (cooldown)
+    assert ctrl.state()["rate_limited"] == 2
+
+    reasons = [e["reason"] for e in ctrl.events() if e["kind"] == "state_change"]
+    assert "aimd_multiplicative_decrease" in reasons
+
+    # Once the cooldown window has passed, another 429 halves again.
+    ctrl._last_decrease_at = -1000.0  # simulate cooldown elapsed
+    ctrl.on_rate_limited(operation=OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval == pytest.approx(2.0)
+
+
+def test_aimd_multiplicative_decrease_clamps_to_ceiling():
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)  # ceiling = 4.0
+    ctrl._min_interval = 4.0
+    ctrl._last_decrease_at = -1000.0
+    ctrl.on_rate_limited(operation=OPER_EXTRACT_VIDEO)
+    # 4.0 * 2 = 8.0 would exceed the ceiling, so it stays put.
+    assert ctrl.min_interval == pytest.approx(4.0)
+
+
+def test_aimd_additive_increase_speeds_up_when_healthy():
+    # No 429 -> over time the interval shrinks toward the floor (faster rate).
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)  # floor = 0.125
+    ctrl._next_ai_check = 0.0  # force an immediate AIMD tick on next acquire
+    ctrl.acquire(OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval == pytest.approx(0.5 * 0.95)
+    reasons = [e["reason"] for e in ctrl.events() if e["kind"] == "state_change"]
+    assert "aimd_additive_increase" in reasons
+
+
+def test_aimd_additive_increase_clamps_to_floor():
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)  # floor = 0.125
+    ctrl._min_interval = 0.125
+    ctrl._in_cooldown_until = 0.0
+    ctrl._next_ai_check = 0.0
+    ctrl.acquire(OPER_EXTRACT_VIDEO)
+    # 0.125 * 0.95 = 0.11875 would drop below the floor, so it stays put.
+    assert ctrl.min_interval == pytest.approx(0.125)
+
+
+def test_aimd_cooldown_blocks_additive_increase_until_expired():
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)
+    ctrl._last_decrease_at = -1000.0
+    ctrl.on_rate_limited(operation=OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval == pytest.approx(1.0)  # doubled
+    assert ctrl.state()["in_cooldown"] is True
+
+    # While in cooldown, a forced AIMD tick must NOT speed things back up.
+    before = ctrl.min_interval
+    ctrl._next_ai_check = 0.0
+    ctrl.acquire(OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval == pytest.approx(before)
+
+    # After the cooldown window expires, additive increase resumes.
+    ctrl._in_cooldown_until = 0.0
+    ctrl._next_ai_check = 0.0
+    ctrl.acquire(OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval < before
+
+
+def test_aimd_additive_increase_converges_to_floor_over_many_ticks():
+    ctrl = BudgetController(min_interval=0.5, max_ytdl_contexts=4)  # floor = 0.125
+    for _ in range(100):
+        ctrl._next_ai_check = 0.0
+        ctrl.acquire(OPER_EXTRACT_VIDEO)
+    assert ctrl.min_interval == pytest.approx(0.125)
