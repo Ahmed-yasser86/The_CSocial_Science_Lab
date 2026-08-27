@@ -22,6 +22,7 @@ import {
   type GraphLink,
   type GraphNode,
 } from "@/components/features/network-graph";
+import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
 import {
   getCommenterNetworkExportUrl,
   useCommenterNetworkGraph,
@@ -34,6 +35,7 @@ import {
 import {
   EXPORT_FORMATS,
   type CommenterProjection,
+  type CommunityEntity,
 } from "@/lib/network-full-types";
 
 const CO_COMMENT_WEIGHTS: { value: string; label: string }[] = [
@@ -108,6 +110,35 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
       weight: e.weight,
     }));
   }, [graphQuery.data]);
+
+  // N4: derive communities client-side from the fetched audience graph so any
+  // community can be isolated as a highlighted sub-graph.
+  const [highlightedCommunityId, setHighlightedCommunityId] = useState<string | null>(null);
+  const audienceCommunities = useMemo<CommunityEntity[]>(() => {
+    const byCommunity = new Map<number, string[]>();
+    for (const n of graphNodes) {
+      if (n.community_id == null) continue;
+      const cid = n.community_id;
+      if (!byCommunity.has(cid)) byCommunity.set(cid, []);
+      byCommunity.get(cid)!.push(n.id);
+    }
+    return Array.from(byCommunity.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([cid, ids], idx) => ({
+        id: String(cid),
+        community_id: cid,
+        label: `Community ${idx + 1}`,
+        size: ids.length,
+        node_ids: ids,
+        top_node_ids: ids.slice(0, 10),
+      }));
+  }, [graphNodes]);
+
+  const highlightedNodeIds = useMemo<Set<string> | null>(() => {
+    if (!highlightedCommunityId) return null;
+    const comm = audienceCommunities.find((c) => c.id === highlightedCommunityId);
+    return comm ? new Set(comm.node_ids) : null;
+  }, [highlightedCommunityId, audienceCommunities]);
 
   if (!runId) {
     return (
@@ -250,7 +281,17 @@ export function AudienceNetworkView({ runId }: { runId: string | null }) {
                   links={graphLinks}
                   height={620}
                   colorMode="community"
+                  highlightedNodeIds={highlightedNodeIds}
                 />
+                {audienceCommunities.length > 0 ? (
+                  <div className="mt-3">
+                    <CommunityHighlightControls
+                      communities={audienceCommunities}
+                      selectedId={highlightedCommunityId}
+                      onSelect={setHighlightedCommunityId}
+                    />
+                  </div>
+                ) : null}
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                   {(["commenter", "video", "channel"] as const).map((k) => (
                     <span key={k} className="inline-flex items-center gap-1.5">

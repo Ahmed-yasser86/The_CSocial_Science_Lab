@@ -154,6 +154,37 @@ def test_communities_and_modularity(tmp_path):
     assert g2.modularity == g.modularity
 
 
+def test_communities_entities_have_member_ids(tmp_path):
+    """N4: communities are first-class entities with member node-ids."""
+    svc = CommenterNetworkService(_repos(tmp_path))
+    out = svc.communities(video_ids=["v1", "v2"], projection="commenter")
+    assert out["algorithm"] == "networkx"
+    assert out["seed"] == 42
+    assert len(out["communities"]) >= 1
+    total = 0
+    for comm in out["communities"]:
+        assert "id" in comm and "node_ids" in comm and "label" in comm
+        assert len(comm["node_ids"]) == comm["size"]
+        assert len(comm["top_node_ids"]) <= comm["size"]
+        total += comm["size"]
+    # The 3 commenter nodes are partitioned across communities without loss/dup.
+    assert total == 3
+    all_ids = [n for c in out["communities"] for n in c["node_ids"]]
+    assert len(all_ids) == len(set(all_ids))
+
+
+def test_communities_endpoint_returns_member_ids(client):
+    resp = client.get(
+        f"{PREFIX}/network/commenters/communities?video_ids=v1,v2"
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["communities"]) >= 1
+    for comm in body["communities"]:
+        assert "id" in comm and "node_ids" in comm
+        assert len(comm["node_ids"]) == comm["size"]
+
+
 def test_metrics_ranks(tmp_path):
     svc = CommenterNetworkService(_repos(tmp_path))
     m = svc.metrics(video_ids=["v1", "v2"], projection="commenter")

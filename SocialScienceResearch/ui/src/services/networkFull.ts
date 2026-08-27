@@ -8,10 +8,12 @@ import type {
   ChannelGraphPayload,
   ChannelProjection,
   CommenterCommunityInsights,
+  CommenterCommunities,
   CommenterNetworkGraph,
   CommenterNetworkMetrics,
   CommenterProjection,
   CommunityInsights,
+  NetworkCommunities,
   EdgeRow,
   GraphProjection,
   NetworkCentralities,
@@ -673,6 +675,74 @@ export function useCommenterNetworkCommunityInsights(
       params.topN ?? "all",
     ] as const,
     queryFn: () => getCommenterNetworkCommunityInsights(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getNetworkCommunities(
+  params: NetworkScopeParams = {},
+): Promise<NetworkCommunities> {
+  return request(`/network/communities${networkScopeQuery(params)}`);
+}
+
+export function useNetworkCommunities(
+  params: NetworkScopeParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "full",
+      "communities",
+      params.runId ?? "all",
+      params.channelId ?? "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.channelScope ?? "source",
+      params.layerIndex ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      params.projection ?? "video",
+      params.weight ?? "all",
+    ] as const,
+    queryFn: () => getNetworkCommunities(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getCommenterNetworkCommunities(
+  params: CommenterNetworkParams = {},
+): Promise<CommenterCommunities> {
+  return request(
+    `/network/commenters/communities${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      min_shared: params.minShared,
+      top_n: params.topN,
+      weighted: params.weighted,
+    })}`,
+  );
+}
+
+export function useCommenterNetworkCommunities(
+  params: CommenterNetworkParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "commenters",
+      "communities",
+      params.runId ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.projection ?? "commenter",
+      params.weight ?? "co_comment:jaccard",
+      params.minShared ?? "all",
+      params.topN ?? "all",
+    ] as const,
+    queryFn: () => getCommenterNetworkCommunities(params),
     enabled: params.enabled ?? true,
     retry: 1,
   });

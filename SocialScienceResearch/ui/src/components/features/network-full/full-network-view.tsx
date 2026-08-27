@@ -33,13 +33,14 @@ import { useNetworkMetrics, getNetworkExportUrl, useNetworkGraph, useScrapeNetwo
 import { EXPORT_FORMATS } from "@/lib/network-full-types";
 import { exportVideoMetadata, type ExportNode } from "@/lib/export-graph";
 import { NetworkGraph, type GraphLink, type GraphNode, type NetworkGraphProps } from "@/components/features/network-graph";
+import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
 import { LayerPanel } from "@/components/features/network-layer/layer-panel";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
 import { ExpansionPanel } from "@/components/features/network-expansion/expansion-panel";
 import { ScrapeFiltersDialog } from "@/components/features/network-expansion/scrape-filters-dialog";
 import { useExpansionJob, scrapeExpansionAll, scrapeExpansionVideo } from "@/services/networkExpansion";
 import type { ScrapeFilters as ExpansionFilters } from "@/lib/network-expansion-types";
-import type { ChannelFacet, ChannelGraphPayload, GraphProjection, NetworkGraphPayload } from "@/lib/network-full-types";
+import type { ChannelFacet, ChannelGraphPayload, CommunityEntity, GraphProjection, NetworkGraphPayload } from "@/lib/network-full-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, Sparkles, FolderPlus, Maximize2, Minimize2, RotateCcw } from "lucide-react";
@@ -492,6 +493,7 @@ export function FullNetworkView() {
         ),
       onClearFilters: clearAllGraphFilters,
       onScrapeClick: (id: string) => openVideoScrapeDialog(id),
+      highlightedNodeIds,
     };
     if (graphProjection === "channel") {
       const mapped = mapChannelGraphPayload(
@@ -510,6 +512,40 @@ export function FullNetworkView() {
       },
     };
   };
+  // N4: derive communities client-side from the already-fetched graph so the
+  // UI can isolate any community as a highlighted sub-graph.
+  const [highlightedCommunityId, setHighlightedCommunityId] = useState<string | null>(null);
+  const graphCommunities = useMemo<CommunityEntity[]>(() => {
+    if (!graphQuery.data) return [];
+    const nodes =
+      graphProjection === "channel"
+        ? mapChannelGraphPayload(graphQuery.data as ChannelGraphPayload).nodes
+        : mapGraphPayload(graphQuery.data as NetworkGraphPayload).nodes;
+    const byCommunity = new Map<number, string[]>();
+    for (const n of nodes) {
+      if (n.community_id == null) continue;
+      const cid = n.community_id;
+      if (!byCommunity.has(cid)) byCommunity.set(cid, []);
+      byCommunity.get(cid)!.push(n.id);
+    }
+    return Array.from(byCommunity.entries())
+      .sort((a, b) => b[1].length - a[1].length)
+      .map(([cid, ids], idx) => ({
+        id: String(cid),
+        community_id: cid,
+        label: `Community ${idx + 1}`,
+        size: ids.length,
+        node_ids: ids,
+        top_node_ids: ids.slice(0, 10),
+      }));
+  }, [graphQuery.data, graphProjection]);
+
+  const highlightedNodeIds = useMemo<Set<string> | null>(() => {
+    if (!highlightedCommunityId) return null;
+    const comm = graphCommunities.find((c) => c.id === highlightedCommunityId);
+    return comm ? new Set(comm.node_ids) : null;
+  }, [highlightedCommunityId, graphCommunities]);
+
   const graphProps = activeGraphProps();
 
   // All video metadata for the currently visible network slice (client-side
@@ -976,7 +1012,18 @@ export function FullNetworkView() {
                 retry={() => graphQuery.refetch()}
               />
             ) : graphProps ? (
-              <NetworkGraph {...graphProps} />
+              <>
+                {graphCommunities.length > 0 ? (
+                  <div className="mb-3">
+                    <CommunityHighlightControls
+                      communities={graphCommunities}
+                      selectedId={highlightedCommunityId}
+                      onSelect={setHighlightedCommunityId}
+                    />
+                  </div>
+                ) : null}
+                <NetworkGraph {...graphProps} />
+              </>
             ) : (
               <LoadingState label="Loading network graph…" />
             )}

@@ -266,6 +266,40 @@ def commenter_network_community_insights(
 
 
 @router.get(
+    "/network/commenters/communities",
+    tags=["network"],
+)
+def commenter_network_communities(
+    request: Request,
+    video_ids: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    run_ids: str | None = Query(None),
+    projection: str = Query("commenter"),
+    weight: str | None = Query(None),
+    min_shared: int | None = Query(None, ge=1),
+    top_n: int | None = Query(None, ge=1, le=1000),
+    weighted: bool = Query(True),
+    min_size: int = Query(1, ge=1),
+):
+    """Communities as graph entities for the audience network: member node-ids (N4)."""
+    if projection not in _COMMENTER_PROJECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"projection must be one of {_COMMENTER_PROJECTIONS}",
+        )
+    spec = _resolve_weight(weight, min_shared, top_n)
+    return _network_service(request).communities(
+        video_ids=_id_list(video_ids),
+        channel_ids=_id_list(channel_ids),
+        run_ids=_id_list(run_ids),
+        projection=projection,
+        weight=spec,
+        weighted=weighted,
+        min_size=min_size,
+    )
+
+
+@router.get(
     "/network/commenters/export",
     tags=["network"],
 )

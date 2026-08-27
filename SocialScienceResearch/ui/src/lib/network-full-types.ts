@@ -313,6 +313,26 @@ export interface CommenterCommunityInsights {
   computed_at: string;
 }
 
+/** A detected community as a first-class graph entity (N4): its member node-ids
+ * let the UI highlight or isolate it as a sub-graph. */
+export interface CommunityEntity {
+  id: string;
+  community_id: number;
+  label: string;
+  size: number;
+  node_ids: string[];
+  top_node_ids: string[];
+}
+
+export interface NetworkCommunities {
+  communities: CommunityEntity[];
+  algorithm: string;
+  seed?: number;
+  computed_at: string;
+}
+
+export type CommenterCommunities = NetworkCommunities;
+
 export interface BridgeRank {
   id: string;
   label?: string | null;

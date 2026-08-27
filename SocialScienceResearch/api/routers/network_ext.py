@@ -565,6 +565,39 @@ def network_community_insights(
 
 
 @router.get(
+    "/network/communities",
+    tags=["network"],
+)
+def network_communities(
+    request: Request,
+    run_id: str | None = Query(None),
+    channel_id: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    channel_scope: str = Query("source"),
+    layer_index: int | None = Query(None, ge=0),
+    video_ids: str | None = Query(None),
+    projection: str = Query("video"),
+    weight: str | None = Query(None),
+    weighted: bool = Query(False),
+    min_size: int = Query(1, ge=1),
+):
+    """Communities as graph entities: member node-ids per detected community (N4)."""
+    kwargs = _parse_network_scope(
+        run_id=run_id,
+        channel_id=channel_id,
+        channel_ids=channel_ids,
+        channel_scope=channel_scope,
+        layer_index=layer_index,
+        video_ids=video_ids,
+        projection=projection,
+        weight=weight,
+        weighted=weighted,
+    )
+    kwargs["min_size"] = min_size
+    return _service(request).communities(**kwargs)
+
+
+@router.get(
     "/network/weights/options",
     tags=["network"],
 )

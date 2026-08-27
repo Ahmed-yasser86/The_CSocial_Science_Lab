@@ -212,3 +212,27 @@ def test_community_insights_endpoint_reports_composition(tmp_path) -> None:
     assert "dominant_channels" in comm
     assert "top_eigenvector" in comm
     assert "top_betweenness" in comm
+
+
+def test_communities_endpoint_returns_member_ids(tmp_path) -> None:
+    """N4: communities are first-class entities with member node-ids (N4)."""
+    client, _ = _client_with_karate(tmp_path)
+    resp = client.get(f"{PREFIX}/network/communities?run_id=kc")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["algorithm"] == "networkx"
+    assert body["seed"] == 42
+    assert len(body["communities"]) >= 1
+    # Every community exposes its member node-ids so the UI can isolate it.
+    total_members = 0
+    for comm in body["communities"]:
+        assert "id" in comm and "node_ids" in comm and "label" in comm
+        assert len(comm["node_ids"]) == comm["size"]
+        assert len(comm["top_node_ids"]) <= comm["size"]
+        total_members += comm["size"]
+    # Communities partition the whole slice (no node lost, none double-counted).
+    assert total_members == 34
+    # The karate-club instructor (0) must belong to exactly one community.
+    all_ids = [nid for c in body["communities"] for nid in c["node_ids"]]
+    assert "0" in all_ids
+    assert len(all_ids) == len(set(all_ids))

@@ -113,6 +113,9 @@ export interface NetworkGraphProps {
   onClearFilters?: () => void;
   /** Color nodes/edges by their run/layer (each run gets a distinct color). */
   colorMode?: "role" | "layer" | "community";
+  /** When set, only the listed node ids stay fully opaque; the rest are dimmed
+   * (used to isolate a community as a sub-graph). */
+  highlightedNodeIds?: Set<string> | null;
   /** Opens the video's dedicated page. */
   onNavigate?: (videoId: string) => void;
   /** Queues a recommendation scrape for a single video (drawer action only). */
@@ -327,6 +330,7 @@ export function NetworkGraph({
   onScrapeClick,
   onOverlapClick,
   zoomResetSignal,
+  highlightedNodeIds,
 }: NetworkGraphProps) {
   const { theme } = useTheme();
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
@@ -480,6 +484,15 @@ export function NetworkGraph({
     return runId ?? null;
   }
 
+  /** Resolve a link's endpoint ids regardless of whether react-force-graph has
+   * mutated source/target into node objects (it does after the first render). */
+  function linkEndpointIds(link: unknown): [string, string] {
+    const l = link as { source?: unknown; target?: unknown };
+    const idOf = (v: unknown) =>
+      v == null ? "" : typeof v === "object" ? String((v as { id?: unknown }).id ?? "") : String(v);
+    return [idOf(l.source), idOf(l.target)];
+  }
+
   function nodeColor(node: unknown): string {
     const id = (node as { id?: string }).id ?? "";
     const meta = nodeById.get(id);
@@ -494,6 +507,12 @@ export function NetworkGraph({
   }
 
   function linkColor(link: unknown): string {
+    if (highlightedNodeIds && highlightedNodeIds.size > 0) {
+      const [s, t] = linkEndpointIds(link);
+      if (!highlightedNodeIds.has(s) || !highlightedNodeIds.has(t)) {
+        return "rgba(150,150,160,0.15)";
+      }
+    }
     if (colorMode === "layer") {
       const runId = linkRunId(link);
       if (runId) return runColorFor(runId);
@@ -868,7 +887,15 @@ export function NetworkGraph({
               ctx.beginPath();
               ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
               ctx.fillStyle = base;
-              ctx.globalAlpha = hoveredId && hoveredId !== id ? 0.45 : 0.95;
+              let nodeAlpha = hoveredId && hoveredId !== id ? 0.45 : 0.95;
+              if (
+                highlightedNodeIds &&
+                highlightedNodeIds.size > 0 &&
+                !highlightedNodeIds.has(id)
+              ) {
+                nodeAlpha = 0.12;
+              }
+              ctx.globalAlpha = nodeAlpha;
               ctx.fill();
               ctx.globalAlpha = 1;
               ctx.lineWidth = 1;

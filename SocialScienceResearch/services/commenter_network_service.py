@@ -476,6 +476,68 @@ class CommenterNetworkService:
         communities.sort(key=lambda c: c["size"], reverse=True)
         return {"communities": communities, "algorithm": "networkx", "computed_at": _now()}
 
+    def communities(
+        self,
+        *,
+        video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        projection: str = "commenter",
+        weight: str = "co_comment:jaccard",
+        weighted: bool = True,
+        min_size: int = 1,
+    ) -> dict[str, Any]:
+        """Communities as first-class graph entities for the audience network (N4).
+
+        Returns one entry per detected community with its ``node_ids`` (member
+        list) so the UI can highlight or isolate a community as a sub-graph.
+        ``id`` is a stable string of the louvain community id; ``label`` is a
+        size-ranked human label; ``top_node_ids`` lists the highest-degree
+        members for quick legend rendering.
+        """
+        built = self._compute(
+            video_ids=video_ids,
+            channel_ids=channel_ids,
+            run_ids=run_ids,
+            projection=projection,
+            weight=weight,
+            weighted=weighted,
+        )
+        if built.G.number_of_nodes() == 0:
+            return {
+                "communities": [],
+                "algorithm": "networkx",
+                "seed": 42,
+                "computed_at": _now(),
+            }
+        by_community: dict[int, list[str]] = {}
+        for nid in built.G.nodes:
+            cid = int(built.node_community.get(nid, -1))
+            by_community.setdefault(cid, []).append(nid)
+        communities = []
+        for idx, (cid, members) in enumerate(
+            sorted(by_community.items(), key=lambda kv: len(kv[1]), reverse=True)
+        ):
+            if len(members) < min_size:
+                continue
+            top = sorted(members, key=lambda m: built.G.degree(m), reverse=True)[:10]
+            communities.append(
+                {
+                    "id": str(cid),
+                    "community_id": cid,
+                    "label": f"Community {idx + 1}",
+                    "size": len(members),
+                    "node_ids": members,
+                    "top_node_ids": top,
+                }
+            )
+        return {
+            "communities": communities,
+            "algorithm": "networkx",
+            "seed": 42,
+            "computed_at": _now(),
+        }
+
     def export_network(
         self,
         format: str = "graphml",
@@ -538,6 +600,17 @@ class CommenterNetworkService:
             for rid in run_ids:
                 for v in self._repos.videos.list_videos_by_run(rid):
                     video_set.add(v.video_id)
+            # Derived runs (recommendation / layer / echo-chamber) do not own any
+            # video as ``first_observed_run_id`` -- their scope is defined by the
+            # recommendation edges they produced (collection_run_id == run_id),
+            # exactly like the video network graph. Fold those edge endpoints in
+            # so the audience network resolves for every run kind, not just raw
+            # collection runs.
+            for e in self._repos.recommendations.list_recommendation_edges(
+                run_ids=run_ids
+            ):
+                video_set.add(e.source_video_id)
+                video_set.add(e.recommended_video_id)
         videos = {v.video_id: v for v in self._repos.videos.list_videos()}
         video_channel = {vid: v.channel_id for vid, v in videos.items()}
         for vid in video_set:

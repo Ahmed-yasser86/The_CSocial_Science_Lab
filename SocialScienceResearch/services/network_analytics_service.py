@@ -1524,6 +1524,75 @@ class NetworkAnalyticsService:
             "computed_at": utcnow().isoformat(),
         }
 
+    def communities(
+        self,
+        *,
+        run_id: str | None = None,
+        channel_id: str | None = None,
+        channel_ids: list[str] | None = None,
+        channel_scope: str = "source",
+        layer_index: int | None = None,
+        video_ids: list[str] | None = None,
+        projection: str = "video",
+        weight_spec: str | None = None,
+        weighted: bool = False,
+        min_size: int = 1,
+    ) -> dict[str, object]:
+        """Communities as first-class graph entities (N4).
+
+        Returns one entry per detected community with its ``node_ids`` (member
+        list) so the UI can highlight or isolate a community as a sub-graph.
+        ``id`` is a stable string of the louvain community id; ``label`` is a
+        size-ranked human label. ``top_node_ids`` lists the highest-degree
+        members for quick legend rendering.
+        """
+        G, payload, use_weight, node_id = self._slice_graph(
+            run_id=run_id,
+            channel_id=channel_id,
+            channel_ids=channel_ids,
+            channel_scope=channel_scope,
+            layer_index=layer_index,
+            video_ids=video_ids,
+            projection=projection,
+            weight_spec=weight_spec,
+            weighted=weighted,
+        )
+        if G.number_of_nodes() == 0:
+            return {
+                "communities": [],
+                "algorithm": "networkx",
+                "seed": 42,
+                "computed_at": utcnow().isoformat(),
+            }
+        by_community: dict[int, list[str]] = {}
+        for node in payload.nodes:
+            nid = node_id(node)
+            cid = int(node.community_id if node.community_id is not None else -1)
+            by_community.setdefault(cid, []).append(nid)
+        communities = []
+        for idx, (cid, members) in enumerate(
+            sorted(by_community.items(), key=lambda kv: len(kv[1]), reverse=True)
+        ):
+            if len(members) < min_size:
+                continue
+            top = sorted(members, key=lambda m: G.degree(m), reverse=True)[:10]
+            communities.append(
+                {
+                    "id": str(cid),
+                    "community_id": cid,
+                    "label": f"Community {idx + 1}",
+                    "size": len(members),
+                    "node_ids": members,
+                    "top_node_ids": top,
+                }
+            )
+        return {
+            "communities": communities,
+            "algorithm": "networkx",
+            "seed": 42,
+            "computed_at": utcnow().isoformat(),
+        }
+
     # ------------------------------------------------------------------
     def export_edges(
         self, run_id: str | None = None, format: str = "graphml"
