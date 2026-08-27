@@ -52,11 +52,19 @@ WEIGHT_MODES: dict[str, dict[str, dict[str, Any]]] = {
     "co_comment": {
         "jaccard": {
             "signal": "comments.author_id",
-            "description": "Jaccard overlap of commenter sets between videos.",
+            "description": "Jaccard overlap of commenter video-sets (bridge detection).",
+        },
+        "overlap_coefficient": {
+            "signal": "comments.author_id",
+            "description": "Szymkiewicz-Simpson overlap of commenter video-sets.",
+        },
+        "intersection": {
+            "signal": "comments.author_id",
+            "description": "Shared-video count between commenters (co-comment volume).",
         },
         "counts": {
             "signal": "comments.author_id",
-            "description": "Shared-commenter count between videos.",
+            "description": "Shared-video count between commenters.",
         },
     },
 }
@@ -196,19 +204,13 @@ def _availability(
 ) -> tuple[bool, list[dict[str, Any]]]:
     """Best-effort availability for a weight mode given the active repos.
 
-    The Audience family (``co_comment``) is intentionally gated off until N2;
-    the per-scope coverage of individual signals is surfaced at computation
-    time via ``weight_provenance.unavailable_signals`` (the authoritative
-    contract), so this catalog only needs coarse gating.
+    The Audience family (``co_comment``) is implemented; the per-scope coverage
+    of individual signals is surfaced at computation time via
+    ``weight_provenance.unavailable_signals`` (the authoritative contract), so
+    this catalog only needs coarse gating.
     """
     if edge_type == "co_comment":
-        return False, [
-            {
-                "signal": "audience_family",
-                "coverage": 0.0,
-                "reason": "Audience family lands in N2.",
-            }
-        ]
+        return True, []
     signal = meta["signal"]
     if signal is None:
         return True, []

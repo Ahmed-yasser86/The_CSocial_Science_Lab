@@ -369,8 +369,12 @@ class WorkspaceRuntime:
         from SocialScienceResearch.services.commenter_overlap_service import (
             CommenterOverlapService,
         )
+        from SocialScienceResearch.services.commenter_network_service import (
+            CommenterNetworkService,
+        )
 
         CommenterOverlapService.clear_overlap_cache()
+        CommenterNetworkService.clear_commenter_network_cache()
         if old_repos is not None and old_repos is not self.services["repos"]:
             old_repos.store.close()
         self.active_workspace_id = workspace_id

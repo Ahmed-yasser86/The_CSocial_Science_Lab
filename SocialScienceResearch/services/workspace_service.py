@@ -232,11 +232,15 @@ class WorkspaceService:
         from SocialScienceResearch.services.commenter_overlap_service import (
             CommenterOverlapService,
         )
+        from SocialScienceResearch.services.commenter_network_service import (
+            CommenterNetworkService,
+        )
         from SocialScienceResearch.services.recommendation_graph_service import (
             RecommendationGraphService,
         )
 
         RecommendationGraphService.clear_graph_cache()
+        CommenterNetworkService.clear_commenter_network_cache()
         CommenterOverlapService.clear_overlap_cache()
 
     # ------------------------------------------------------------------

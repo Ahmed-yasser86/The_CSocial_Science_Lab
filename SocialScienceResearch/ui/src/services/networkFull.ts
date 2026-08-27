@@ -7,6 +7,9 @@ import { request, toQuery } from "@/services/api";
 import type {
   ChannelGraphPayload,
   ChannelProjection,
+  CommenterNetworkGraph,
+  CommenterNetworkMetrics,
+  CommenterProjection,
   EdgeRow,
   GraphProjection,
   NetworkCentralities,
@@ -391,4 +394,115 @@ export function useScrapeNetwork(kind: ScrapeKind) {
       (jobQuery.data?.status === "pending" ||
         jobQuery.data?.status === "running"),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Audience (commenter) network family -- N2 / WS7
+// ---------------------------------------------------------------------------
+export interface CommenterNetworkParams {
+  runId?: string | null;
+  videoIds?: string[];
+  channelIds?: string[];
+  projection?: CommenterProjection;
+  weight?: string;
+  minShared?: number;
+  topN?: number;
+  weighted?: boolean;
+}
+
+export function getCommenterNetworkGraph(
+  params: CommenterNetworkParams = {},
+): Promise<CommenterNetworkGraph> {
+  return request(
+    `/network/commenters/graph${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      min_shared: params.minShared,
+      top_n: params.topN,
+      weighted: params.weighted,
+    })}`,
+  );
+}
+
+export function useCommenterNetworkGraph(
+  params: CommenterNetworkParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "commenters",
+      "graph",
+      params.runId ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.projection ?? "commenter",
+      params.weight ?? "co_comment:jaccard",
+      params.minShared ?? "all",
+      params.topN ?? "all",
+      params.weighted ?? true,
+    ] as const,
+    queryFn: () => getCommenterNetworkGraph(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getCommenterNetworkMetrics(
+  params: CommenterNetworkParams = {},
+): Promise<CommenterNetworkMetrics> {
+  return request(
+    `/network/commenters/metrics${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      min_shared: params.minShared,
+      top_n: params.topN,
+      weighted: params.weighted,
+    })}`,
+  );
+}
+
+export function useCommenterNetworkMetrics(
+  params: CommenterNetworkParams & { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "network",
+      "commenters",
+      "metrics",
+      params.runId ?? "all",
+      (params.videoIds ?? []).join(",") || "all",
+      (params.channelIds ?? []).join(",") || "all",
+      params.projection ?? "commenter",
+      params.weight ?? "co_comment:jaccard",
+      params.minShared ?? "all",
+      params.topN ?? "all",
+      params.weighted ?? true,
+    ] as const,
+    queryFn: () => getCommenterNetworkMetrics(params),
+    enabled: params.enabled ?? true,
+    retry: 1,
+  });
+}
+
+export function getCommenterNetworkExportUrl(
+  params: CommenterNetworkParams & { format?: NetworkExportFormat } = {},
+): string {
+  const q = toQuery({
+    run_ids: params.runId ? params.runId : undefined,
+    video_ids: params.videoIds?.join(","),
+    channel_ids: params.channelIds?.join(","),
+    projection: params.projection,
+    weight: params.weight,
+    min_shared: params.minShared,
+    top_n: params.topN,
+    weighted: params.weighted,
+    format: params.format ?? "graphml",
+  });
+  return `/network/commenters/export${q}`;
 }

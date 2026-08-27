@@ -253,6 +253,489 @@
         }
       }
     },
+    "/api/v1/social-science/network/commenters/graph": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Commenter Network Graph",
+        "description": "Audience (commenter) network graph for the chosen projection + scope (N2/WS7).\n\nReturns enriched nodes (kind = commenter|video|channel, community_id,\ndegree) and weighted edges carrying the active ``weight_spec``. The same\nscan drives every audience endpoint so the graph, metrics and export always\nagree.",
+        "operationId": "commenter_network_graph_api_v1_social_science_network_commenters_graph_get",
+        "parameters": [
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated video ids (at least one of video_ids/channel_ids/run_ids)",
+              "title": "Video Ids"
+            },
+            "description": "Comma-separated video ids (at least one of video_ids/channel_ids/run_ids)"
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated channel ids",
+              "title": "Channel Ids"
+            },
+            "description": "Comma-separated channel ids"
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection run ids",
+              "title": "Run Ids"
+            },
+            "description": "Comma-separated collection run ids"
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "commenter | co_comment_video | co_comment_channel | heterogeneous",
+              "default": "commenter",
+              "title": "Projection"
+            },
+            "description": "commenter | co_comment_video | co_comment_channel | heterogeneous"
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "co_comment weight spec, e.g. co_comment:jaccard:min_shared=2:norm=min_max. See GET /network/weights/options. Unknown spec -> 400.",
+              "title": "Weight"
+            },
+            "description": "co_comment weight spec, e.g. co_comment:jaccard:min_shared=2:norm=min_max. See GET /network/weights/options. Unknown spec -> 400."
+          },
+          {
+            "name": "min_shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override weight spec min_shared",
+              "title": "Min Shared"
+            },
+            "description": "Override weight spec min_shared"
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override weight spec top_n fan-out cap",
+              "title": "Top N"
+            },
+            "description": "Override weight spec top_n fan-out cap"
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Use the spec's weights for community/centrality math",
+              "default": true,
+              "title": "Weighted"
+            },
+            "description": "Use the spec's weights for community/centrality math"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommenterNetworkGraph"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/commenters/metrics": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Commenter Network Metrics",
+        "description": "Audience-network aggregate statistics + bridge / core / prolific ranks (N2/WS7).\n\nmodularity (louvain seed=42), community count, density, clustering and the\ntop bridge audiences (betweenness), core audiences (eigenvector) and most\nprolific commenters -- the WS7 audience-duplication readout.",
+        "operationId": "commenter_network_metrics_api_v1_social_science_network_commenters_metrics_get",
+        "parameters": [
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "commenter",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "min_shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Shared"
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Top N"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Weighted"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommenterNetworkMetrics"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/commenters/export": {
+      "get": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Commenter Network Export",
+        "description": "Download the audience network (graphml/edgelist/gexf/csv/json/xlsx).\n\nMirrors ``GET /network/commenters/graph`` for the same filters and reuses the\nrecommendation serializers (``relationship_type`` carries ``co_comment``).\nUnknown formats -> 400.",
+        "operationId": "commenter_network_export_api_v1_social_science_network_commenters_export_get",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "graphml",
+              "title": "Format"
+            }
+          },
+          {
+            "name": "video_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Video Ids"
+            }
+          },
+          {
+            "name": "channel_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel Ids"
+            }
+          },
+          {
+            "name": "run_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Ids"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "commenter",
+              "title": "Projection"
+            }
+          },
+          {
+            "name": "weight",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Weight"
+            }
+          },
+          {
+            "name": "min_shared",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Shared"
+            }
+          },
+          {
+            "name": "top_n",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 1000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Top N"
+            }
+          },
+          {
+            "name": "weighted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Weighted"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/network/commenters/{author_key}/profile": {
       "get": {
         "tags": [
@@ -5229,6 +5712,96 @@
         }
       }
     },
+    "/api/v1/social-science/scraper/proxy": {
+      "get": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Get Proxy Config",
+        "description": "Return the current outbound proxy configuration.",
+        "operationId": "get_proxy_config_api_v1_social_science_scraper_proxy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Proxy Config Api V1 Social Science Scraper Proxy Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Update Proxy Config",
+        "description": "Update the outbound proxy (only provided fields change).",
+        "operationId": "update_proxy_config_api_v1_social_science_scraper_proxy_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxyConfigPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Proxy Config Api V1 Social Science Scraper Proxy Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/scraper/proxy/test": {
+      "post": {
+        "tags": [
+          "scraper"
+        ],
+        "summary": "Test Proxy",
+        "description": "Verify the proxy works by requesting the egress IP through it.\n\nTries the Decodo egress check first, then falls back to a neutral IP\nchecker so a restriction on Decodo's own domain doesn't mask a working\nproxy. Residential proxies can be slow to warm up, so the read timeout is\ngenerous.",
+        "operationId": "test_proxy_api_v1_social_science_scraper_proxy_test_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Test Proxy Api V1 Social Science Scraper Proxy Test Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/scraper/config": {
       "get": {
         "tags": [
@@ -9016,6 +9589,36 @@
         ],
         "title": "BridgeCommenter"
       },
+      "BridgeRank": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "betweenness": {
+            "type": "number",
+            "title": "Betweenness",
+            "default": 0.0
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "BridgeRank"
+      },
       "Channel": {
         "properties": {
           "channel_id": {
@@ -10465,6 +11068,269 @@
         ],
         "title": "CommentTreePayload",
         "description": "Full comment tree with nested replies for a root comment."
+      },
+      "CommenterGraphEdge": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": "co_comment"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight",
+            "default": 1.0
+          },
+          "relationship_type": {
+            "type": "string",
+            "title": "Relationship Type",
+            "default": "co_comment"
+          },
+          "shared_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Count"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "source",
+          "target"
+        ],
+        "title": "CommenterGraphEdge"
+      },
+      "CommenterGraphNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "default": "commenter"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "degree": {
+            "type": "integer",
+            "title": "Degree",
+            "default": 0
+          },
+          "community_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Community Id"
+          },
+          "identity_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Kind"
+          },
+          "comment_count": {
+            "type": "integer",
+            "title": "Comment Count",
+            "default": 0
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "CommenterGraphNode"
+      },
+      "CommenterNetworkGraph": {
+        "properties": {
+          "projection": {
+            "type": "string",
+            "title": "Projection",
+            "default": "commenter"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/CommenterGraphNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CommenterGraphEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "node_count": {
+            "type": "integer",
+            "title": "Node Count",
+            "default": 0
+          },
+          "edge_count": {
+            "type": "integer",
+            "title": "Edge Count",
+            "default": 0
+          },
+          "weight_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Spec"
+          },
+          "community_count": {
+            "type": "integer",
+            "title": "Community Count",
+            "default": 0
+          },
+          "modularity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modularity"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CommenterNetworkGraph"
+      },
+      "CommenterNetworkMetrics": {
+        "properties": {
+          "node_count": {
+            "type": "integer",
+            "title": "Node Count",
+            "default": 0
+          },
+          "edge_count": {
+            "type": "integer",
+            "title": "Edge Count",
+            "default": 0
+          },
+          "density": {
+            "type": "number",
+            "title": "Density",
+            "default": 0.0
+          },
+          "community_count": {
+            "type": "integer",
+            "title": "Community Count",
+            "default": 0
+          },
+          "modularity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modularity"
+          },
+          "weakly_connected_components": {
+            "type": "integer",
+            "title": "Weakly Connected Components",
+            "default": 0
+          },
+          "avg_clustering": {
+            "type": "number",
+            "title": "Avg Clustering",
+            "default": 0.0
+          },
+          "top_bridges": {
+            "items": {
+              "$ref": "#/components/schemas/BridgeRank"
+            },
+            "type": "array",
+            "title": "Top Bridges"
+          },
+          "top_core": {
+            "items": {
+              "$ref": "#/components/schemas/BridgeRank"
+            },
+            "type": "array",
+            "title": "Top Core"
+          },
+          "top_prolific": {
+            "items": {
+              "$ref": "#/components/schemas/BridgeRank"
+            },
+            "type": "array",
+            "title": "Top Prolific"
+          },
+          "weight_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight Spec"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CommenterNetworkMetrics"
       },
       "CommenterOverlapResult": {
         "properties": {
@@ -12769,6 +13635,11 @@
             "type": "number",
             "title": "Weight",
             "default": 1.0
+          },
+          "relationship_type": {
+            "type": "string",
+            "title": "Relationship Type",
+            "default": "recommendation"
           }
         },
         "additionalProperties": true,
@@ -17177,6 +18048,123 @@
         ],
         "title": "ProvenanceRecord",
         "description": "The provenance chain of a single entity."
+      },
+      "ProxyConfigPayload": {
+        "properties": {
+          "proxy_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Enabled"
+          },
+          "proxy_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Host"
+          },
+          "proxy_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Port"
+          },
+          "proxy_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Username"
+          },
+          "proxy_password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Password"
+          },
+          "proxy_verify": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Verify"
+          },
+          "proxy_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proxy Session"
+          },
+          "youtube_cookies_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(none|browser|file)$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Cookies Mode"
+          },
+          "youtube_cookies_browser": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Cookies Browser"
+          },
+          "youtube_cookies_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Cookies Path"
+          }
+        },
+        "type": "object",
+        "title": "ProxyConfigPayload"
       },
       "QueryCondition": {
         "properties": {

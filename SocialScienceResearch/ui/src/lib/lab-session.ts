@@ -13,8 +13,12 @@ export type LabTab =
 
 export type GraphProjection = "video" | "channel";
 
+/** Which network family the Lab is analyzing (N2 network expansion). */
+export type LabFamily = "recommendation" | "audience";
+
 export interface LabSession {
   tab: LabTab;
+  family: LabFamily;
   runId: string | null;
   graphProjection: GraphProjection;
   graphLayerIndex: number | null;
@@ -117,6 +121,7 @@ export function clearLabSession(): void {
 export function defaultLabSession(): LabSession {
   return {
     tab: "metrics",
+    family: "recommendation",
     runId: null,
     graphProjection: "video",
     graphLayerIndex: null,

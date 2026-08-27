@@ -180,11 +180,13 @@ def test_catalog_has_all_modes():
     assert ("recommendation", "observation_count") in keys
     assert ("recommendation", "reciprocal_position") in keys
     assert ("co_comment", "jaccard") in keys
-    # Audience family gated until N2.
+    assert ("co_comment", "overlap_coefficient") in keys
+    assert ("co_comment", "intersection") in keys
+    # Audience family is implemented (N2).
     co_comment = next(
         o for o in catalog if o["edge_type"] == "co_comment"
     )
-    assert co_comment["available"] is False
+    assert co_comment["available"] is True
 
 
 def test_catalog_availability_from_repos(tmp_path):

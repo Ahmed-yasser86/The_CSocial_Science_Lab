@@ -50,12 +50,43 @@ import { NetworkInsightsPanel } from "@/components/features/network-full/network
 import { NetworkMatrices } from "@/components/features/network-full/network-matrices";
 import { SamplingFeasibility } from "@/components/features/network-full/sampling-feasibility";
 import { ChannelsPanel } from "@/components/features/network-full/channels-panel";
+import { AudienceNetworkView } from "@/components/features/network-full/audience-network-view";
 import {
   loadLabSession,
   saveLabSession,
   LAB_PRESETS,
+  type LabFamily,
   type LabTab,
 } from "@/lib/lab-session";
+
+function FamilyToggle({
+  value,
+  onChange,
+}: {
+  value: LabFamily;
+  onChange: (family: LabFamily) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-border p-0.5">
+      {(["recommendation", "audience"] as const).map((f) => (
+        <button
+          key={f}
+          type="button"
+          aria-pressed={value === f}
+          onClick={() => onChange(f)}
+          className={
+            "rounded px-2.5 py-1 text-xs font-medium outline-none focus-visible:border-ring " +
+            (value === f
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-muted")
+          }
+        >
+          {f === "recommendation" ? "Recommendation" : "Audience (commenters)"}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function mapGraphPayload(payload: {
   nodes: {
@@ -166,6 +197,7 @@ export function FullNetworkView() {
   const [runId, setRunId] = useState<string | null>(null);
   const [temporalRuns, setTemporalRuns] = useState<string[]>([]);
   const [tab, setTab] = useState<LabTab>("metrics");
+  const [family, setFamily] = useState<LabFamily>("recommendation");
   const [graphRunId, setGraphRunId] = useState<string | null>(null);
   const [graphChannelIds, setGraphChannelIds] = useState<string[]>([]);
   const [graphProjection, setGraphProjection] = useState<GraphProjection>("video");
@@ -207,6 +239,7 @@ export function FullNetworkView() {
       setGraphRunId(s.runId ?? null);
     }
     if (s.tab) setTab(s.tab);
+    if (s.family) setFamily(s.family);
     if (s.graphProjection) setGraphProjection(s.graphProjection);
     if (s.graphLayerIndex !== undefined) setGraphLayerIndex(s.graphLayerIndex);
     if (s.identity !== undefined) setIdentity(s.identity);
@@ -221,13 +254,14 @@ export function FullNetworkView() {
     if (!hydrated) return;
     saveLabSession({
       tab,
+      family,
       runId,
       graphProjection,
       graphLayerIndex,
       identity,
       annotation,
     });
-  }, [hydrated, tab, runId, graphProjection, graphLayerIndex, identity, annotation]);
+  }, [hydrated, tab, family, runId, graphProjection, graphLayerIndex, identity, annotation]);
 
   // Drop a persisted run filter that no longer exists (e.g. from a previous
   // dataset) so the graph doesn't silently render empty with no recovery.
@@ -496,6 +530,36 @@ export function FullNetworkView() {
     );
   }, [graphProjection, graphQuery.data]);
 
+  if (family === "audience") {
+    return (
+      <div className="space-y-4">
+        <Card className="p-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Network family
+              </Label>
+              <FamilyToggle value={family} onChange={setFamily} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Scope (collection run)
+              </Label>
+              <RunPicker
+                runs={runs}
+                names={runNames}
+                value={runId}
+                placeholder="All runs"
+                onChange={(value) => setRunId(value)}
+              />
+            </div>
+          </div>
+        </Card>
+        <AudienceNetworkView runId={runId} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Card className="p-4">
@@ -518,6 +582,13 @@ export function FullNetworkView() {
                 setGraphRunId(value || null);
               }}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Family
+            </Label>
+            <FamilyToggle value={family} onChange={setFamily} />
           </div>
 
           <div className="flex items-center gap-1.5">

@@ -930,8 +930,10 @@ class CollectionService:
             # (pitfall A1/R1: writers invalidate, readers never trust stale);
             # the 60s TTL is only a safety net.
             from .commenter_overlap_service import CommenterOverlapService
+            from .commenter_network_service import CommenterNetworkService
 
             CommenterOverlapService.clear_overlap_cache()
+            CommenterNetworkService.clear_commenter_network_cache()
 
         if excluded:
             logger.info(

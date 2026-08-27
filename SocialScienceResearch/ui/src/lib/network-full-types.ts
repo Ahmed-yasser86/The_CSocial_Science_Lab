@@ -88,7 +88,14 @@ export interface ChannelProjection {
   edge_count: number;
 }
 
-export type GraphNodeKind = "source" | "target" | "both" | "other";
+export type GraphNodeKind =
+  | "source"
+  | "target"
+  | "both"
+  | "other"
+  | "commenter"
+  | "video"
+  | "channel";
 
 /** Enriched graph node from GET /network/graph. */
 export interface GraphNode {
@@ -176,6 +183,81 @@ export interface ChannelGraphPayload {
 }
 
 export type GraphProjection = "video" | "channel";
+
+// ---------------------------------------------------------------------------
+// Audience (commenter) network family -- N2 / WS7
+// ---------------------------------------------------------------------------
+export type CommenterProjection =
+  | "commenter"
+  | "co_comment_video"
+  | "co_comment_channel"
+  | "heterogeneous";
+
+export interface CommenterNetworkNode {
+  id: string;
+  kind: "commenter" | "video" | "channel";
+  label?: string | null;
+  degree: number;
+  community_id?: number | null;
+  identity_kind?: string | null;
+  comment_count?: number;
+}
+
+export interface CommenterNetworkEdge {
+  source: string;
+  target: string;
+  kind: string;
+  weight: number;
+  relationship_type?: string;
+  shared_count?: number | null;
+}
+
+export interface CommenterNetworkGraph {
+  projection: string;
+  nodes: CommenterNetworkNode[];
+  edges: CommenterNetworkEdge[];
+  node_count: number;
+  edge_count: number;
+  weight_spec?: Record<string, unknown> | null;
+  community_count: number;
+  modularity?: number | null;
+  computed_at?: string | null;
+}
+
+export interface CommenterCentrality {
+  degree: number;
+  closeness: number;
+  eigenvector: number;
+  betweenness: number;
+  community_id: number;
+}
+
+export interface CommenterNetworkCentralities {
+  nodes: Record<string, CommenterCentrality>;
+  weight_spec?: Record<string, unknown> | null;
+  algorithm: string;
+  computed_at?: string | null;
+}
+
+export interface BridgeRank {
+  id: string;
+  label?: string | null;
+  betweenness: number;
+}
+
+export interface CommenterNetworkMetrics {
+  node_count: number;
+  edge_count: number;
+  density: number;
+  community_count: number;
+  modularity?: number | null;
+  weakly_connected_components: number;
+  avg_clustering: number;
+  top_bridges: BridgeRank[];
+  top_core: BridgeRank[];
+  top_prolific: BridgeRank[];
+  weight_spec?: Record<string, unknown> | null;
+}
 
 export interface Paginated<T> {
   items: T[];

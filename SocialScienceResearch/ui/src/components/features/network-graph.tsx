@@ -79,6 +79,7 @@ export interface GraphLink {
   run_type?: string | null;
   run_name?: string | null;
   title?: string | null;
+  weight?: number;
 }
 
 export interface NetworkGraphProps {
@@ -109,6 +110,9 @@ const roleColors: Record<GraphNodeKind, string> = {
   target: CHART_VARS.dim,
   both: CHART_VARS.accent2,
   other: CHART_VARS.faint,
+  commenter: CHART_VARS.accent,
+  video: CHART_VARS.accent2,
+  channel: CHART_VARS.dim,
 };
 
 /** Fixed palette so each run/layer keeps a stable, distinct color. */

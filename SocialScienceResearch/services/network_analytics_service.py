@@ -83,6 +83,54 @@ DEFAULT_PAGE_SIZE = 50
 ChannelScope = str  # "source" | "target" | "either"
 
 
+def centrality_battery(
+    graph: "nx.Graph",
+    *,
+    weighted: bool = False,
+    weight_attr: str = "weight",
+) -> dict[str, dict[str, float]]:
+    """Per-node centrality vector for an arbitrary networkx graph.
+
+    Returns ``{node_id: {"degree", "closeness", "eigenvector",
+    "betweenness"}}`` using networkx over ``graph`` (directed or undirected).
+
+    Shared by the recommendation ``centralities()`` and the commenter-network
+    service so the two network families compute identical math (no copy-paste
+    drift, per the network-analysis expansion plan). ``community_id`` is added
+    by the caller (it depends on the rendered slice, not just the graph).
+    """
+    if graph.number_of_nodes() == 0:
+        return {}
+    if weighted:
+        total = sum(d for _, d in graph.degree(weight=weight_attr))
+        degree = {
+            n: (graph.degree(n, weight=weight_attr) / total if total else 0.0)
+            for n in graph.nodes
+        }
+    else:
+        degree = nx.degree_centrality(graph)
+    closeness = nx.closeness_centrality(graph)
+    try:
+        eigenvector = nx.eigenvector_centrality(
+            graph, max_iter=1000, weight=weight_attr if weighted else None
+        )
+    except (nx.PowerIterationFailedConvergence, nx.NetworkXError):
+        eigenvector = {n: 0.0 for n in graph.nodes}
+    betweenness = nx.betweenness_centrality(
+        graph, weight=weight_attr if weighted else None
+    )
+    return {
+        nid: {
+            "degree": degree.get(nid, 0.0),
+            "closeness": closeness.get(nid, 0.0),
+            "eigenvector": eigenvector.get(nid, 0.0),
+            "betweenness": betweenness.get(nid, 0.0),
+        }
+        for nid in graph.nodes
+    }
+
+
+
 def _hashable(value: Any) -> Any:
     """Best-effort hashable projection of cache keys (lists/dicts -> tuples)."""
     if isinstance(value, list):
@@ -382,6 +430,7 @@ class GraphEdge(_Base):
     run_name: str | None = None
     title: str | None = None
     weight: float = 1.0  # weight_spec-derived edge weight (1.0 = structural default)
+    relationship_type: str = "recommendation"  # semantic edge type (recommendation | co_comment | ...)
 
 
 class NetworkGraph(_Base):
@@ -1146,32 +1195,16 @@ class NetworkAnalyticsService:
                 G.add_edge(e.source, e.target)
         if G.number_of_nodes() == 0:
             return {}
-        if use_weight:
-            total = sum(d for _, d in G.degree(weight="weight"))
-            degree = {
-                n: (G.degree(n, weight="weight") / total if total else 0.0)
-                for n in G.nodes
-            }
-        else:
-            degree = nx.degree_centrality(G)
-        closeness = nx.closeness_centrality(G)
-        try:
-            eigenvector = nx.eigenvector_centrality(
-                G, max_iter=1000, weight="weight" if use_weight else None
-            )
-        except nx.PowerIterationFailedConvergence:
-            eigenvector = {n: 0.0 for n in G.nodes}
-        betweenness = nx.betweenness_centrality(
-            G, weight="weight" if use_weight else None
-        )
+        battery = centrality_battery(G, weighted=use_weight)
         result: dict[str, dict[str, float]] = {}
         for node in payload.nodes:
             nid = node.channel_id if projection == "channel" else node.video_id
+            vals = battery.get(nid, {})
             result[nid] = {
-                "degree": degree.get(nid, 0.0),
-                "closeness": closeness.get(nid, 0.0),
-                "eigenvector": eigenvector.get(nid, 0.0),
-                "betweenness": betweenness.get(nid, 0.0),
+                "degree": vals.get("degree", 0.0),
+                "closeness": vals.get("closeness", 0.0),
+                "eigenvector": vals.get("eigenvector", 0.0),
+                "betweenness": vals.get("betweenness", 0.0),
                 "community_id": float(node.community_id if node.community_id is not None else -1),
             }
         return result
@@ -1285,6 +1318,7 @@ class NetworkAnalyticsService:
                     "positions": [],
                     "title": getattr(e, "title", None),
                     "run_id": getattr(e, "run_id", None),
+                    "relationship_type": getattr(e, "relationship_type", "recommendation"),
                 }
                 agg[key] = rec
             rec["weight"] += getattr(e, "weight", 1.0)
@@ -1344,7 +1378,7 @@ class NetworkAnalyticsService:
                 export.add_edge(
                     s,
                     t,
-                    relationship_type="recommendation",
+                    relationship_type=rec["relationship_type"],
                     weight=rec["weight"],
                     position=rec["positions"][0] if rec["positions"] else -1,
                     run_id=";".join(rec["run_ids"]),
@@ -1374,7 +1408,7 @@ class NetworkAnalyticsService:
                             "source": s,
                             "target": t,
                             "weight": rec["weight"],
-                            "relationship_type": "recommendation",
+                            "relationship_type": rec["relationship_type"],
                             "position": (rec["positions"][0] if rec["positions"] else None),
                             "run_ids": rec["run_ids"],
                         }
@@ -1410,14 +1444,14 @@ class NetworkAnalyticsService:
                 )
                 for (s, t), rec in agg.items():
                     writer.writerow(
-                        [s, t, rec["weight"], "recommendation", definition]
+                        [s, t, rec["weight"], rec["relationship_type"], definition]
                     )
             else:
                 writer.writerow(
                     ["source", "target", "weight", "relationship_type"]
                 )
                 for (s, t), rec in agg.items():
-                    writer.writerow([s, t, rec["weight"], "recommendation"])
+                    writer.writerow([s, t, rec["weight"], rec["relationship_type"]])
             return "recommendations.csv", buffer.getvalue(), "text/csv"
 
         if fmt == "xlsx":
@@ -1456,7 +1490,7 @@ class NetworkAnalyticsService:
                         s,
                         t,
                         rec["weight"],
-                        "recommendation",
+                        rec["relationship_type"],
                         sn.title if sn else None,
                         tn.title if tn else None,
                         sn.channel_id if sn else None,
