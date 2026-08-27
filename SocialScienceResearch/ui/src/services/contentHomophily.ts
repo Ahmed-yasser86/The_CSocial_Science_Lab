@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { request, toQuery } from "@/services/api";
+import { API_BASE, ApiError, request, toQuery } from "@/services/api";
 
 /**
  * Content Homophily service hooks (Content Homophily spec §22-§24).
@@ -76,6 +76,8 @@ export interface ContentHomophilyResults {
   num_permutations: number;
   videos_with_transcript: number;
   videos_without_transcript: number;
+  videos_targeted_for_transcripts: number;
+  max_transcript_videos: number;
   transcript_coverage: number;
   embedding_model: string;
   embedding_model_version: string;
@@ -119,6 +121,7 @@ export interface StartContentHomophilyBody {
   random_seed?: number;
   num_permutations?: number;
   max_videos_per_community?: number;
+  max_transcript_videos?: number;
   include_edge_similarity?: boolean;
   tags?: string[];
 }
@@ -149,6 +152,28 @@ export function listContentHomophily(cursor?: string): Promise<{
   return request(
     `/network/content-homophily${toQuery({ cursor, page_size: 50 })}`,
   );
+}
+
+export type ContentHomophilySampleFormat = "csv" | "json";
+
+/**
+ * Download the analysis's selected sample as CSV or JSON text. The backend
+ * enriches each selected video with its title, channel and watch URL.
+ */
+export async function exportContentHomophilySample(
+  analysisId: string,
+  format: ContentHomophilySampleFormat = "csv",
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/network/content-homophily/${encodeURIComponent(
+      analysisId,
+    )}/export-sample?format=${format}`,
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(res.status, detail || "Sample export failed");
+  }
+  return res.text();
 }
 
 function isTerminal(status: string | undefined): boolean {

@@ -10,6 +10,7 @@ import {
   Circle,
   Loader2,
   Play,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +29,7 @@ import {
   STAGE_LABELS,
   listContentHomophily,
   startContentHomophily,
+  exportContentHomophilySample,
   useContentHomophily,
   type ContentHomophilyRecord,
   type ContentHomophilyResults,
@@ -199,6 +201,26 @@ function ResultsBlock({ results }: { results: ContentHomophilyResults }) {
       <span key="sf">{(results.sampling_fraction * 100).toFixed(0)}%</span>,
     ],
     ["Pair cap", <span key="pc">{results.max_pair_cap.toLocaleString()}</span>],
+    [
+      "Videos targeted for transcripts",
+      <span key="vtt" className="font-mono text-xs">
+        {results.videos_targeted_for_transcripts.toLocaleString()}
+        {" / "}
+        {results.max_transcript_videos.toLocaleString()}
+      </span>,
+    ],
+    [
+      "Videos with transcript",
+      <span key="vwt" className="font-mono text-xs">
+        {results.videos_with_transcript.toLocaleString()}
+      </span>,
+    ],
+    [
+      "Videos without transcript",
+      <span key="vwot" className="font-mono text-xs">
+        {results.videos_without_transcript.toLocaleString()}
+      </span>,
+    ],
     ["Permutations", <span key="np">{results.num_permutations}</span>],
     [
       "Transcript coverage",
@@ -251,6 +273,37 @@ export function ContentHomophilySection() {
   const [fraction, setFraction] = useState(0.1);
   const [numPermutations, setNumPermutations] = useState(1000);
   const [seed, setSeed] = useState("");
+  const [maxTranscriptVideos, setMaxTranscriptVideos] = useState(200);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function handleExportSample(format: "csv" | "json") {
+    if (!record) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const text = await exportContentHomophilySample(
+        record.analysis_id,
+        format,
+      );
+      const blob = new Blob(
+        [text],
+        { type: format === "json" ? "application/json" : "text/csv" },
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `content_homophily_${record.analysis_id}_sample.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  }
   const [analysisId, setAnalysisId] = useState<string | null>(null);
   // Bumped on every explicit start so a re-run of the same analysis id gets a
   // fresh query (a terminal cached record must never mask the new run).
@@ -284,6 +337,7 @@ export function ContentHomophilySection() {
         sampling_fraction: fraction,
         num_permutations: numPermutations,
         random_seed: seed.trim() ? Number(seed) : undefined,
+        max_transcript_videos: maxTranscriptVideos,
         tags: ["content_homophily"],
       }),
     onSuccess: (payload) => {
@@ -401,6 +455,24 @@ export function ContentHomophilySection() {
                 <option value="freetranscriptapi">FreeTranscriptAPI</option>
               </select>
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="chh-max-videos">Transcript video cap</Label>
+              <Input
+                id="chh-max-videos"
+                type="number"
+                min={1}
+                max={2000}
+                value={maxTranscriptVideos}
+                onChange={(e) =>
+                  setMaxTranscriptVideos(
+                    Math.max(1, Math.min(2000, Number(e.target.value) || 1)),
+                  )
+                }
+                disabled={running}
+                className="w-28"
+                data-testid="chh-max-transcript-videos"
+              />
+            </div>
             <Button
               onClick={() => start.mutate()}
               disabled={running || start.isPending}
@@ -452,7 +524,36 @@ export function ContentHomophilySection() {
             </Card>
 
             {record.results ? (
-              <ResultsBlock results={record.results} />
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleExportSample("csv")}
+                    disabled={exporting || running}
+                    data-testid="chh-export-csv"
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Export sample (CSV)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleExportSample("json")}
+                    disabled={exporting || running}
+                    data-testid="chh-export-json"
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Export sample (JSON)
+                  </Button>
+                  {exportError ? (
+                    <span className="text-sm text-destructive">
+                      {exportError}
+                    </span>
+                  ) : null}
+                </div>
+                <ResultsBlock results={record.results} />
+              </div>
             ) : (
               <Card className="p-6 text-center text-sm text-muted-foreground">
                 Results appear here when the statistical summary completes.

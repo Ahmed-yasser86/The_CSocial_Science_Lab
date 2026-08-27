@@ -1157,6 +1157,58 @@
         }
       }
     },
+    "/api/v1/social-science/network/content-homophily/{analysis_id}/export-sample": {
+      "get": {
+        "tags": [
+          "content_homophily"
+        ],
+        "summary": "Export Sample",
+        "description": "Export the selected sample as CSV/JSON with title, channel and link.\n\nThe \"selected sample\" is the unique set of videos actually analysed in the\ncontent-homophily run (bounded by the transcript-video budget). Each row /\nobject carries the video id, title, channel id + title, watch URL, and\nwhether the video appeared in a within-community or between-community pair.",
+        "operationId": "export_sample_api_v1_social_science_network_content_homophily__analysis_id__export_sample_get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(csv|json)$",
+              "default": "csv",
+              "title": "Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/projects": {
       "post": {
         "tags": [
@@ -10425,6 +10477,14 @@
             "title": "Max Videos Per Community",
             "description": "Replacement-sampling limit per community when transcripts are missing.",
             "default": 40
+          },
+          "max_transcript_videos": {
+            "type": "integer",
+            "maximum": 2000.0,
+            "minimum": 1.0,
+            "title": "Max Transcript Videos",
+            "description": "Hard cap on UNIQUE videos for transcript/embedding collection in a single analysis. Selection picks a balanced, community-representative set of at most this many videos (prioritising those with existing transcripts) and samples pairs only from them, so collection never exceeds this budget. The dominant, rate-limited cost (YouTube 429s) is therefore bounded independently of the pair count.",
+            "default": 200
           },
           "include_edge_similarity": {
             "type": "boolean",

@@ -314,6 +314,19 @@ class ContentHomophilyStartRequest(_Base):
             "missing."
         ),
     )
+    max_transcript_videos: int = Field(
+        200,
+        ge=1,
+        le=2000,
+        description=(
+            "Hard cap on UNIQUE videos for transcript/embedding collection in a "
+            "single analysis. Selection picks a balanced, community-representative "
+            "set of at most this many videos (prioritising those with existing "
+            "transcripts) and samples pairs only from them, so collection never "
+            "exceeds this budget. The dominant, rate-limited cost (YouTube 429s) "
+            "is therefore bounded independently of the pair count."
+        ),
+    )
     include_edge_similarity: bool = Field(
         False,
         description=(

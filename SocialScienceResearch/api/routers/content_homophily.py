@@ -14,7 +14,13 @@ targeted at sampled videos and happens ONLY inside the requested job.
 
 from __future__ import annotations
 
+import csv
+import io
+import json
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 
 from SocialScienceResearch.api.routers.common import get_service
 from SocialScienceResearch.api.schemas import (
@@ -67,6 +73,7 @@ def start_analysis(request: Request, body: ContentHomophilyStartRequest):
             random_seed=body.random_seed,
             num_permutations=body.num_permutations,
             max_videos_per_community=body.max_videos_per_community,
+            max_transcript_videos=body.max_transcript_videos,
             include_edge_similarity=body.include_edge_similarity,
             tags=body.tags,
         )
@@ -108,3 +115,116 @@ def get_analysis(request: Request, analysis_id: str):
             detail=f"Content homophily analysis {analysis_id} not found",
         )
     return record
+
+
+@router.get(
+    "/network/content-homophily/{analysis_id}/export-sample",
+    tags=["content_homophily"],
+)
+def export_sample(
+    request: Request,
+    analysis_id: str,
+    format: str = Query("csv", pattern="^(csv|json)$"),
+):
+    """Export the selected sample as CSV/JSON with title, channel and link.
+
+    The "selected sample" is the unique set of videos actually analysed in the
+    content-homophily run (bounded by the transcript-video budget). Each row /
+    object carries the video id, title, channel id + title, watch URL, and
+    whether the video appeared in a within-community or between-community pair.
+    """
+    service = _service(request)
+    record = service.get(analysis_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Content homophily analysis {analysis_id} not found",
+        )
+    results = record.get("results") or {}
+    sample_videos = results.get("sample_videos")
+    sample_roles = results.get("sample_roles") or {}
+    if not sample_videos:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This analysis has no exportable sample (it may still be "
+                "running, finished with insufficient data, or was produced "
+                "before sample export was supported)."
+            ),
+        )
+
+    repos = request.app.state.services["repos"]
+
+    def _video_meta(vid: str) -> dict[str, Any]:
+        title = None
+        url = f"https://www.youtube.com/watch?v={vid}"
+        channel_id = None
+        channel_title = None
+        try:
+            video = repos.videos.get_video(vid)
+        except Exception:  # noqa: BLE001
+            video = None
+        if video is not None:
+            title = video.title
+            if video.url:
+                url = video.url
+            channel_id = video.channel_id
+            if channel_id:
+                try:
+                    channel = repos.channels.get_channel(channel_id)
+                except Exception:  # noqa: BLE001
+                    channel = None
+                if channel is not None:
+                    channel_title = channel.title
+        role = sample_roles.get(vid, {}) or {}
+        return {
+            "video_id": vid,
+            "title": title or "",
+            "channel_id": channel_id or "",
+            "channel_title": channel_title or "",
+            "url": url,
+            "appeared_in_within": bool(role.get("within", False)),
+            "appeared_in_between": bool(role.get("between", False)),
+        }
+
+    rows = [_video_meta(vid) for vid in sample_videos]
+
+    if format == "json":
+        content = json.dumps(rows, indent=2, ensure_ascii=False)
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="content_homophily_'
+                    f'{analysis_id}_sample.json"'
+                )
+            },
+        )
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "video_id",
+            "title",
+            "channel_id",
+            "channel_title",
+            "url",
+            "appeared_in_within",
+            "appeared_in_between",
+        ],
+    )
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="content_homophily_'
+                f'{analysis_id}_sample.csv"'
+            )
+        },
+    )

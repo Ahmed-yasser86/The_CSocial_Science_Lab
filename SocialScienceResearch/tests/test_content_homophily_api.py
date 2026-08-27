@@ -9,7 +9,9 @@ outside an explicitly requested analysis.
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io
 import math
 import time
 from typing import Any
@@ -96,6 +98,18 @@ class FakeProvider(AcquisitionProvider):
             lang="en",
             status=status_mod.TranscriptStatus.AVAILABLE,
         )
+
+
+class CountingProvider(FakeProvider):
+    """FakeProvider that records how many transcript fetches it performed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.transcript_calls = 0
+
+    def extract_transcript(self, video_url: str, lang=None) -> Any:
+        self.transcript_calls += 1
+        return super().extract_transcript(video_url, lang=lang)
 
 
 class FakeEmbedder:
@@ -340,3 +354,140 @@ def test_transcript_collection_targets_only_sampled_pairs(tmp_path) -> None:
     # Targeted collection: only the videos appearing in the sampled pairs are
     # fetched (|union| <= 2*pairs), never the whole network scope.
     assert fetched <= 2 * pairs + 2
+
+
+def test_select_bounded_videos_respects_cap_and_prioritizes_transcripts() -> None:
+    """Unit check of the first-class <=max_transcript_videos video budget.
+
+    Selection is video-first (pairs are later sampled only from the selected
+    set) and PRIORITISES videos that already have a transcript, so the costly
+    scrape/embed step can never exceed the budget.
+    """
+    svc = ContentHomophilyService.__new__(ContentHomophilyService)
+    have = {f"c{c}_h{i}" for c in range(3) for i in range(5)}
+    video_ids_with_transcript = have
+
+    class _Repos:
+        class transcripts:
+            @staticmethod
+            def read_artifact(vid: str) -> Any:
+                return "x" if vid in video_ids_with_transcript else None
+
+    svc._repos = _Repos()
+
+    capped_groups = {
+        c: [f"c{c}_h{i}" for i in range(5)]
+        + [f"c{c}_{i}" for i in range(5, 50)]
+        for c in range(3)
+    }
+
+    # Cap is enforced exactly.
+    sel_groups, sel = svc._select_bounded_videos(capped_groups, 15)
+    assert len(sel) == 15
+    # Balanced across communities (no community starved of representation).
+    assert all(len(v) == 5 for v in sel_groups.values())
+    # Transcript-priority: every selected video already has a transcript.
+    assert set(sel) == have
+
+    # With a large budget, all transcript-having videos are still chosen first.
+    _, sel_big = svc._select_bounded_videos(capped_groups, 200)
+    assert video_ids_with_transcript.issubset(set(sel_big))
+    # And the cap can never be exceeded even for a huge network.
+    assert len(sel_big) == 150  # 3 communities * 50 videos, <= 200
+
+
+def test_max_transcript_videos_budget_limits_collection(tmp_path) -> None:
+    """End-to-end: transcript/embedding collection never exceeds the budget."""
+    run_id = _seed_network(tmp_path)
+    provider = CountingProvider()
+    client = TestClient(create_app(_settings(tmp_path), provider=provider))
+    settings = client.app.state.settings
+    service = ContentHomophilyService(
+        provider,
+        client.app.state.services["repos"],
+        settings=settings,
+        jobs=client.app.state.services["jobs"],
+        embedder=FakeEmbedder(),
+    )
+    client.app.state.services["content_homophily"] = service
+
+    max_v = 3
+    resp = client.post(f"{PREFIX}/network/content-homophily", json={
+        "run_id": run_id,
+        "sampling_fraction": 0.5,
+        "num_permutations": 5,
+        "random_seed": 42,
+        "max_transcript_videos": max_v,
+    })
+    assert resp.status_code == 200
+    record = _wait_terminal(client, resp.json()["analysis_id"])
+    assert record["status"] == "observed", record.get("error")
+    results = record["results"]
+    assert results["max_transcript_videos"] == max_v
+    assert results["videos_targeted_for_transcripts"] <= max_v
+    # The dominant, rate-limited cost (YouTube 429s) is bounded by the cap.
+    assert provider.transcript_calls <= max_v
+
+
+def test_export_sample_csv_includes_titles_and_links(tmp_path) -> None:
+    """The selected sample exports with titles, channels and watch links."""
+    run_id = _seed_network(tmp_path)
+    client = TestClient(create_app(_settings(tmp_path), provider=FakeProvider()))
+    _inject_service(client, tmp_path)
+    resp = client.post(f"{PREFIX}/network/content-homophily", json={
+        "run_id": run_id,
+        "sampling_fraction": 0.5,
+        "num_permutations": 10,
+        "random_seed": 7,
+    })
+    record = _wait_terminal(client, resp.json()["analysis_id"])
+    assert record["status"] == "observed"
+    analysis_id = record["analysis_id"]
+    sample_videos = set(record["results"]["sample_videos"])
+
+    r = client.get(
+        f"{PREFIX}/network/content-homophily/{analysis_id}/export-sample"
+        "?format=csv"
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers.get("content-disposition", "").lower()
+    rows = list(csv.DictReader(io.StringIO(r.text)))
+    assert rows, "exported CSV must contain at least one row"
+    assert {
+        "video_id", "title", "channel_id", "channel_title", "url",
+        "appeared_in_within", "appeared_in_between",
+    }.issubset(rows[0].keys())
+    exported_ids = {row["video_id"] for row in rows}
+    # Exported ids exactly match the persisted selected sample.
+    assert exported_ids == sample_videos
+    # Titles and links are enriched from the repository.
+    assert all(row["title"].startswith("Video ") for row in rows)
+    assert all(row["url"] for row in rows)
+
+    # JSON variant mirrors the same ids.
+    rj = client.get(
+        f"{PREFIX}/network/content-homophily/{analysis_id}/export-sample"
+        "?format=json"
+    )
+    assert rj.status_code == 200
+    data = rj.json()
+    assert {row["video_id"] for row in data} == sample_videos
+
+
+def test_export_sample_409_when_no_sample(tmp_path) -> None:
+    """An analysis with no usable sample cannot be exported (honest 409)."""
+    _seed_network(tmp_path)
+    client = TestClient(create_app(_settings(tmp_path), provider=FakeProvider()))
+    _inject_service(client, tmp_path)
+    resp = client.post(f"{PREFIX}/network/content-homophily", json={
+        "video_ids": ["lonely"],
+        "sampling_fraction": 0.1,
+    })
+    record = _wait_terminal(client, resp.json()["analysis_id"])
+    assert record["status"] == "insufficient_data"
+    r = client.get(
+        f"{PREFIX}/network/content-homophily/{record['analysis_id']}"
+        "/export-sample"
+    )
+    assert r.status_code == 409

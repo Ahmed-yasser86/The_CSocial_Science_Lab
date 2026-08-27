@@ -59,6 +59,14 @@ ABSOLUTE_MAX_PAIR_CAP = 10_000
 DEFAULT_NUM_PERMUTATIONS = 1_000
 #: Cap on analyzed videos per community (replacement-sampling limit, spec §3).
 DEFAULT_MAX_VIDEOS_PER_COMMUNITY = 40
+#: Hard cap on UNIQUE videos for transcript/embedding collection in ONE
+#: Content Homophily analysis. Transcript fetching is the dominant, rate-limited
+#: cost (YouTube 429s), so we bound it independently of the pair count: the
+#: bounded-pair selection step never targets more than this many distinct videos
+#: for collection. Default 200 (researcher-configurable per request).
+DEFAULT_MAX_TRANSCRIPT_VIDEOS = 200
+#: Absolute ceiling for the per-analysis transcript-video cap (defense).
+ABSOLUTE_MAX_TRANSCRIPT_VIDEOS = 2000
 #: Replacement-sampling bounds (spec §3): keep the target usable sample by
 #: swapping unavailable videos for same-community peers. Bounded so we never
 #: scrape an entire community hunting for replacements.
@@ -635,6 +643,7 @@ class ContentHomophilyService:
         random_seed: int | None = None,
         num_permutations: int = DEFAULT_NUM_PERMUTATIONS,
         max_videos_per_community: int = DEFAULT_MAX_VIDEOS_PER_COMMUNITY,
+        max_transcript_videos: int = DEFAULT_MAX_TRANSCRIPT_VIDEOS,
         include_edge_similarity: bool = False,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -661,6 +670,11 @@ class ContentHomophilyService:
             raise ValueError(f"max_pair_cap must be <= {ABSOLUTE_MAX_PAIR_CAP}")
         if not 0 <= num_permutations <= 10_000:
             raise ValueError("num_permutations must be between 0 and 10000")
+        if not 1 <= max_transcript_videos <= ABSOLUTE_MAX_TRANSCRIPT_VIDEOS:
+            raise ValueError(
+                f"max_transcript_videos must be between 1 and "
+                f"{ABSOLUTE_MAX_TRANSCRIPT_VIDEOS}"
+            )
         if run_id and self._repos.runs.get_run(run_id) is None:
             raise ValueError(f"Run {run_id} not found")
         seed = int(random_seed) if random_seed is not None \
@@ -679,6 +693,7 @@ class ContentHomophilyService:
                 "random_seed": seed,
                 "num_permutations": num_permutations,
                 "max_videos_per_community": max_videos_per_community,
+                "max_transcript_videos": max_transcript_videos,
                 "include_edge_similarity": include_edge_similarity,
             },
             "progress": {
@@ -795,6 +810,59 @@ class ContentHomophilyService:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("transcript record save failed for %s: %s", video_id, exc)
+
+    # -- transcript-video budget (spec §3, cost-first) ----------------------
+    def _video_has_transcript(self, video_id: str) -> bool:
+        """True if a transcript artifact already exists locally for the video.
+
+        Used by the bounded video selection to PRIORITISE videos that already
+        have transcripts, so we reuse local artifacts instead of scraping (the
+        dominant, rate-limited cost). Checks the file directly rather than the
+        latest record status, so a usable artifact is never missed.
+        """
+        reader = getattr(self._repos.transcripts, "read_artifact", None)
+        if reader is None:
+            return False
+        try:
+            text = reader(video_id)
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(text and text.strip())
+
+    def _select_bounded_videos(
+        self, capped_groups: dict[int, list[str]], max_transcript_videos: int
+    ) -> tuple[dict[int, list[str]], list[str]]:
+        """First-class <=max_transcript_videos video budget (spec §3, cost-first).
+
+        Pick a balanced, community-representative set of UNIQUE videos BEFORE any
+        pair sampling, prioritising videos that already have a transcript (reuse
+        local artifacts, avoid 429s). Pairs are later sampled ONLY from this
+        selected set, so the number of videos requiring transcript/embedding
+        collection can never exceed the budget. Deterministic given the data
+        (seed-independent); pair sampling remains seeded for reproducibility.
+        """
+        comms = sorted(capped_groups, key=str)
+        avail = [len(capped_groups[c]) for c in comms]
+        total = min(max_transcript_videos, sum(avail))
+        if total <= 0:
+            return {}, []
+        alloc = PairSamplingService._allocate_balanced(avail, total)
+        selected_groups: dict[int, list[str]] = {}
+        selected: list[str] = []
+        for c, k in zip(comms, alloc):
+            if k <= 0:
+                continue
+            members = capped_groups[c]
+            # Transcript-first priority, deterministic id tie-break.
+            ordered = sorted(
+                members,
+                key=lambda v: (0 if self._video_has_transcript(v) else 1, v),
+            )
+            chosen = ordered[:k]
+            if chosen:
+                selected_groups[c] = chosen
+                selected.extend(chosen)
+        return selected_groups, selected
 
     # -- replacement sampling (spec §3) ------------------------------------
     @staticmethod
@@ -1020,10 +1088,7 @@ class ContentHomophilyService:
         if len(nodes) < 2:
             return self._insufficient(record, params,
                                       reason="fewer than two eligible videos")
-        # 2. Sample target pairs FIRST (community structure only - no transcripts
-        # needed yet). Transcript/embedding collection is then limited to exactly
-        # the videos appearing in those sampled pairs, so we never scrape the
-        # whole network (spec: "Transcript collection is targeted").
+        # 2. Cap the per-community pool (replacement-sampling limit, spec §3).
         capped_groups: dict[int, list[str]] = {
             c: groups[c][: params["max_videos_per_community"]]
             for c in sorted(groups)
@@ -1033,12 +1098,36 @@ class ContentHomophilyService:
             return self._insufficient(record, params,
                                       reason="fewer than two eligible videos")
 
-        sampler = PairSamplingService(params["sampling_fraction"],
-                                      params["max_pair_cap"])
+        # 2b. FIRST-CLASS transcript-video budget: select a balanced,
+        # community-representative set of <= max_transcript_videos UNIQUE videos
+        # BEFORE any pair sampling, prioritising videos that already have a
+        # transcript (reuse local artifacts, avoid rate-limited 429s). Pairs are
+        # then sampled ONLY from this selected set, so transcript/embedding
+        # collection can never exceed the budget (the dominant, costly step).
         seed = params["random_seed"]
         rng = random.Random(seed)
-        within = sampler.sample_within(capped_groups, rng)
-        between = sampler.sample_between(capped_groups, rng)
+        max_transcript_videos = int(params.get(
+            "max_transcript_videos", DEFAULT_MAX_TRANSCRIPT_VIDEOS))
+        selected_groups, selected_videos = self._select_bounded_videos(
+            capped_groups, max_transcript_videos)
+        self._log(record,
+                  f"transcript budget applied: selected {len(selected_videos)}/"
+                  f"{max_transcript_videos} unique video(s) across "
+                  f"{len(selected_groups)} communitie(s) before pair sampling "
+                  f"(prioritising those with existing transcripts)")
+        if len(selected_videos) < 2:
+            return self._insufficient(record, params,
+                                      reason="fewer than two selected videos "
+                                             "within the transcript budget")
+
+        # 2c. Sample target pairs ONLY from the selected videos (cost-first: the
+        # expensive step is transcript acquisition, not pair cosines). The union
+        # of pair videos is therefore a subset of the <=max_transcript_videos
+        # selected set.
+        sampler = PairSamplingService(params["sampling_fraction"],
+                                      params["max_pair_cap"])
+        within = sampler.sample_within(selected_groups, rng)
+        between = sampler.sample_between(selected_groups, rng)
         self._log(record,
                   f"pairs sampled (pre-collection): within "
                   f"{within.sampled}/{within.available}, between "
@@ -1187,6 +1276,21 @@ class ContentHomophilyService:
                          if a in vectors and b in vectors]
         between_usable = [(a, b) for a, b in between_pairs
                           if a in vectors and b in vectors]
+
+        # 4c. Persist the selected sample (the unique videos actually analysed)
+        # plus each video's community-pair role, so it can be exported with
+        # titles/channels/links on demand. Bounded by the transcript budget.
+        sample_role_map: dict[str, dict[str, bool]] = {}
+        for a, b in within_usable:
+            for v in (a, b):
+                sample_role_map.setdefault(
+                    v, {"within": False, "between": False})["within"] = True
+        for a, b in between_usable:
+            for v in (a, b):
+                sample_role_map.setdefault(
+                    v, {"within": False, "between": False})["between"] = True
+        sample_videos = sorted(sample_role_map)
+
         self._log(record,
                   f"pairs after replacement: within {len(within_usable)}/"
                   f"{within.sampled}, between {len(between_usable)}/"
@@ -1288,9 +1392,14 @@ class ContentHomophilyService:
             "random_seed": seed,
             "num_permutations": params["num_permutations"],
             "null_permutations_completed": null_result.num_permutations,
+            "videos_targeted_for_transcripts": len(needed),
             "videos_with_transcript": total_analyzed,
             "videos_without_transcript": without_transcript,
+            "max_transcript_videos": params["max_transcript_videos"],
             "videos_analyzed": len(vectors),
+            "sample_videos": sample_videos,
+            "sample_roles": sample_role_map,
+            "sample_pair_count": len(within_usable) + len(between_usable),
             "transcript_coverage": coverage,
             "pairs_usable_within": len(within_usable),
             "pairs_usable_between": len(between_usable),
@@ -1393,6 +1502,9 @@ class ContentHomophilyService:
             "num_permutations": params["num_permutations"],
             "videos_with_transcript": 0,
             "videos_without_transcript": videos_without_transcript,
+            "videos_targeted_for_transcripts": 0,
+            "max_transcript_videos": params.get(
+                "max_transcript_videos", DEFAULT_MAX_TRANSCRIPT_VIDEOS),
             "transcript_coverage": 0.0,
             "embedding_model": default_embedding_model_name(),
             "embedding_model_version": "1",

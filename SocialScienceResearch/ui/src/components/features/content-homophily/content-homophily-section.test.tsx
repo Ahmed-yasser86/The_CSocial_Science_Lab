@@ -68,6 +68,8 @@ function recordFixture(
     num_permutations: 1000,
     videos_with_transcript: 87,
     videos_without_transcript: 13,
+    videos_targeted_for_transcripts: 100,
+    max_transcript_videos: 200,
     transcript_coverage: 0.87,
     embedding_model: "gemini-embedding-2-preview",
     embedding_model_version: "1",
