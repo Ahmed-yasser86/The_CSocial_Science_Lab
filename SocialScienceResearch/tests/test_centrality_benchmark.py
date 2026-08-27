@@ -236,3 +236,63 @@ def test_communities_endpoint_returns_member_ids(tmp_path) -> None:
     all_ids = [nid for c in body["communities"] for nid in c["node_ids"]]
     assert "0" in all_ids
     assert len(all_ids) == len(set(all_ids))
+
+
+def test_test_difference_endpoint_permutation_reproducible(tmp_path) -> None:
+    """N4b: seeded permutation test is reproducible and well-formed."""
+    client, _ = _client_with_karate(tmp_path)
+    body = {
+        "family": "recommendation",
+        "scope_a": {"run_id": "kc", "projection": "video"},
+        "scope_b": {"run_id": "kc", "projection": "video"},
+        "metric": "centrality:betweenness",
+        "method": "permutation",
+        "n_iter": 200,
+        "seed": 42,
+    }
+    r1 = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert r1.status_code == 200, r1.text
+    b1 = r1.json()
+    assert b1["method"] == "permutation"
+    assert b1["seed"] == 42
+    assert b1["n_iter"] == 200
+    assert b1["p_value"] is not None
+    assert 0.0 <= b1["p_value"] <= 1.0
+    # Identical scopes => zero observed difference.
+    assert abs(b1["observed_delta"]) < 1e-9
+    assert len(b1["ci95"]) == 2
+    # Same seed => same p-value (deterministic).
+    r2 = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["p_value"] == b1["p_value"]
+
+
+def test_test_difference_global_metric_reports_delta_no_fabricated_p(tmp_path) -> None:
+    """N4b: global-only metrics report observed delta with p_value=None (no fake)."""
+    client, _ = _client_with_karate(tmp_path)
+    body = {
+        "family": "recommendation",
+        "scope_a": {"run_id": "kc", "projection": "video"},
+        "scope_b": {"run_id": "kc", "projection": "video"},
+        "metric": "modularity",
+    }
+    resp = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert resp.status_code == 200, resp.text
+    body_json = resp.json()
+    assert body_json["p_value"] is None
+    assert body_json["note"]
+    assert body_json["statistic_a"] is not None
+    assert body_json["statistic_b"] is not None
+
+
+def test_test_difference_rejects_bad_method(tmp_path) -> None:
+    client, _ = _client_with_karate(tmp_path)
+    body = {
+        "family": "recommendation",
+        "scope_a": {"run_id": "kc", "projection": "video"},
+        "scope_b": {"run_id": "kc", "projection": "video"},
+        "metric": "centrality:betweenness",
+        "method": "not_a_method",
+    }
+    resp = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert resp.status_code == 400

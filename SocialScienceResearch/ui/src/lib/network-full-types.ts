@@ -333,6 +333,48 @@ export interface NetworkCommunities {
 
 export type CommenterCommunities = NetworkCommunities;
 
+export interface TestDifferenceScope {
+  run_id?: string | null;
+  channel_id?: string | null;
+  channel_ids?: string[] | null;
+  channel_scope?: string;
+  layer_index?: number | null;
+  video_ids?: string[] | null;
+  projection?: string;
+  weight?: string | null;
+  weighted?: boolean | null;
+  run_ids?: string[] | null;
+  min_shared?: number | null;
+  top_n?: number | null;
+}
+
+export interface TestDifferenceRequest {
+  family?: string;
+  scope_a: TestDifferenceScope;
+  scope_b: TestDifferenceScope;
+  metric: string;
+  statistic?: string;
+  method?: string;
+  n_iter?: number;
+  seed?: number;
+}
+
+export interface TestDifferenceResult {
+  metric: string;
+  statistic: string;
+  method: string;
+  seed: number;
+  n_iter: number;
+  n_nodes_a: number;
+  n_nodes_b: number;
+  statistic_a: number | null;
+  statistic_b: number | null;
+  observed_delta: number | null;
+  p_value: number | null;
+  ci95: [number, number] | null;
+  note: string | null;
+}
+
 export interface BridgeRank {
   id: string;
   label?: string | null;

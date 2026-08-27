@@ -196,6 +196,41 @@ def test_metrics_ranks(tmp_path):
     assert m.top_prolific[0].id == "UCid_alice"
 
 
+def test_test_difference_commenter_permutation_reproducible(client):
+    """N4b: seeded permutation test on the audience network is reproducible."""
+    body = {
+        "family": "commenter",
+        "scope_a": {"video_ids": ["v1", "v2"]},
+        "scope_b": {"video_ids": ["v1", "v2"]},
+        "metric": "centrality:betweenness",
+        "method": "permutation",
+        "n_iter": 100,
+        "seed": 42,
+    }
+    r1 = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert r1.status_code == 200, r1.text
+    b1 = r1.json()
+    assert b1["p_value"] is not None
+    assert 0.0 <= b1["p_value"] <= 1.0
+    assert abs(b1["observed_delta"]) < 1e-9
+    assert len(b1["ci95"]) == 2
+    r2 = client.post(f"{PREFIX}/network/test-difference", json=body)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["p_value"] == b1["p_value"]
+
+    # Global-only metric => p_value None, no fabricated number.
+    global_body = {
+        "family": "commenter",
+        "scope_a": {"video_ids": ["v1", "v2"]},
+        "scope_b": {"video_ids": ["v1", "v2"]},
+        "metric": "modularity",
+    }
+    rg = client.post(f"{PREFIX}/network/test-difference", json=global_body)
+    assert rg.status_code == 200, rg.text
+    assert rg.json()["p_value"] is None
+    assert rg.json()["note"]
+
+
 def test_centralities_battery(tmp_path):
     svc = CommenterNetworkService(_repos(tmp_path))
     c = svc.centralities(video_ids=["v1", "v2"], projection="commenter")

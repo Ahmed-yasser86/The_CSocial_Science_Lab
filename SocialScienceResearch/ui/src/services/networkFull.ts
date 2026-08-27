@@ -14,6 +14,8 @@ import type {
   CommenterProjection,
   CommunityInsights,
   NetworkCommunities,
+  TestDifferenceRequest,
+  TestDifferenceResult,
   EdgeRow,
   GraphProjection,
   NetworkCentralities,
@@ -406,6 +408,7 @@ export function useScrapeNetwork(kind: ScrapeKind) {
 // ---------------------------------------------------------------------------
 export interface CommenterNetworkParams {
   runId?: string | null;
+  jobIds?: string[] | null;
   videoIds?: string[];
   channelIds?: string[];
   projection?: CommenterProjection;
@@ -421,6 +424,7 @@ export function getCommenterNetworkGraph(
   return request(
     `/network/commenters/graph${toQuery({
       run_ids: params.runId ? params.runId : undefined,
+      job_ids: params.jobIds?.length ? params.jobIds.join(",") : undefined,
       video_ids: params.videoIds?.join(","),
       channel_ids: params.channelIds?.join(","),
       projection: params.projection,
@@ -441,6 +445,7 @@ export function useCommenterNetworkGraph(
       "commenters",
       "graph",
       params.runId ?? "all",
+      (params.jobIds ?? []).join(",") || "all",
       (params.videoIds ?? []).join(",") || "all",
       (params.channelIds ?? []).join(",") || "all",
       params.projection ?? "commenter",
@@ -461,6 +466,7 @@ export function getCommenterNetworkMetrics(
   return request(
     `/network/commenters/metrics${toQuery({
       run_ids: params.runId ? params.runId : undefined,
+      job_ids: params.jobIds?.length ? params.jobIds.join(",") : undefined,
       video_ids: params.videoIds?.join(","),
       channel_ids: params.channelIds?.join(","),
       projection: params.projection,
@@ -481,6 +487,7 @@ export function useCommenterNetworkMetrics(
       "commenters",
       "metrics",
       params.runId ?? "all",
+      (params.jobIds ?? []).join(",") || "all",
       (params.videoIds ?? []).join(",") || "all",
       (params.channelIds ?? []).join(",") || "all",
       params.projection ?? "commenter",
@@ -500,6 +507,7 @@ export function getCommenterNetworkExportUrl(
 ): string {
   const q = toQuery({
     run_ids: params.runId ? params.runId : undefined,
+    job_ids: params.jobIds?.length ? params.jobIds.join(",") : undefined,
     video_ids: params.videoIds?.join(","),
     channel_ids: params.channelIds?.join(","),
     projection: params.projection,
@@ -745,5 +753,15 @@ export function useCommenterNetworkCommunities(
     queryFn: () => getCommenterNetworkCommunities(params),
     enabled: params.enabled ?? true,
     retry: 1,
+  });
+}
+
+export function postNetworkTestDifference(
+  body: TestDifferenceRequest,
+): Promise<TestDifferenceResult> {
+  return request<TestDifferenceResult>(`/network/test-difference`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 }

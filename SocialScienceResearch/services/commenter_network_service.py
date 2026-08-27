@@ -43,8 +43,11 @@ from SocialScienceResearch.services.network_analytics_service import (
     GraphNode,
     NetworkAnalyticsService,
     NetworkGraph,
+    _global_metric_value,
     _percentile_threshold,
     centrality_battery,
+    node_metric_values,
+    run_resampling_test,
 )
 from SocialScienceResearch.services.weight_spec import (
     WeightSpec,
@@ -536,6 +539,84 @@ class CommenterNetworkService:
             "algorithm": "networkx",
             "seed": 42,
             "computed_at": _now(),
+        }
+
+    def test_difference(
+        self,
+        *,
+        scope_a: dict[str, Any],
+        scope_b: dict[str, Any],
+        metric: str,
+        statistic: str = "difference_in_means",
+        method: str = "permutation",
+        n_iter: int = 200,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        """Statistical comparison between two audience-network slices (N4b).
+
+        Mirrors :meth:`NetworkAnalyticsService.test_difference`: node-decomposable
+        metrics get a seeded permutation/bootstrap test; global-only metrics
+        (modularity, assortativity) are reported as observed deltas with
+        ``p_value=None`` rather than fabricated.
+        """
+        import statistics
+
+        n_iter = max(1, min(int(n_iter), 1000))
+        if method not in ("permutation", "bootstrap"):
+            raise ValueError("method must be permutation or bootstrap")
+        if statistic != "difference_in_means":
+            raise ValueError("only difference_in_means is supported")
+        built_a = self._compute(**scope_a)
+        built_b = self._compute(**scope_b)
+        Ga, Gb = built_a.G, built_b.G
+        va = node_metric_values(Ga, metric)
+        vb = node_metric_values(Gb, metric)
+        base = {
+            "metric": metric,
+            "statistic": statistic,
+            "method": method,
+            "seed": seed,
+            "n_iter": n_iter,
+            "n_nodes_a": Ga.number_of_nodes(),
+            "n_nodes_b": Gb.number_of_nodes(),
+        }
+        if va is None or vb is None:
+            obs_a = _global_metric_value(Ga, metric)
+            obs_b = _global_metric_value(Gb, metric)
+            delta = (
+                (obs_a - obs_b)
+                if obs_a is not None and obs_b is not None
+                else None
+            )
+            return {
+                **base,
+                "statistic_a": obs_a,
+                "statistic_b": obs_b,
+                "observed_delta": delta,
+                "p_value": None,
+                "ci95": None,
+                "note": "permutation/bootstrap is defined for node-level metrics "
+                "only; global metric reported as observed delta",
+            }
+        if not va or not vb:
+            return {
+                **base,
+                "statistic_a": None,
+                "statistic_b": None,
+                "observed_delta": None,
+                "p_value": None,
+                "ci95": None,
+                "note": "one or both scopes have no nodes",
+            }
+        res = run_resampling_test(va, vb, method=method, n_iter=n_iter, seed=seed)
+        return {
+            **base,
+            "statistic_a": statistics.mean(va),
+            "statistic_b": statistics.mean(vb),
+            "observed_delta": res["observed_delta"],
+            "p_value": res["p_value"],
+            "ci95": res["ci95"],
+            "note": None,
         }
 
     def export_network(

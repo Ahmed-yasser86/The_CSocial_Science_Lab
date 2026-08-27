@@ -28,8 +28,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from SocialScienceResearch.api.routers.common import get_service, paginated
 from SocialScienceResearch.api.schemas import (
@@ -52,6 +53,9 @@ from SocialScienceResearch.services.network_analytics_service import (
     NetworkMetrics,
     NetworkScope,
     TemporalResult,
+)
+from SocialScienceResearch.services.commenter_network_service import (
+    CommenterNetworkService,
 )
 from SocialScienceResearch.services.weight_spec import weight_options_catalog
 from SocialScienceResearch.services.pagination import Paginated
@@ -595,6 +599,115 @@ def network_communities(
     )
     kwargs["min_size"] = min_size
     return _service(request).communities(**kwargs)
+
+
+class NetworkScopeInput(BaseModel):
+    """One side of a ``/network/test-difference`` comparison (N4b). All fields are
+    optional; only the relevant family's fields are used."""
+
+    run_id: str | None = None
+    channel_id: str | None = None
+    channel_ids: list[str] | None = None
+    channel_scope: str = "source"
+    layer_index: int | None = None
+    video_ids: list[str] | None = None
+    projection: str = "video"
+    weight: str | None = None
+    weighted: bool | None = None
+    run_ids: list[str] | None = None
+    min_shared: int | None = None
+    top_n: int | None = None
+
+
+class TestDifferenceRequest(BaseModel):
+    family: str = "recommendation"
+    scope_a: NetworkScopeInput
+    scope_b: NetworkScopeInput
+    metric: str
+    statistic: str = "difference_in_means"
+    method: str = "permutation"
+    n_iter: int = Field(200, ge=1, le=1000)
+    seed: int = 42
+
+
+@router.post(
+    "/network/test-difference",
+    tags=["network"],
+)
+def network_test_difference(request: Request, body: TestDifferenceRequest):
+    """Statistical comparison between two network slices (N4b).
+
+    Node-decomposable metrics (``centrality:<m>``, ``avg_clustering``,
+    ``transitivity``, ``density``) return a seeded permutation/bootstrap p-value
+    and 95% CI; global-only metrics (``modularity``, ``assortativity``) return the
+    observed delta with ``p_value=None`` (no fabricated number). Supports both the
+    recommendation family and the audience (commenter) family via ``family``.
+    """
+    a = body.scope_a
+    b = body.scope_b
+    if body.family == "commenter":
+        svc = CommenterNetworkService(request.app.state.services["repos"])
+
+        def commenter_scope(s: NetworkScopeInput) -> dict:
+            weighted = s.weighted if s.weighted is not None else True
+            projection = s.projection
+            if projection == "video":
+                projection = "commenter"
+            return {
+                "video_ids": s.video_ids,
+                "channel_ids": s.channel_ids,
+                "run_ids": s.run_ids,
+                "projection": projection,
+                "weight": s.weight,
+                "weighted": weighted,
+            }
+
+        return svc.test_difference(
+            scope_a=commenter_scope(a),
+            scope_b=commenter_scope(b),
+            metric=body.metric,
+            statistic=body.statistic,
+            method=body.method,
+            n_iter=body.n_iter,
+            seed=body.seed,
+        )
+
+    if a.projection not in ("video", "channel"):
+        raise HTTPException(
+            status_code=400, detail="scope_a.projection must be video or channel"
+        )
+    if b.projection not in ("video", "channel"):
+        raise HTTPException(
+            status_code=400, detail="scope_b.projection must be video or channel"
+        )
+    svc = _service(request)
+
+    def rec_scope(s: NetworkScopeInput) -> dict:
+        return {
+            k: v
+            for k, v in {
+                "run_id": s.run_id,
+                "channel_id": s.channel_id,
+                "channel_ids": s.channel_ids,
+                "channel_scope": s.channel_scope,
+                "layer_index": s.layer_index,
+                "video_ids": s.video_ids,
+                "projection": s.projection,
+                "weight_spec": s.weight,
+                "weighted": s.weighted if s.weighted is not None else False,
+            }.items()
+            if v is not None
+        }
+
+    return svc.test_difference(
+        scope_a=rec_scope(a),
+        scope_b=rec_scope(b),
+        metric=body.metric,
+        statistic=body.statistic,
+        method=body.method,
+        n_iter=body.n_iter,
+        seed=body.seed,
+    )
 
 
 @router.get(

@@ -317,6 +317,24 @@
             "description": "Comma-separated collection run ids"
           },
           {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; the scope becomes the union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; the scope becomes the union of those jobs' child runs (AND-combined with run_ids when both given)."
+          },
+          {
             "name": "projection",
             "in": "query",
             "required": false,
@@ -480,6 +498,24 @@
             }
           },
           {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given)."
+          },
+          {
             "name": "projection",
             "in": "query",
             "required": false,
@@ -631,6 +667,24 @@
               ],
               "title": "Run Ids"
             }
+          },
+          {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given)."
           },
           {
             "name": "projection",
@@ -794,6 +848,24 @@
             }
           },
           {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given)."
+          },
+          {
             "name": "projection",
             "in": "query",
             "required": false,
@@ -943,6 +1015,24 @@
               ],
               "title": "Run Ids"
             }
+          },
+          {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given)."
           },
           {
             "name": "projection",
@@ -1115,6 +1205,24 @@
               ],
               "title": "Run Ids"
             }
+          },
+          {
+            "name": "job_ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given).",
+              "title": "Job Ids"
+            },
+            "description": "Comma-separated collection-job ids; scope = union of those jobs' child runs (AND-combined with run_ids when both given)."
           },
           {
             "name": "projection",
@@ -5154,6 +5262,46 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/social-science/network/test-difference": {
+      "post": {
+        "tags": [
+          "network"
+        ],
+        "summary": "Network Test Difference",
+        "description": "Statistical comparison between two network slices (N4b).\n\nNode-decomposable metrics (``centrality:<m>``, ``avg_clustering``,\n``transitivity``, ``density``) return a seeded permutation/bootstrap p-value\nand 95% CI; global-only metrics (``modularity``, ``assortativity``) return the\nobserved delta with ``p_value=None`` (no fabricated number). Supports both the\nrecommendation family and the audience (commenter) family via ``family``.",
+        "operationId": "network_test_difference_api_v1_social_science_network_test_difference_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestDifferenceRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -16365,6 +16513,142 @@
         "title": "NetworkScope",
         "description": "A video-network scope for export / merge operations.\n\n``run_id`` pins the slice to one collection run; ``run_ids`` pins it to a\nset of runs (a network-expansion action's runs); ``video_ids`` keeps only\nthe ego edges touching any of the listed videos. When every field is empty\nthe scope is the whole persisted recommendation network."
       },
+      "NetworkScopeInput": {
+        "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "channel_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Id"
+          },
+          "channel_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Ids"
+          },
+          "channel_scope": {
+            "type": "string",
+            "title": "Channel Scope",
+            "default": "source"
+          },
+          "layer_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Layer Index"
+          },
+          "video_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Ids"
+          },
+          "projection": {
+            "type": "string",
+            "title": "Projection",
+            "default": "video"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "weighted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weighted"
+          },
+          "run_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Ids"
+          },
+          "min_shared": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Shared"
+          },
+          "top_n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top N"
+          }
+        },
+        "type": "object",
+        "title": "NetworkScopeInput",
+        "description": "One side of a ``/network/test-difference`` comparison (N4b). All fields are\noptional; only the relevant family's fields are used."
+      },
       "NetworkScopeRequest": {
         "properties": {
           "run_id": {
@@ -21156,6 +21440,54 @@
         "type": "object",
         "title": "TemporalResult",
         "description": "Per-run slices and consecutive-run growth."
+      },
+      "TestDifferenceRequest": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family",
+            "default": "recommendation"
+          },
+          "scope_a": {
+            "$ref": "#/components/schemas/NetworkScopeInput"
+          },
+          "scope_b": {
+            "$ref": "#/components/schemas/NetworkScopeInput"
+          },
+          "metric": {
+            "type": "string",
+            "title": "Metric"
+          },
+          "statistic": {
+            "type": "string",
+            "title": "Statistic",
+            "default": "difference_in_means"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": "permutation"
+          },
+          "n_iter": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "N Iter",
+            "default": 200
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "default": 42
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope_a",
+          "scope_b",
+          "metric"
+        ],
+        "title": "TestDifferenceRequest"
       },
       "ThreadPayload": {
         "properties": {

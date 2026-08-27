@@ -34,6 +34,7 @@ import { EXPORT_FORMATS } from "@/lib/network-full-types";
 import { exportVideoMetadata, type ExportNode } from "@/lib/export-graph";
 import { NetworkGraph, type GraphLink, type GraphNode, type NetworkGraphProps } from "@/components/features/network-graph";
 import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
+import { StatisticalTestPanel } from "@/components/features/network-full/statistical-test-panel";
 import { LayerPanel } from "@/components/features/network-layer/layer-panel";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
 import { ExpansionPanel } from "@/components/features/network-expansion/expansion-panel";
@@ -595,7 +596,7 @@ export function FullNetworkView() {
             </div>
           </div>
         </Card>
-        <AudienceNetworkView runId={runId} />
+        <AudienceNetworkView runId={runId} jobIds={graphJobIds} />
       </div>
     );
   }
@@ -779,6 +780,7 @@ export function FullNetworkView() {
           />
           <NetworkRolesPanel runId={runId} />
           <NetworkCommunityInsightsPanel runId={runId} />
+          <StatisticalTestPanel runId={runId} />
         </TabsContent>
 
         <TabsContent value="temporal" className="mt-4 space-y-4">

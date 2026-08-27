@@ -54,6 +54,8 @@ import json
 import time
 from datetime import datetime
 from io import StringIO
+import random
+import statistics
 from threading import RLock
 from typing import Any
 
@@ -71,6 +73,106 @@ from datetime import datetime, timezone
 def utcnow() -> datetime:
     """UTC timestamp used for reproducibility footers / provenance."""
     return datetime.now(timezone.utc)
+
+
+# Measures usable in the node-level statistical comparison (N4b).
+_TEST_CENTRALITY_MEASURES = [
+    "degree",
+    "closeness",
+    "eigenvector",
+    "betweenness",
+    "pagerank",
+    "harmonic",
+    "constraint",
+    "effective_size",
+    "bridging",
+    "clustering",
+]
+
+
+def node_metric_values(G: "nx.Graph", metric: str) -> list[float] | None:
+    """Per-node numeric values for ``metric`` over graph ``G``.
+
+    Returns ``None`` when the metric is a global quantity that does not decompose
+    to nodes (modularity, assortativity) — in that case only the observed global
+    value can be compared, not a permutation p-value.
+    """
+    if metric.startswith("centrality:"):
+        measure = metric.split(":", 1)[1]
+        if measure not in _TEST_CENTRALITY_MEASURES:
+            return None
+        battery = centrality_battery(G, weighted=False)
+        if not battery:
+            return []
+        return [float(battery[n][measure]) for n in battery]
+    und = G.to_undirected() if G.is_directed() else G
+    if metric in ("avg_clustering", "transitivity"):
+        return [float(v) for v in nx.clustering(und).values()]
+    if metric == "density":
+        # Mean node degree is the node-level proxy for graph density.
+        return [float(d) for d in dict(und.degree()).values()]
+    return None
+
+
+def _global_metric_value(G: "nx.Graph", metric: str) -> float | None:
+    """Observed global value for a non-node-decomposable metric."""
+    und = G.to_undirected() if G.is_directed() else G
+    if metric == "modularity":
+        if und.number_of_nodes() == 0:
+            return None
+        parts = louvain_communities(und, seed=42)
+        return float(modularity(und, parts))
+    if metric == "assortativity":
+        try:
+            return float(nx.degree_assortativity_coefficient(und))
+        except (nx.NetworkXError, ValueError):
+            return None
+    if metric == "avg_clustering":
+        return float(nx.average_clustering(und))
+    if metric == "transitivity":
+        return float(nx.transitivity(und))
+    if metric == "density":
+        return float(nx.density(und))
+    return None
+
+
+def run_resampling_test(
+    values_a: list[float],
+    values_b: list[float],
+    method: str = "permutation",
+    n_iter: int = 200,
+    seed: int = 42,
+) -> dict[str, float]:
+    """Seeded permutation/bootstrap test for difference-in-means between two
+    node-level samples.
+
+    Returns the observed delta, a permutation/bootstrap p-value (Meth-C with the
+    ``+1`` correction) and a 95% CI from the resampled delta distribution.
+    ``n_iter`` is capped at 1000 and the RNG is seeded, so the result is fully
+    reproducible for a fixed seed.
+    """
+    n_iter = max(1, min(int(n_iter), 1000))
+    rng = random.Random(seed)
+    observed = statistics.mean(values_a) - statistics.mean(values_b)
+    pool = list(values_a) + list(values_b)
+    na, nb = len(values_a), len(values_b)
+    deltas: list[float] = []
+    if method == "bootstrap":
+        for _ in range(n_iter):
+            a = [values_a[rng.randrange(na)] for _ in range(na)]
+            b = [values_b[rng.randrange(nb)] for _ in range(nb)]
+            deltas.append(statistics.mean(a) - statistics.mean(b))
+    else:  # permutation
+        for _ in range(n_iter):
+            rng.shuffle(pool)
+            deltas.append(statistics.mean(pool[:na]) - statistics.mean(pool[na:]))
+    abs_obs = abs(observed)
+    ge = sum(1 for d in deltas if abs(d) >= abs_obs)
+    p_value = (ge + 1) / (n_iter + 1)
+    deltas.sort()
+    lo = deltas[int(0.025 * n_iter)]
+    hi = deltas[min(n_iter - 1, int(0.975 * n_iter))]
+    return {"observed_delta": observed, "p_value": p_value, "ci95": [lo, hi]}
 
 from SocialScienceResearch.persistence.base import Repositories
 from SocialScienceResearch.services.recommendation_graph_service import (  # noqa: E402
@@ -1591,6 +1693,85 @@ class NetworkAnalyticsService:
             "algorithm": "networkx",
             "seed": 42,
             "computed_at": utcnow().isoformat(),
+        }
+
+    def test_difference(
+        self,
+        *,
+        scope_a: dict[str, Any],
+        scope_b: dict[str, Any],
+        metric: str,
+        statistic: str = "difference_in_means",
+        method: str = "permutation",
+        n_iter: int = 200,
+        seed: int = 42,
+    ) -> dict[str, Any]:
+        """Statistical comparison between two recommendation-network slices (N4b).
+
+        For node-decomposable metrics (``centrality:<m>``, ``avg_clustering``,
+        ``transitivity``, ``density``) runs a seeded permutation/bootstrap test on
+        the per-node values and returns the observed delta, a p-value and a 95%
+        CI. For global-only metrics (``modularity``, ``assortativity``) it reports
+        the observed values and delta with ``p_value=None`` (a permutation test is
+        not well-defined across two distinct graphs) rather than fabricating a
+        number. ``n_iter`` is capped at 1000 and the RNG is seeded for
+        reproducibility.
+        """
+        n_iter = max(1, min(int(n_iter), 1000))
+        if method not in ("permutation", "bootstrap"):
+            raise ValueError("method must be permutation or bootstrap")
+        if statistic != "difference_in_means":
+            raise ValueError("only difference_in_means is supported")
+        Ga, _, _, _ = self._slice_graph(**scope_a)
+        Gb, _, _, _ = self._slice_graph(**scope_b)
+        va = node_metric_values(Ga, metric)
+        vb = node_metric_values(Gb, metric)
+        base = {
+            "metric": metric,
+            "statistic": statistic,
+            "method": method,
+            "seed": seed,
+            "n_iter": n_iter,
+            "n_nodes_a": Ga.number_of_nodes(),
+            "n_nodes_b": Gb.number_of_nodes(),
+        }
+        if va is None or vb is None:
+            obs_a = _global_metric_value(Ga, metric)
+            obs_b = _global_metric_value(Gb, metric)
+            delta = (
+                (obs_a - obs_b)
+                if obs_a is not None and obs_b is not None
+                else None
+            )
+            return {
+                **base,
+                "statistic_a": obs_a,
+                "statistic_b": obs_b,
+                "observed_delta": delta,
+                "p_value": None,
+                "ci95": None,
+                "note": "permutation/bootstrap is defined for node-level metrics "
+                "only; global metric reported as observed delta",
+            }
+        if not va or not vb:
+            return {
+                **base,
+                "statistic_a": None,
+                "statistic_b": None,
+                "observed_delta": None,
+                "p_value": None,
+                "ci95": None,
+                "note": "one or both scopes have no nodes",
+            }
+        res = run_resampling_test(va, vb, method=method, n_iter=n_iter, seed=seed)
+        return {
+            **base,
+            "statistic_a": statistics.mean(va),
+            "statistic_b": statistics.mean(vb),
+            "observed_delta": res["observed_delta"],
+            "p_value": res["p_value"],
+            "ci95": res["ci95"],
+            "note": None,
         }
 
     # ------------------------------------------------------------------
