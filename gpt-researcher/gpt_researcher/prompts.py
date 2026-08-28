@@ -180,37 +180,32 @@ RESEARCH QUERY: "{query_text}"
 AVAILABLE TOOLS:
 {json.dumps(tools_info, indent=2)}
 
-BACKGROUND FOR EACH TOOL:
-- Provide one concise sentence describing what the tool does.
-- Include the tool's main domain, data source, or capability if known.
-- State whether the tool is best for broad web search, social or event data, structured API access, code/repository lookup, or deep source retrieval.
+SERVER SEMANTICS (inferred from tool-name prefixes):
+- web_research_*      -> General web search / web research. The right choice for broad web-information queries.
+- socialcrawl_*       -> Social-media platforms (X/Twitter, TikTok, YouTube, etc.): profiles, posts, comments, trends. Reserve for social-media-specific queries.
+- gdelt_cloud_*       -> GDELT global news & events database (conflicts, protests, news, public discourse, trends). Use for news / current-events queries.
+- energy_* / risk_* / filings_* / maritime_* / macro_* / epoch_* / facilities_* / media_intel_* / gov_* / gleif_* / macro_finance_* -> Specialized structured data (corporate, financial, risk, regulatory). Only when the query matches that exact domain.
+
+IMPORTANT - CATALOG/WRAPPER TOOLS:
+Some servers expose a discovery pattern via tools named like "*_tool_list" / "*_tool_get" / "*_tool_call"
+(e.g. gdelt_cloud_tool_list, web_research_tool_list). To use such a server you MUST select BOTH its
+"*_tool_list" (to discover sub-tools) AND its "*_tool_call" (to execute them). These are the GATEWAYS to
+GDELT and general web research - select them when the query matches that server's domain.
 
 HOW TO CHOOSE:
-- Analyze the research query and identify the most useful kinds of information for this topic.
-- Prefer tools that can directly access the content the query needs (e.g., current events, social influence, structured event data, specialized sources).
-- Choose tools that offer complementary coverage instead of redundant overlap.
-- If the query is about news, global events, or intelligence, prioritize tools with event or news data.
-- If the query is about social networks, influence, or online activity, prioritize tools that can access social or crawl-oriented data.
-- If the query is about technical documents, code, or repositories, prioritize tools with specialized tech or documentation access.
+- Understand what information the query needs, then map it to the SERVER SEMANTICS above.
+- GENERAL web-information queries (facts, biographies, explanations, "what/how/who"): SELECT web_research_*
+  tools. Do NOT use socialcrawl_* for ordinary web lookups.
+- NEWS / current-events / conflicts / public-discourse / trend queries: SELECT gdelt_cloud_* tools.
+  Prefer these over socialcrawl_* for news.
+- SOCIAL-MEDIA-specific queries (a person's posts, platform trends, comments): SELECT socialcrawl_* tools.
+- Domain-specific structured data: SELECT the matching specialized server's tools.
+- Prefer tools that directly satisfy the query; avoid redundant overlap.
+- It is BETTER to select the precise server(s) than to grab every tool. You may select fewer than
+  {max_tools} if fewer are clearly relevant.
 
-IMPORTANT - WRAPPER/CATALOG TOOLS:
-Some tools have names like "tool_list", "tool_get", "tool_call", "web_research_tool_list", etc.
-These are WRAPPER or CATALOG tools that provide access to a DISCOVERY PATTERN:
-- They can be used to LIST available sub-tools (e.g., "web_research_tool_list" lists web research tools like SEARCH_WEB)
-- They can be used to GET schema for specific tools
-- They can be used to CALL/execute tools by name
-If your query is about web search, news, events, or general research, SELECT these wrapper tools because they
-enable access to powerful search and extraction capabilities (like SEARCH_WEB, EXTRACT_WEB_PAGES).
-
-TASK: Select EXACTLY {max_tools} tools that are most relevant for researching the given query.
-
-SELECTION CRITERIA:
-- Choose tools that can provide information, data, or insights related to the query.
-- Prioritize tools that can search, retrieve, or access the most relevant content.
-- Favor tools with unique, complementary coverage.
-- Exclude tools that are clearly unrelated to the research topic.
-- If no direct tool seems relevant for web search or general research, SELECT wrapper/catalog tools
-  (like "tool_list", "web_research_tool_list") as they provide access to search capabilities.
+TASK: Select the most relevant tools (up to {max_tools}) for researching the query, following the
+SERVER SEMANTICS and HOW TO CHOOSE rules above.
 
 Return a JSON object with this exact format:
 {{
@@ -224,8 +219,6 @@ Return a JSON object with this exact format:
   ],
   "selection_reasoning": "Overall explanation of the selection strategy"
 }}
-
-Select exactly {max_tools} tools, ranked by relevance to the research query.
 """
 
     @staticmethod

@@ -117,8 +117,38 @@ class ValidContentFilter(BaseDocumentCompressor):
 class SafeEmbeddingsFilter(EmbeddingsFilter):
     """
     A wrapper around EmbeddingsFilter that handles mismatched document/embedding lists.
-    Prevents IndexError by validating lengths before assigning similarity scores.
+
+    Key behaviour: it NEVER returns an empty list. When nothing clears the
+    similarity threshold (or the doc/score lists are mismatched), it returns the
+    top-``min_return`` chunks ranked by similarity instead. This prevents the
+    caller from falling back to dumping the raw, un-ranked documents into the
+    prompt ("out of index -> full document").
     """
+
+    def __init__(self, embeddings=None, similarity_threshold=None, min_return: int = 10, **kwargs):
+        super().__init__(embeddings=embeddings, similarity_threshold=similarity_threshold)
+        # Bypass Pydantic validation for this attribute (same pattern as ValidContentFilter).
+        object.__setattr__(self, "min_return", int(min_return))
+
+    def _top_k_by_similarity(self, documents, similarity_scores, k: int) -> List[Document]:
+        """Return the top-``k`` documents by descending similarity score."""
+        if not documents:
+            return []
+        k = min(k, len(documents))
+        paired = sorted(
+            zip(documents, similarity_scores),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        result = []
+        for doc, score in paired[:k]:
+            doc_copy = Document(
+                page_content=doc.page_content,
+                metadata=doc.metadata.copy() if doc.metadata else {},
+            )
+            doc_copy.metadata["query_similarity_score"] = score
+            result.append(doc_copy)
+        return result
 
     def compress_documents(
         self,
@@ -129,13 +159,11 @@ class SafeEmbeddingsFilter(EmbeddingsFilter):
         """
         Compress documents by embedding similarity, with safety checks.
 
-        Args:
-            documents: List of documents to compress.
-            query: Query string.
-            callbacks: Optional callbacks.
-
-        Returns:
-            List of documents with similarity scores, or empty list if embedding fails.
+        Returns the most relevant chunks. Unlike the base filter, this never
+        returns an empty list: if the threshold filters everything out (common
+        with strict thresholds like 0.42 on multilingual embeddings), it returns
+        the top-``min_return`` chunks by similarity so the caller keeps focused,
+        relevant context instead of falling back to the full raw documents.
         """
         try:
             # Get embeddings for the documents and query
@@ -145,13 +173,16 @@ class SafeEmbeddingsFilter(EmbeddingsFilter):
             # Calculate similarity scores
             similarity_scores = cosine_similarity([query_embedding], doc_embeddings)[0]
 
-            # Safety check: Ensure similarity_scores length matches documents
+            # Safety check: Ensure similarity_scores length matches documents.
+            # If they don't, we cannot safely rank, so return the leading chunks
+            # rather than an empty list (which would trigger a raw-doc dump).
             if len(similarity_scores) != len(documents):
                 logger.warning(
-                    "Mismatch between documents (%d) and similarity scores (%d). Skipping embedding filter.",
-                    len(documents), len(similarity_scores)
+                    "Mismatch between documents (%d) and similarity scores (%d). "
+                    "Returning leading %d chunks instead of skipping the filter.",
+                    len(documents), len(similarity_scores), self.min_return
                 )
-                return []
+                return [d for d in documents[: self.min_return]]
 
             # Assign similarity scores to documents
             stateful_documents = []
@@ -170,15 +201,27 @@ class SafeEmbeddingsFilter(EmbeddingsFilter):
                 if doc.metadata.get("query_similarity_score", 0) >= self.similarity_threshold
             ]
 
-            return filtered_documents
+            if filtered_documents:
+                return filtered_documents
+
+            # Nothing cleared the threshold: return the top-k most similar chunks
+            # instead of an empty list. This is the fix for the "out of index ->
+            # full document" fallback path.
+            logger.info(
+                "No chunks cleared similarity_threshold=%.2f; returning top-%d chunks by "
+                "similarity instead of an empty result (avoids raw-document fallback).",
+                self.similarity_threshold, self.min_return
+            )
+            return self._top_k_by_similarity(stateful_documents, similarity_scores, self.min_return)
 
         except Exception as e:
             logger.warning(
-                "EmbeddingsFilter failed with %s; skipping embedding filter.",
+                "EmbeddingsFilter failed with %s; returning leading chunks as fallback.",
                 str(e),
                 exc_info=True,
             )
-            return []
+            # Avoid the empty-list -> raw-document-dump path when embedding fails.
+            return [d for d in documents[: self.min_return]]
 
     async def acompress_documents(
         self,

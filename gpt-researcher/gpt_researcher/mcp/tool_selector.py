@@ -48,36 +48,27 @@ class MCPToolSelector:
         if not all_tools:
             return []
 
-        # IMPORTANT: Don't filter out wrapper tools (tool_list, tool_get, tool_call, etc.)
-        # because _build_catalog_tools() in research.py needs them to expand GDELT-style
-        # meta-tools into actual callable tools (like SEARCH_WEB, EXTRACT_WEB_PAGES).
-        # The wrapper tools are filtered out here ONLY for the LLM selection prompt
-        # to avoid confusing the LLM, but they are still included in the returned tools
-        # if selected by the LLM or as fallback.
-        
-        # For LLM selection, create a filtered list without wrapper tools
+        # Catalog/wrapper tools (e.g. gdelt_cloud_tool_list, web_research_tool_list,
+        # *_tool_call, *_tool_get) are the GATEWAYS to servers such as GDELT and
+        # general web research. They MUST stay visible to the LLM so it can select
+        # them; otherwise entire servers become unreachable (GDELT is never used and
+        # SocialCrawl is over-used for ordinary web lookups). _build_catalog_tools()
+        # later expands the selected "*_tool_list" tools into concrete callable tools.
+        #
+        # We only hide the generic MCP protocol primitives, which are not research
+        # tools and only add noise to the selection prompt.
+        GENERIC_MCP_PRIMITIVES = {
+            "list_resources", "read_resource",
+            "list_prompts", "get_prompt",
+        }
         filtered_for_llm = [
             tool for tool in all_tools
-            if not any(
-                fragment in str(getattr(tool, "name", "") or "").lower()
-                for fragment in [
-                    "tool_list",
-                    "tool_catalog", 
-                    "tool_get",
-                    "tool_call",
-                    "list_tools",
-                    "list_tool",
-                    "get_tool",
-                    "call_tool",
-                    "invoke_tool",
-                ]
-            )
+            if (str(getattr(tool, "name", "") or "").lower()) not in GENERIC_MCP_PRIMITIVES
         ]
-        
-        # Use filtered list for LLM selection if we have non-wrapper tools
-        # Otherwise fall back to all tools (including wrappers)
-        tools_for_selection = filtered_for_llm if filtered_for_llm else all_tools
-        tools_for_selection = filtered_for_llm if len(filtered_for_llm) >= 3 else all_tools
+
+        # Use the filtered list for LLM selection; fall back to all tools only if
+        # filtering removed everything.
+        tools_for_selection = filtered_for_llm or all_tools
 
         # Fast-path: if available tools count is <= max_tools, return all directly without LLM call
         if len(tools_for_selection) <= max_tools:
