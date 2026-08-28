@@ -43,15 +43,17 @@ def _resolve_report_path(report_path: str | None) -> str | None:
     return None
 
 
-def compress_intelligence_report(report_content: str, short_query: str) -> str:
-    """Compress an intelligence report for injection."""
+def compress_intelligence_report(report_content: str, short_query: str, target_node: str = None) -> str:
+    """Compress an intelligence report for injection into a specific downstream node."""
     state: GraphState = {
         "subject_intelligence_report": report_content,
         "user_initial_query": short_query,
     }
     compressed_state = compress_subject_intelligence(state)
     compressed = compressed_state.get("compressed_intelligence", {})
-    return format_compressed_for_injection(compressed) if compressed else report_content[:8000]
+    if not compressed:
+        return report_content[:8000]
+    return format_compressed_for_injection(compressed, target_node=target_node)
 
 
 def build_ecosystem_query(
@@ -361,9 +363,9 @@ async def run_ecosystem_intelligence(
     load_environment()
     mcp_configs = build_audience_mcp_configs()
 
-    # Compress reports
-    subject_summary = compress_intelligence_report(subject_report, subject_name)
-    audience_summary = compress_intelligence_report(audience_report, subject_name)
+    # Compress reports (consumer-aware: target the ecosystem node with provenance + gaps)
+    subject_summary = compress_intelligence_report(subject_report, subject_name, target_node="ecosystem")
+    audience_summary = compress_intelligence_report(audience_report, subject_name, target_node="ecosystem")
 
     # Build ecosystem query
     full_query = build_ecosystem_query(subject_name, subject_summary, audience_summary)

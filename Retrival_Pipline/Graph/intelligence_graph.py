@@ -33,6 +33,9 @@ from Nodes import (
     format_compressed_for_injection,
 )
 
+# Persistence (SQLite + external file storage)
+from persistence import get_store, new_session_id, get_data_dir
+
 # Load environment variables
 load_dotenv()
 
@@ -109,20 +112,19 @@ def report_router(state: GraphState):
 def create_run_folder() -> str:
     """
     Creates a unique folder for each graph run to store all output files.
-    
+
+    Output is placed in an external data directory (INTEL_DATA_DIR / intelligence_data),
+    separate from the code repository, so generated artifacts are not committed.
+
     Returns:
         Path to the created run folder
     """
     run_id = str(uuid.uuid4())
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = f"run_{timestamp}_{run_id[:8]}"
-    
-    run_folder = os.path.join(
-        os.path.dirname(__file__), 
-        "runs", 
-        run_name
-    )
-    
+
+    run_folder = os.path.join(get_data_dir(), "runs", run_name)
+
     os.makedirs(run_folder, exist_ok=True)
     return run_folder
 
@@ -130,14 +132,14 @@ def create_run_folder() -> str:
 def save_state_to_file(state: GraphState, run_folder: str, step_name: str) -> None:
     """
     Saves the current state to a JSON file in the run folder.
-    
+
     Args:
         state: Current graph state
         run_folder: Path to the run folder
         step_name: Name of the current step
     """
     state_file = os.path.join(run_folder, f"{step_name}_state.json")
-    
+
     # Prepare state for serialization
     serializable_state = {}
     for key, value in state.items():
@@ -147,23 +149,35 @@ def save_state_to_file(state: GraphState, run_folder: str, step_name: str) -> No
             for report_key, report_data in value.items():
                 if isinstance(report_data, dict):
                     serializable_reports[report_key] = {
-                        k: v for k, v in report_data.items() 
+                        k: v for k, v in report_data.items()
                         if not callable(v) and not k.startswith('_')
                     }
                 else:
                     serializable_reports[report_key] = str(report_data)
             serializable_state[key] = serializable_reports
+        elif key in ("compressed_reports",):
+            # Cache of object dicts; serialize as-is.
+            serializable_state[key] = value
         elif not callable(value) and not key.startswith('_'):
             serializable_state[key] = value
-    
+
     with open(state_file, 'w', encoding='utf-8') as f:
         json.dump(serializable_state, f, indent=2, ensure_ascii=False)
+
+    # Persist step snapshot to the intelligence DB.
+    session_id = state.get("session_id")
+    if session_id:
+        try:
+            get_store().save_step(session_id, step_name, state_file)
+        except Exception as e:
+            print(f"⚠️  Failed to persist step '{step_name}': {e}")
 
 
 def save_report_to_file(state: GraphState, run_folder: str, report_type: str) -> None:
     """
-    Saves a specific report from state to a markdown file.
-    
+    Saves a specific report from state to a markdown file (external storage)
+    and records metadata in the intelligence DB.
+
     Args:
         state: Current graph state
         run_folder: Path to the run folder
@@ -173,14 +187,34 @@ def save_report_to_file(state: GraphState, run_folder: str, report_type: str) ->
     if reports.get(report_type):
         report_data = reports[report_type]
         report_path = os.path.join(run_folder, report_data.get("path", f"{report_type}_intelligence.md"))
-        
+
         # Ensure the directory exists
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
-        
+
         # Get content with default
         content = report_data.get("content", "")
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(content)
+
+        # Persist report metadata to the intelligence DB.
+        session_id = state.get("session_id")
+        if session_id:
+            try:
+                sources = report_data.get("sources", []) or []
+                get_store().add_report(
+                    session_id=session_id,
+                    report_type=report_type,
+                    path=report_path,
+                    summary=(content[:500] + "...") if len(content) > 500 else content,
+                    sources_count=len(sources),
+                    costs=float(report_data.get("costs", 0.0) or 0.0),
+                    completed=True,
+                    sources=[{"url": s.get("url", "") if isinstance(s, dict) else str(s),
+                              "title": s.get("title", "") if isinstance(s, dict) else ""}
+                             for s in sources if isinstance(s, dict)],
+                )
+            except Exception as e:
+                print(f"⚠️  Failed to persist report '{report_type}': {e}")
 
 
 async def profile_summarization_node(state: GraphState) -> GraphState:
@@ -427,14 +461,29 @@ def create_initial_state(
     Returns:
         Initialized GraphState
     """
-    # Create run folder
+    # Create run folder (external storage)
     run_folder = create_run_folder()
+
+    # Create a persistence session so reports/steps are recorded in the DB.
+    session_id = new_session_id()
+    plan = normalize_report_plan(report_plan)
+    try:
+        get_store().create_session(
+            session_id=session_id,
+            subject=user_query,
+            thread_id=None,
+            report_plan=plan,
+            run_folder=run_folder,
+        )
+    except Exception as e:
+        print(f"⚠️  Failed to create persistence session: {e}")
 
     return {
         "user_initial_query": user_query,
         "mcp_strategy": "fast",
         "run_folder": run_folder,
-        "report_plan": normalize_report_plan(report_plan),
+        "session_id": session_id,
+        "report_plan": plan,
         "skip_existing_reports": skip_existing_reports,
         "force_reports": force_reports or [],
         "input_paths": {
@@ -512,7 +561,23 @@ def prepare_resume_state(
     loaded_state["report_plan"] = normalize_report_plan(report_plan)
     loaded_state["skip_existing_reports"] = True
     loaded_state["force_reports"] = force_reports or []
+
+    # Keep the persistence session in sync with the new plan.
+    session_id = loaded_state.get("session_id")
+    if session_id:
+        try:
+            get_store().update_session(
+                session_id, status="running",
+                report_plan=_json_plan(loaded_state["report_plan"]),
+            )
+        except Exception as e:
+            print(f"⚠️  Failed to update persistence session: {e}")
     return loaded_state
+
+
+def _json_plan(plan: List[str]) -> str:
+    import json
+    return json.dumps(plan)
 
 
 async def run_intelligence_pipeline(initial_state: GraphState, config: dict = None, interrupt_after=None) -> GraphState:

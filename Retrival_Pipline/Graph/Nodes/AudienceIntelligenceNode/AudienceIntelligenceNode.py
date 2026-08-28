@@ -23,7 +23,9 @@ from Retrival_Pipline.Graph.Nodes.GPT_ResearcherNode.ResearchNode import make_re
 from Retrival_Pipline.Graph.Nodes.CompressionNode import (
     compress_intelligence_report,
     compress_subject_intelligence,
+    compress_reference_doc,
     format_compressed_for_injection,
+    get_or_compress,
 )
 from Retrival_Pipline.Graph.StateGraph import GraphState
 
@@ -41,18 +43,11 @@ async def summarize_briefings(briefing_1_path: str, briefing_2_path: str, short_
         "SOURCE 1:\n" + briefing_1.strip() + "\n\n"
         "SOURCE 2:\n" + briefing_2.strip()
     )
-    
-    state: GraphState = {
-        "subject_intelligence_report": combined_report,
-        "user_initial_query": short_query,
-    }
-    
-    result = compress_subject_intelligence(state)
-    
-    compressed = result.get("compressed_intelligence", {})
-    summary = format_compressed_for_injection(compressed) if compressed else ""
-    
-    return summary
+
+    if len(combined_report) <= 8000:
+        return combined_report
+
+    return compress_reference_doc(combined_report)
 
 
 async def summarize_single_profile(profile_path: str, short_query: str) -> str:
@@ -64,20 +59,12 @@ async def summarize_single_profile(profile_path: str, short_query: str) -> str:
     if len(profile_content) <= 8000:
         return profile_content
 
-    state: GraphState = {
-        "subject_intelligence_report": profile_content,
-        "user_initial_query": short_query,
-    }
-
-    result = compress_subject_intelligence(state)
-    
-    compressed = result.get("compressed_intelligence", {})
-    summary = format_compressed_for_injection(compressed) if compressed else profile_content[:8000]
+    return compress_reference_doc(profile_content)
     
     return summary
 
 
-def build_audience_query(subject_name: str, subject_profile: str, combined_summary: str) -> str:
+def build_audience_query(subject_name: str, subject_profile: str, combined_summary: str, subject_briefing: str = "") -> str:
     """Build the research query for audience intelligence."""
     
     audience_profile_layer = {
@@ -245,6 +232,10 @@ def build_audience_query(subject_name: str, subject_profile: str, combined_summa
         "=== COMBINED SUBJECT INTELLIGENCE SUMMARY ===",
         combined_summary.strip(),
         "=============================================",
+        "",
+        "=== SUBJECT INTELLIGENCE BRIEFING (audience-targeted, pre-compressed) ===",
+        subject_briefing.strip() if subject_briefing else "(none provided)",
+        "========================================================================",
         "",
         "OBJECTIVE:",
         "Reverse engineer the audience ecosystem surrounding the subject.",
@@ -435,15 +426,9 @@ async def run_audience_intelligence(
             "SOURCE 2:\n" + briefing_2.strip()
         )
         
-        # Compress the combined briefings
-        compress_state: GraphState = {
-            "subject_intelligence_report": combined_report,
-            "user_initial_query": subject_name,
-        }
-        
-        result = compress_subject_intelligence(compress_state)
-        compressed = result.get("compressed_intelligence", {})
-        briefing_summary = format_compressed_for_injection(compressed) if compressed else combined_report[:8000]
+        # Compress the combined briefings with the reference-doc compressor
+        # (appropriate for briefings; short-circuits when content is small).
+        briefing_summary = compress_reference_doc(combined_report)
     
     # Load environment and MCP configs
     try:
@@ -457,8 +442,18 @@ async def run_audience_intelligence(
     mcp_configs = state.get("mcp_configs", build_audience_mcp_configs())
     mcp_strategy = state.get("mcp_strategy", "fast")
 
-    # Build audience query from the resolved profile + briefing summaries
-    full_query = build_audience_query(subject_name, profile_summary, briefing_summary)
+    # Pre-compress the upstream SUBJECT report into an audience-targeted briefing (provenance + gaps).
+    subject_report_content = state.get("reports", {}).get("subject", {}).get("content", "")
+    subject_briefing = ""
+    if subject_report_content:
+        sub_compressed = get_or_compress(state, "subject", target_node="audience")
+        subject_briefing = format_compressed_for_injection(
+            sub_compressed.get("compressed_intelligence", sub_compressed),
+            target_node="audience",
+        )
+
+    # Build audience query from the resolved profile + briefing summaries + subject briefing
+    full_query = build_audience_query(subject_name, profile_summary, briefing_summary, subject_briefing)
     
     # Prepare the state for research
     research_state: GraphState = {

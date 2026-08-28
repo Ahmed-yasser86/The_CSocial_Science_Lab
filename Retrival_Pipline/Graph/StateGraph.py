@@ -18,13 +18,19 @@ class ProfileCandidate(TypedDict):
 
 
 
-class CompressedIntelligence(TypedDict):
+class CompressedIntelligence(TypedDict, total=False):
     """Structured compression of a Subject Intelligence Report."""
 
     covered_topics: str
     confirmed_positions: str
     available_insights: str
     profile_context: str
+    key_claims_with_sources: str
+    open_questions: str
+    intelligence_type: str
+    target_node: Optional[str]
+    source_report: str
+    compression_timestamp: str
 
 
 
@@ -107,3 +113,9 @@ class GraphState(TypedDict, total=False):
     in state['reports'] (used for resuming an earlier run without recomputing)."""
     force_reports: list[str]
     """Report keys to (re)generate even if already present in state."""
+
+    compressed_reports: dict[str, Any]
+    """Cache of compressions keyed by 'report_type->target_node' to avoid recompute."""
+
+    session_id: str
+    """Persistence session id (maps to the intelligence DB)."""

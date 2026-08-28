@@ -9,34 +9,46 @@ from Retrival_Pipline.Graph.Chains.ChainUtil import build_chat_model
 
 class CompressedIntelligence(BaseModel):
     """Structured compression of intelligence reports for downstream nodes.
-    
-    This compression format is designed to:
-    1. Preserve key findings from previous nodes
-    2. Provide context for subsequent intelligence analysis
-    3. Avoid redundant research in downstream nodes
+
+    Designed to:
+    1. Preserve key findings (with epistemic status + sources) from previous nodes
+    2. Provide focused context for a specific downstream consumer
+    3. State explicit GAPS the next node should investigate (no redundant research)
     4. Maintain the flow of information through the graph
     """
 
     covered_topics: str = Field(
         description="Bullet-point summary of topics already researched and confirmed with evidence. "
-                   "This helps downstream nodes avoid repeating the same research."
+                    "This helps the downstream node avoid repeating the same research."
     )
     confirmed_positions: str = Field(
-        description="Key verified positions, beliefs, or patterns extracted from the report. "
-                   "This provides established context for downstream analysis."
+        description="Key verified positions, beliefs, or patterns extracted from the report, "
+                    "each tagged with its epistemic status ([VERIFIED]/[STRONG EVIDENCE]/"
+                    "[REASONABLE INFERENCE]/[INFERRED FROM PATTERNS])."
     )
     available_insights: str = Field(
         description="Concrete evidence and observations from the report about the subject, their audience, "
-                   "and their ecosystem. This forms the factual basis for downstream analysis."
+                    "and their ecosystem. Factual basis for downstream analysis."
     )
     profile_context: str = Field(
-        description="Contextual information about the subject's characteristics, priorities, communication style, "
-                   "audience relationships, and ecosystem role. This helps downstream nodes understand "
-                   "how to approach their specific intelligence tasks."
+        description="Contextual information about the subject's characteristics, priorities, communication "
+                    "style, audience relationships, and ecosystem role."
+    )
+    key_claims_with_sources: str = Field(
+        description="The most decision-relevant claims, one per line, each formatted as: "
+                    "'- [STATUS] <claim> -- <source url or document>'. Preserve the [VERIFIED]/"
+                    "[INFERRED FROM PATTERNS] markers exactly as they appear in the source report."
+    )
+    open_questions: str = Field(
+        description="Only when a target node is specified. Concrete gaps the TARGET node should "
+                    "investigate next, phrased as questions. Must NOT repeat covered_topics."
     )
     intelligence_type: str = Field(
-        description="Type of intelligence being compressed (subject, audience, or ecosystem). "
-                   "This helps downstream nodes understand the context of the information."
+        description="Type of intelligence being compressed (subject, audience, or ecosystem)."
+    )
+    target_node: Optional[str] = Field(
+        default=None,
+        description="Downstream consumer this briefing is built for (audience/ecosystem), if any.",
     )
 
 
@@ -44,89 +56,110 @@ llm = build_chat_model()
 llm_with_structured_output = llm.with_structured_output(CompressedIntelligence)
 
 
-system = """
+BASE_SYSTEM = """
 You are an intelligence compression specialist in a multi-stage intelligence analysis pipeline.
 
-Your role is to compress intelligence reports from one stage to provide context for the next stage.
-This enables a sequential flow of information where each node builds on the previous one's findings.
+Your role is to compress an intelligence report from one stage so it can provide focused,
+reusable context for the next stage. Each downstream node builds on the previous one's findings.
 
 Key principles:
-1. Preserve the factual content from the source report
-2. Structure the information for easy consumption by downstream nodes
-3. Avoid introducing new analysis, speculation, or recommendations
-4. Maintain clear separation between established facts and contextual information
+1. Preserve factual content and epistemic status from the source report.
+2. Structure information for easy consumption by the downstream node.
+3. Keep clear separation between established facts and contextual information.
+4. Preserve provenance: every key claim must keep its source reference and its epistemic
+   marker ([VERIFIED], [STRONG EVIDENCE], [REASONABLE INFERENCE], [INFERRED FROM PATTERNS],
+   [INSUFFICIENT EVIDENCE]). Do not strip or weaken these markers.
 
-For this task, you will receive an intelligence report and must produce a structured compression
-that includes the following sections:
+Produce a structured compression with these sections:
 
 1. COVERED TOPICS
-   - List each topic already researched and confirmed by the report
-   - Use concise bullet points (1-2 lines each)
-   - Include only topics with supporting evidence in the report
-   - This helps downstream nodes avoid redundant research
+   - Topics already researched and confirmed by the report (concise bullets).
+   - Only topics with supporting evidence. Helps the downstream node avoid redundant research.
 
 2. CONFIRMED POSITIONS
-   - Extract only the subject's verified positions, beliefs, or patterns
-   - Focus on evidence-backed assertions from the report
-   - Use concise bullet points
-   - This provides established context for downstream analysis
+   - The subject's verified positions/beliefs/patterns, each tagged with its epistemic status.
+   - Evidence-backed assertions only. Concise bullets.
 
 3. AVAILABLE INSIGHTS
-   - Extract concrete evidence about the subject, their audience, and ecosystem
-   - Present as factual observations, not analysis or speculation
-   - Include both positive findings and limitations of the current report
-   - This forms the factual basis for downstream analysis
+   - Concrete evidence about the subject, audience, and ecosystem as factual observations.
+   - Include both positive findings and limitations of the current report.
 
 4. PROFILE CONTEXT
-   - Summarize the subject's characteristics, priorities, and communication style
-   - Describe their audience relationships and ecosystem role
-   - Keep this grounded strictly in the report content
-   - This helps downstream nodes understand how to approach their tasks
+   - Subject characteristics, priorities, communication style, audience relationships, ecosystem role.
+   - Grounded strictly in the report.
 
-5. INTELLIGENCE TYPE
-   - Specify the type of intelligence (subject, audience, or ecosystem)
-   - This helps downstream nodes understand the context
+5. KEY CLAIMS WITH SOURCES
+   - The most decision-relevant claims, one per line: '- [STATUS] <claim> -- <source url or document>'.
+   - These are the reusable evidence units for the downstream node.
+
+6. INTELLIGENCE TYPE
+   - subject / audience / ecosystem.
 
 Output Rules:
-- Be concise and direct - use bullet points where appropriate
-- Do not rewrite the report as prose
-- Do not invent evidence, claims, or analysis beyond what's in the report
-- Do not provide instructions or recommendations for downstream nodes
-- If the report has limitations, state them explicitly in the available insights
-- Maintain clear separation between the different sections
-- Do not add extra fields or explanatory paragraphs beyond the required structure
+- Be concise and direct; use bullets where appropriate.
+- Do not rewrite the report as prose.
+- Do not invent evidence, claims, or analysis beyond what's in the report.
+- Do not add extra fields or explanatory paragraphs beyond the required structure.
 """
 
+TARGET_INSTRUCTIONS = {
+    "audience": (
+        "TARGET NODE = AUDIENCE INTELLIGENCE. Emphasize communication style, audience relationships, "
+        "and community dynamics in PROFILE CONTEXT and CONFIRMED POSITIONS. In the OPEN QUESTIONS "
+        "section, list the specific gaps the audience node must investigate (segments, motivations, "
+        "community structures, influential followers). Do NOT repeat covered topics."
+    ),
+    "ecosystem": (
+        "TARGET NODE = ECOSYSTEM INTELLIGENCE. Emphasize institutional, systemic, and macro-environmental "
+        "context in PROFILE CONTEXT and AVAILABLE INSIGHTS. In the OPEN QUESTIONS section, list the specific "
+        "gaps the ecosystem node must investigate (institutions, state-society relations, systemic risks, "
+        "cross-entity dynamics). Do NOT repeat covered topics."
+    ),
+}
 
-compress_prompt = ChatPromptTemplate.from_messages([
-    ("system", system),
-    ("human", "Intelligence Report to Compress:\n\n{report}\n\nIntelligence Type: {intelligence_type}"),
-])
+
+def _build_prompt(target_node: Optional[str]):
+    system = BASE_SYSTEM
+    if target_node in TARGET_INSTRUCTIONS:
+        system += "\n\n" + TARGET_INSTRUCTIONS[target_node]
+    return ChatPromptTemplate.from_messages([
+        ("system", system),
+        ("human", "Intelligence Report to Compress:\n\n{report}\n\nIntelligence Type: {intelligence_type}"),
+    ])
 
 
-intelligence_compressor = compress_prompt | llm_with_structured_output
+# Legacy alias used by older tests/examples (generic, no target node).
+intelligence_compressor = _build_prompt(None) | llm_with_structured_output
 
 
+def _compressor_for(target_node: Optional[str]):
+    if target_node is None:
+        return intelligence_compressor
+    return _build_prompt(target_node) | llm_with_structured_output
 
-def compress_intelligence_report(state: GraphState, report_type: str = "subject") -> Dict[str, Any]:
+
+def compress_intelligence_report(
+    state: GraphState,
+    report_type: str = "subject",
+    target_node: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Compresses an intelligence report into structured briefing for downstream nodes.
-    
-    This function extracts key information from a completed intelligence report and
-    compresses it into a structured format that can be used by subsequent nodes in the graph.
-    
+    Compresses an intelligence report into a structured briefing for downstream nodes.
+
     Args:
-        state (GraphState): The current graph state containing reports
-        report_type (str): Type of report to compress (subject, audience, or ecosystem)
-        
+        state: Graph state containing reports.
+        report_type: Type of report to compress (subject, audience, ecosystem).
+        target_node: Optional consumer this briefing is built for ("audience"/"ecosystem").
+            When set, the compression is scoped to that node's needs and includes an
+            OPEN QUESTIONS (gaps) section.
+
     Returns:
-        Dict[str, Any]: Updated state with compressed intelligence
+        State with ``compressed_intelligence`` populated.
     """
-    # Get the appropriate report from state
     reports = state.get("reports", {})
     report_data = reports.get(report_type, {})
     report_content = report_data.get("content", "")
-    
+
     if not report_content:
         print(f"⚠️  No {report_type} intelligence report found in state. Skipping compression.")
         return {
@@ -136,44 +169,44 @@ def compress_intelligence_report(state: GraphState, report_type: str = "subject"
                 "confirmed_positions": "",
                 "available_insights": f"No {report_type} report provided.",
                 "profile_context": "No profile context available.",
-                "intelligence_type": report_type
-            }
+                "key_claims_with_sources": "",
+                "open_questions": "",
+                "intelligence_type": report_type,
+                "target_node": target_node,
+            },
         }
-    
-    print(f"⏳ Compressing {report_type.capitalize()} Intelligence Report...")
+
+    print(f"⏳ Compressing {report_type.capitalize()} Intelligence Report (target={target_node or 'generic'})...")
     print(f"   Report length: {len(report_content)} characters")
-    
-    # Get context about the subject from state
-    user_query = state.get("user_initial_query", "")
-    print(f"   Subject: {user_query}")
-    
+
     try:
-        result: CompressedIntelligence = intelligence_compressor.invoke({
+        result: CompressedIntelligence = _compressor_for(target_node).invoke({
             "report": report_content,
-            "intelligence_type": report_type
-        })
-        
-        compressed = {
-            "covered_topics": result.covered_topics,
-            "confirmed_positions": result.confirmed_positions,
-            "available_insights": result.available_insights,
-            "profile_context": result.profile_context,
             "intelligence_type": report_type,
+        })
+
+        compressed = {
+            "covered_topics": getattr(result, "covered_topics", ""),
+            "confirmed_positions": getattr(result, "confirmed_positions", ""),
+            "available_insights": getattr(result, "available_insights", ""),
+            "profile_context": getattr(result, "profile_context", ""),
+            "key_claims_with_sources": getattr(result, "key_claims_with_sources", ""),
+            "open_questions": getattr(result, "open_questions", "") or "",
+            "intelligence_type": report_type,
+            "target_node": target_node,
             "source_report": report_type,
-            "compression_timestamp": datetime.now().isoformat()
+            "compression_timestamp": datetime.now().isoformat(),
         }
-        
+
         print(f"✅ {report_type.capitalize()} Intelligence compression complete.")
-        covered_count = len(result.covered_topics.split("\n"))
-        confirmed_count = len(result.confirmed_positions.split("\n"))
-        print(f"   Covered topics: {covered_count} items")
-        print(f"   Confirmed positions: {confirmed_count} items")
-        
-        return {
-            **state,
-            "compressed_intelligence": compressed,
-        }
-        
+        print(f"   Covered topics: {len([x for x in compressed['covered_topics'].split(chr(10)) if x.strip()])} items")
+        print(f"   Key claims w/ sources: {len([x for x in compressed['key_claims_with_sources'].split(chr(10)) if x.strip()])} items")
+
+        # Cache so downstream nodes / resumed runs do not recompute.
+        cached = dict(state.get("compressed_reports", {}))
+        cached[f"{report_type}->{target_node}"] = compressed
+        return {**state, "compressed_intelligence": compressed, "compressed_reports": cached}
+
     except Exception as e:
         print(f"❌ Error compressing {report_type} intelligence: {str(e)}")
         return {
@@ -183,56 +216,133 @@ def compress_intelligence_report(state: GraphState, report_type: str = "subject"
                 "confirmed_positions": "",
                 "available_insights": f"Compression failed: {str(e)}",
                 "profile_context": "",
-                "intelligence_type": report_type
-            }
+                "key_claims_with_sources": "",
+                "open_questions": "",
+                "intelligence_type": report_type,
+                "target_node": target_node,
+            },
         }
 
 
-
 def compress_subject_intelligence(state: GraphState) -> Dict[str, Any]:
-    """
-    Convenience wrapper used by the Intelligence nodes and the research
-    compressor tests.
-
-    It expects the raw subject report to live under ``subject_intelligence_report``
-    (as produced by the summarization / briefing nodes) and compresses it as a
-    "subject" report, returning the same ``{"compressed_intelligence": ...}``
-    shape as :func:`compress_intelligence_report`.
-    """
+    """Convenience wrapper: compress a raw subject report as a 'subject' report."""
     report_content = state.get("subject_intelligence_report", "")
-    sub_state: GraphState = {
-        **state,
-        "reports": {"subject": {"content": report_content}},
-    }
+    sub_state: GraphState = {**state, "reports": {"subject": {"content": report_content}}}
     return compress_intelligence_report(sub_state, "subject")
 
 
-def format_compressed_for_injection(compressed: dict) -> str:
+def get_or_compress(
+    state: GraphState,
+    report_type: str,
+    target_node: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return a cached compression if present, otherwise compute and cache it."""
+    cache = state.get("compressed_reports", {})
+    key = f"{report_type}->{target_node}"
+    if key in cache:
+        return {**state, "compressed_intelligence": cache[key]}
+    return compress_intelligence_report(state, report_type, target_node)
+
+
+# ---------------------------------------------------------------------------
+# Reference-document compression (profiles, briefings) — light, no audience/ecosystem framing.
+# ---------------------------------------------------------------------------
+_REF_SYSTEM = """You are a compression specialist. Summarize the provided reference document into a
+concise briefing that preserves key facts, names, dates, figures, and source references.
+Keep any epistemic markers ([VERIFIED], [INFERRED FROM PATTERNS], etc.) and cite sources where
+present. Do not add analysis, commentary, or recommendations. If the document is already short,
+a light trim is enough."""
+
+_ref_prompt = ChatPromptTemplate.from_messages([
+    ("system", _REF_SYSTEM),
+    ("human", "Reference Document:\n\n{report}"),
+])
+_ref_chain = _ref_prompt | llm
+
+
+def compress_reference_doc(content: str) -> str:
+    """Compress a raw reference document (profile/briefing) for context injection.
+
+    Unlike compress_subject_intelligence, this does NOT impose the subject-intelligence
+    structure, so it is appropriate for profiles and briefings. Short documents are returned
+    unchanged.
     """
-    Formats the compressed intelligence dict into a clean string
-    ready to be injected into downstream nodes' queries.
-    
-    This formatted string provides context about what has already been researched
-    and established, helping downstream nodes build on previous findings.
+    if not content:
+        return ""
+    if len(content) <= 8000:
+        return content
+    try:
+        out = _ref_chain.invoke({"report": content})
+        text = getattr(out, "content", None) or str(out)
+        return text if text else content[:8000]
+    except Exception as e:
+        print(f"❌ Reference compression failed: {str(e)}")
+        return content[:8000]
+
+
+def format_compressed_for_injection(compressed: dict, target_node: Optional[str] = None) -> str:
     """
+    Format the compressed intelligence dict into a string for downstream injection.
+
+    When ``target_node`` is provided, only the sections relevant to that consumer are
+    included, which keeps the (expensive) downstream research prompt focused.
+    """
+    if compressed is None:
+        return ""
+
     intelligence_type = compressed.get("intelligence_type", "unknown").upper()
-    
-    return "\n".join([
+    sections = [
         f"=== {intelligence_type} INTELLIGENCE BRIEFING ===",
         f"(Compressed from {compressed.get('source_report', 'unknown')} report)",
         "",
         "PREVIOUSLY COVERED TOPICS (do not repeat):",
         compressed.get("covered_topics", "No topics covered."),
         "",
-        "ESTABLISHED CONTEXT (use as factual basis):",
-        compressed.get("confirmed_positions", "No confirmed positions."),
-        "",
-        "AVAILABLE INSIGHTS:",
-        compressed.get("available_insights", "No insights available."),
-        "",
-        "PROFILE CONTEXT:",
-        compressed.get("profile_context", "No profile context available."),
+        "KEY CLAIMS WITH SOURCES (reuse as evidence):",
+        compressed.get("key_claims_with_sources", "No claims recorded."),
+    ]
+
+    if target_node == "audience":
+        sections += [
+            "",
+            "CONFIRMED POSITIONS (relevant to audience analysis):",
+            compressed.get("confirmed_positions", "No confirmed positions."),
+            "",
+            "PROFILE CONTEXT (communication style & audience relationships):",
+            compressed.get("profile_context", "No profile context available."),
+        ]
+    elif target_node == "ecosystem":
+        sections += [
+            "",
+            "AVAILABLE INSIGHTS (institutional / systemic context):",
+            compressed.get("available_insights", "No insights available."),
+            "",
+            "PROFILE CONTEXT (institutional role & ecosystem position):",
+            compressed.get("profile_context", "No profile context available."),
+        ]
+    else:
+        sections += [
+            "",
+            "ESTABLISHED CONTEXT (use as factual basis):",
+            compressed.get("confirmed_positions", "No confirmed positions."),
+            "",
+            "AVAILABLE INSIGHTS:",
+            compressed.get("available_insights", "No insights available."),
+            "",
+            "PROFILE CONTEXT:",
+            compressed.get("profile_context", "No profile context available."),
+        ]
+
+    if compressed.get("open_questions"):
+        sections += [
+            "",
+            "OPEN QUESTIONS THE NEXT NODE SHOULD INVESTIGATE (gaps, not repeats):",
+            compressed["open_questions"],
+        ]
+
+    sections += [
         "",
         f"Compressed: {compressed.get('compression_timestamp', 'unknown time')}",
         f"=====================================",
-    ])
+    ]
+    return "\n".join(sections)

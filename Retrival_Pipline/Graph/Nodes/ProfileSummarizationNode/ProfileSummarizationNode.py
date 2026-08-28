@@ -21,6 +21,7 @@ if RETRIVAL_PIPELINE_PATH not in sys.path:
 from Retrival_Pipline.Graph.Nodes.CompressionNode import (
     compress_intelligence_report,
     compress_subject_intelligence,
+    compress_reference_doc,
     format_compressed_for_injection,
 )
 from Retrival_Pipline.Graph.StateGraph import GraphState
@@ -60,15 +61,8 @@ async def summarize_profile(
     if len(profile_content) <= 8000:
         summary_content = profile_content
     else:
-        # Compress using the compressor node
-        compress_state: GraphState = {
-            "subject_intelligence_report": profile_content,
-            "user_initial_query": state.get("user_initial_query", "profile_summary"),
-        }
-        
-        result = compress_subject_intelligence(compress_state)
-        compressed = result.get("compressed_intelligence", {})
-        summary_content = format_compressed_for_injection(compressed) if compressed else profile_content[:8000]
+        # Compress using the reference-doc compressor (profiles are not subject-intel reports)
+        summary_content = compress_reference_doc(profile_content)
     
     # Store the result in state
     reports = state.get("reports", {})
@@ -138,16 +132,12 @@ async def summarize_briefings(
         "SOURCE 1:\n" + briefing_1.strip() + "\n\n"
         "SOURCE 2:\n" + briefing_2.strip()
     )
-    
-    # Compress using the compressor node
-    compress_state: GraphState = {
-        "subject_intelligence_report": combined_report,
-        "user_initial_query": state.get("user_initial_query", "briefing_summary"),
-    }
-    
-    result = compress_subject_intelligence(compress_state)
-    compressed = result.get("compressed_intelligence", {})
-    summary_content = format_compressed_for_injection(compressed) if compressed else combined_report[:8000]
+
+    # Short circuit if already short enough, else compress with the reference-doc compressor.
+    if len(combined_report) <= 8000:
+        summary_content = combined_report
+    else:
+        summary_content = compress_reference_doc(combined_report)
     
     # Store the result in state
     reports = state.get("reports", {})
