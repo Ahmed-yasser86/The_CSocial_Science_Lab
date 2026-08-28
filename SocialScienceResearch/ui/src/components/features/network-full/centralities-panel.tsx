@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -30,9 +31,15 @@ const DEFAULT_VISIBLE: (keyof NodeCentrality)[] = [
 export function CentralitiesPanel({
   runId,
   topN = 25,
+  titleFor,
+  hrefFor,
 }: {
   runId?: string | null;
   topN?: number;
+  /** Maps a node id to a human title (falls back to the raw id). */
+  titleFor?: (id: string) => string | undefined;
+  /** Link target for each node (e.g. the video's detail page). */
+  hrefFor?: (id: string) => string | undefined;
 }) {
   const { data, isLoading, isError, error, refetch } = useNetworkCentralities({
     run_id: runId ?? undefined,
@@ -70,15 +77,21 @@ export function CentralitiesPanel({
     );
   }
 
-  return <CentralitiesTable data={data} topN={topN} />;
+  return (
+    <CentralitiesTable data={data} topN={topN} titleFor={titleFor} hrefFor={hrefFor} />
+  );
 }
 
 function CentralitiesTable({
   data,
   topN,
+  titleFor,
+  hrefFor,
 }: {
   data: NetworkCentralities;
   topN: number;
+  titleFor?: (id: string) => string | undefined;
+  hrefFor?: (id: string) => string | undefined;
 }) {
   const [visible, setVisible] = useState<Set<keyof NodeCentrality>>(
     () => new Set(DEFAULT_VISIBLE),
@@ -174,9 +187,29 @@ function CentralitiesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => (
+            {rows.map((row) => {
+              const nodeTitle = titleFor?.(row.node);
+              const nodeHref = hrefFor?.(row.node);
+              return (
               <TableRow key={row.node}>
-                <TableCell className="font-mono text-xs">{row.node}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {nodeHref ? (
+                    <Link
+                      href={nodeHref}
+                      className="flex min-w-0 flex-col hover:text-primary"
+                      title={row.node}
+                    >
+                      <span className="truncate">{nodeTitle ?? row.node}</span>
+                      {nodeTitle ? (
+                        <span className="truncate text-[10px] font-normal text-muted-foreground">
+                          {row.node}
+                        </span>
+                      ) : null}
+                    </Link>
+                  ) : (
+                    <span className="truncate">{nodeTitle ?? row.node}</span>
+                  )}
+                </TableCell>
                 {measures.map((m) => (
                   <TableCell key={String(m.key)} className="text-right tabular-nums">
                     {formatNumber(row[m.key] as number)}
@@ -188,7 +221,8 @@ function CentralitiesTable({
                     : formatNumber(row.community_id)}
                 </TableCell>
               </TableRow>
-            ))}
+            );
+            })}
           </TableBody>
         </Table>
       </div>

@@ -416,6 +416,7 @@ export interface CommenterNetworkParams {
   weight?: string;
   minShared?: number;
   topN?: number;
+  maxCandidates?: number;
   weighted?: boolean;
 }
 
@@ -432,6 +433,7 @@ export function getCommenterNetworkGraph(
       weight: params.weight,
       min_shared: params.minShared,
       top_n: params.topN,
+      max_candidates: params.maxCandidates,
       weighted: params.weighted,
     })}`,
   );
@@ -453,6 +455,7 @@ export function useCommenterNetworkGraph(
       params.weight ?? "co_comment:jaccard",
       params.minShared ?? "all",
       params.topN ?? "all",
+      params.maxCandidates ?? "all",
       params.weighted ?? true,
     ] as const,
     queryFn: () => getCommenterNetworkGraph(params),
@@ -474,6 +477,7 @@ export function getCommenterNetworkMetrics(
       weight: params.weight,
       min_shared: params.minShared,
       top_n: params.topN,
+      max_candidates: params.maxCandidates,
       weighted: params.weighted,
     })}`,
   );
@@ -495,6 +499,7 @@ export function useCommenterNetworkMetrics(
       params.weight ?? "co_comment:jaccard",
       params.minShared ?? "all",
       params.topN ?? "all",
+      params.maxCandidates ?? "all",
       params.weighted ?? true,
     ] as const,
     queryFn: () => getCommenterNetworkMetrics(params),
@@ -640,6 +645,7 @@ export function getCommenterNetworkRoles(
       weight: params.weight,
       min_shared: params.minShared,
       top_n: params.topN,
+      max_candidates: params.maxCandidates,
       weighted: params.weighted,
     })}`,
   );
@@ -660,6 +666,7 @@ export function useCommenterNetworkRoles(
       params.weight ?? "co_comment:jaccard",
       params.minShared ?? "all",
       params.topN ?? "all",
+      params.maxCandidates ?? "all",
     ] as const,
     queryFn: () => getCommenterNetworkRoles(params),
     enabled: params.enabled ?? true,
@@ -679,6 +686,7 @@ export function getCommenterNetworkCommunityInsights(
       weight: params.weight,
       min_shared: params.minShared,
       top_n: params.topN,
+      max_candidates: params.maxCandidates,
       weighted: params.weighted,
     })}`,
   );
@@ -699,6 +707,7 @@ export function useCommenterNetworkCommunityInsights(
       params.weight ?? "co_comment:jaccard",
       params.minShared ?? "all",
       params.topN ?? "all",
+      params.maxCandidates ?? "all",
     ] as const,
     queryFn: () => getCommenterNetworkCommunityInsights(params),
     enabled: params.enabled ?? true,
@@ -747,6 +756,7 @@ export function getCommenterNetworkCommunities(
       weight: params.weight,
       min_shared: params.minShared,
       top_n: params.topN,
+      max_candidates: params.maxCandidates,
       weighted: params.weighted,
     })}`,
   );
@@ -767,6 +777,7 @@ export function useCommenterNetworkCommunities(
       params.weight ?? "co_comment:jaccard",
       params.minShared ?? "all",
       params.topN ?? "all",
+      params.maxCandidates ?? "all",
     ] as const,
     queryFn: () => getCommenterNetworkCommunities(params),
     enabled: params.enabled ?? true,

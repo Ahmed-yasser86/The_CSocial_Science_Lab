@@ -25,8 +25,10 @@ const ROLE_COLORS: Record<NetworkRole, string> = {
 
 function RolesPanelContent({
   query,
+  onSelectCommenter,
 }: {
   query: ReturnType<typeof useNetworkRoles> | ReturnType<typeof useCommenterNetworkRoles>;
+  onSelectCommenter?: (id: string) => void;
 }) {
   const { data, isLoading, isError, error, refetch } = query as ReturnType<
     typeof useNetworkRoles
@@ -86,9 +88,16 @@ function RolesPanelContent({
               {Object.entries(data.nodes)
                 .filter(([, d]) => d.role === r)
                 .slice(0, 5)
-                .map(([id, d]) => (
+                 .map(([id, d]) => (
                   <li key={id} className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono">{id}</span>
+                    <button
+                      type="button"
+                      disabled={!onSelectCommenter}
+                      onClick={() => onSelectCommenter?.(id)}
+                      className="truncate font-mono text-left hover:text-primary disabled:cursor-default disabled:hover:text-inherit"
+                    >
+                      {id}
+                    </button>
                     <span className="text-muted-foreground">
                       c{d.community_id}
                     </span>
@@ -104,10 +113,12 @@ function RolesPanelContent({
 
 function CommunityInsightsContent({
   query,
+  onSelectCommenter,
 }: {
   query:
     | ReturnType<typeof useNetworkCommunityInsights>
     | ReturnType<typeof useCommenterNetworkCommunityInsights>;
+  onSelectCommenter?: (id: string) => void;
 }) {
   const { data, isLoading, isError, error } = query as ReturnType<
     typeof useNetworkCommunityInsights
@@ -187,7 +198,14 @@ function CommunityInsightsContent({
                     .slice(0, 5)
                     .map((n) => (
                       <li key={n.id} className="flex justify-between gap-2">
-                        <span className="truncate font-mono">{n.label ?? n.id}</span>
+                        <button
+                          type="button"
+                          disabled={!onSelectCommenter}
+                          onClick={() => onSelectCommenter?.(n.id)}
+                          className="truncate font-mono text-left hover:text-primary disabled:cursor-default disabled:hover:text-inherit"
+                        >
+                          {n.label ?? n.id}
+                        </button>
                         <span className="text-muted-foreground">
                           {n.score.toFixed(3)}
                         </span>
@@ -202,7 +220,14 @@ function CommunityInsightsContent({
                     .slice(0, 5)
                     .map((n) => (
                       <li key={n.id} className="flex justify-between gap-2">
-                        <span className="truncate font-mono">{n.label ?? n.id}</span>
+                        <button
+                          type="button"
+                          disabled={!onSelectCommenter}
+                          onClick={() => onSelectCommenter?.(n.id)}
+                          className="truncate font-mono text-left hover:text-primary disabled:cursor-default disabled:hover:text-inherit"
+                        >
+                          {n.label ?? n.id}
+                        </button>
                         <span className="text-muted-foreground">
                           {n.score.toFixed(3)}
                         </span>
@@ -242,24 +267,40 @@ export function CommenterRolesPanel({
   runId,
   projection,
   weight,
-}: CommenterNetworkParams) {
+  onSelectCommenter,
+  minShared,
+  topN,
+  maxCandidates,
+}: CommenterNetworkParams & { onSelectCommenter?: (id: string) => void }) {
   const query = useCommenterNetworkRoles({
     runId,
     projection,
     weight,
+    minShared,
+    topN,
+    maxCandidates,
   });
-  return <RolesPanelContent query={query} />;
+  return <RolesPanelContent query={query} onSelectCommenter={onSelectCommenter} />;
 }
 
 export function CommenterCommunityInsightsPanel({
   runId,
   projection,
   weight,
-}: CommenterNetworkParams) {
+  onSelectCommenter,
+  minShared,
+  topN,
+  maxCandidates,
+}: CommenterNetworkParams & { onSelectCommenter?: (id: string) => void }) {
   const query = useCommenterNetworkCommunityInsights({
     runId,
     projection,
     weight,
+    minShared,
+    topN,
+    maxCandidates,
   });
-  return <CommunityInsightsContent query={query} />;
+  return (
+    <CommunityInsightsContent query={query} onSelectCommenter={onSelectCommenter} />
+  );
 }

@@ -13,6 +13,7 @@ import {
   Search,
   Sparkles,
   Users,
+  X,
 } from "lucide-react";
 import { ErrorState, LoadingState } from "@/components/features/state";
 import { CHART_VARS, resolveChartColors } from "@/lib/colors";
@@ -139,6 +140,8 @@ export interface NetworkGraphProps {
   communityId?: number | "all";
   /** Called whenever the community filter changes (keeps external controls in sync). */
   onCommunityIdChange?: (id: number | "all") => void;
+  /** When true, edges carry meaningful weights; enables click-to-inspect edge weight. */
+  weighted?: boolean;
 }
 
 const roleColors: Record<GraphNodeKind, string> = {
@@ -269,7 +272,7 @@ export interface GraphNodeFilter {
 /** Label rendering policy: hover-only (default) or always-on. */
 export type GraphLabelsMode = "hover" | "always";
 
-const MIN_HIT_RADIUS = 9;
+const MIN_HIT_RADIUS = 14;
 
 /** Decide whether a node's composite text label is drawn this frame.
  * Labels are hidden by default to declutter dense graphs; they appear for the
@@ -351,6 +354,7 @@ export function NetworkGraph({
   onInspectNodeChange,
   communityId: controlledCommunityId,
   onCommunityIdChange,
+  weighted,
 }: NetworkGraphProps) {
   const { theme } = useTheme();
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
@@ -376,6 +380,7 @@ export function NetworkGraph({
     else setInternalInspectId(id);
   }
   const [scraping, setScraping] = useState(false);
+  const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
 
   // Display preferences: node size is persisted in the lab session so it
   // survives reloads across Lab/ego/channel views; labels default to
@@ -447,6 +452,12 @@ export function NetworkGraph({
 
   const hasActiveFilters =
     search.trim() !== "" || minDegree > 0 || kinds.length > 0 || communityId !== "all";
+
+  // Drop the inspected edge when the underlying graph changes.
+  useEffect(() => {
+    setSelectedLink(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key on content, not array identity
+  }, [linksKey]);
 
   const visibleNodes = useMemo(
     () =>
@@ -610,11 +621,14 @@ export function NetworkGraph({
     if (graphData.nodes.length === 0) return;
     const g = graphRef.current;
     if (!g) return;
+    // Moderate repulsion keeps the graph from collapsing; the custom hit area
+    // (constant in screen px) is what makes every node individually clickable,
+    // so we avoid an aggressive charge that flings nodes off-screen.
     const charge = g.d3Force?.("charge");
-    if (charge?.strength) charge.strength(-300);
+    if (charge?.strength) charge.strength(-120);
     const link = g.d3Force?.("link");
-    if (link?.distance) link.distance(110);
-    if (link?.strength) link.strength(0.2);
+    if (link?.distance) link.distance(90);
+    if (link?.strength) link.strength(0.25);
   }, [graphData]);
 
   useEffect(() => {
@@ -994,25 +1008,26 @@ export function NetworkGraph({
               node: { id?: string | number; x?: number; y?: number },
               color: string,
               ctx: CanvasRenderingContext2D,
+              globalScale: number,
             ) => {
               const id = String(node.id ?? "");
+              const deg =
+                (nodeById.get(id)?.in_degree ?? 0) +
+                (nodeById.get(id)?.out_degree ?? 0);
+              // Hit area is kept constant in SCREEN pixels regardless of zoom:
+              // the canvas context is pre-scaled by globalScale, so divide the
+              // desired screen radius by it. This keeps small/far nodes clickable
+              // even after the graph spreads out and zoomToFit zooms the view out.
+              const screenHit = nodeHitRadius(deg, nodeSizeScale);
+              const radius = globalScale > 0 ? screenHit / globalScale : screenHit;
               ctx.fillStyle = color;
               ctx.beginPath();
-              ctx.arc(
-                node.x ?? 0,
-                node.y ?? 0,
-                nodeHitRadius(
-                  (nodeById.get(id)?.in_degree ?? 0) +
-                    (nodeById.get(id)?.out_degree ?? 0),
-                  nodeSizeScale,
-                ),
-                0,
-                2 * Math.PI,
-              );
+              ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
               ctx.fill();
             }}
             linkColor={linkColor}
             linkWidth={1.2}
+            linkHoverPrecision={3}
             cooldownTicks={220}
             d3VelocityDecay={0.86}
             onNodeClick={(d: unknown) => {
@@ -1021,7 +1036,12 @@ export function NetworkGraph({
               setInspectId(id);
               setHoveredId(null);
               setTooltipPos(null);
+              setSelectedLink(null);
             }}
+            onLinkClick={(l: unknown) => {
+              setSelectedLink(l as GraphLink);
+            }}
+            onBackgroundClick={() => setSelectedLink(null)}
             onNodeHover={handleHover}
             onNodeDragEnd={(node: {
               id?: string | number;
@@ -1065,6 +1085,31 @@ export function NetworkGraph({
             )}
           </div>
         )}
+
+        {weighted && selectedLink ? (
+          <div className="absolute bottom-3 left-3 z-10 max-w-xs rounded-md border bg-popover/95 p-3 text-xs text-popover-foreground shadow-md">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="font-medium">Edge weight</span>
+              <button
+                type="button"
+                onClick={() => setSelectedLink(null)}
+                className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Dismiss edge details"
+              >
+                <X className="size-3.5" aria-hidden />
+              </button>
+            </div>
+            <div className="break-all font-mono">
+              {selectedLink.source} → {selectedLink.target}
+            </div>
+            <div className="mt-1 text-muted-foreground">
+              weight ={" "}
+              {typeof selectedLink.weight === "number"
+                ? selectedLink.weight.toFixed(4)
+                : "—"}
+            </div>
+          </div>
+        ) : null}
 
         {hoveredNode && tooltipPos && (
           <div
@@ -1253,7 +1298,7 @@ export function NetworkGraph({
 /** Drawer body for an audience (commenter) node: shows the commenter's recent
  * comments and the videos/channels they commented on (fetched from the
  * `/network/commenters/{handle}/detail` endpoint). */
-function CommenterDetailDrawer({
+export function CommenterDetailDrawer({
   handle,
   loader,
 }: {

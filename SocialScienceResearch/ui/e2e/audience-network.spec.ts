@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // N2 / WS7 — Lab family selector exposes the audience (commenter) network view.
 // This smoke test only needs the frontend: with no collection run selected the
-// audience view renders its "select a run" empty state without hitting the API.
+// audience view renders its "Select a scope" empty state without hitting the API.
 test.describe("Audience network family (N2)", () => {
   test("family toggle switches the Lab to the audience network view", async ({
     page,
@@ -20,9 +20,7 @@ test.describe("Audience network family (N2)", () => {
 
     await audienceToggle.click();
 
-    await expect(
-      page.getByText("Select a collection run"),
-    ).toBeVisible();
+    await expect(page.getByText("Select a scope")).toBeVisible();
 
     // Projection control is present once a run is scoped; here we only assert
     // the toggle wiring by switching back to the recommendation family.

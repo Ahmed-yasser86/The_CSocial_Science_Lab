@@ -65,7 +65,7 @@ from SocialScienceResearch.services.weight_spec import (
 # explicit module-level dict + lock instead.
 _COMMENTER_BUILD_CACHE: dict[tuple, tuple[float, "_BuiltGraph"]] = {}
 _COMMENTER_BUILD_LOCKS: dict[tuple, threading.Lock] = {}
-_COMMENTER_BUILD_TTL = 300.0
+_COMMENTER_BUILD_TTL = 900.0
 _COMMENTER_BUILD_MAX = 256
 
 
@@ -207,6 +207,14 @@ class CommenterNetworkService:
     # pairs, bounding the O(k^2) combination blow-up on viral videos. Small
     # scopes stay exact; only pathological high-degree nodes are sampled.
     _MAX_PER_ENTITY = 300
+    # Hard ceiling on the number of candidate commenters considered when building
+    # the co-comment projection. Two commenters can only share >= min_shared
+    # videos if each commented on >= min_shared videos, so we first drop every
+    # commenter below that threshold (eliminating the huge long tail on large
+    # scopes). If the remaining set is still enormous we keep only the most
+    # active commenters; the UI renders at most top_n neighbours per node, so
+    # the low-activity tail never changes the visible core.
+    _TOP_CANDIDATE_CAP = 2000
     # Above this many nodes, betweenness switches to k-sampling (matches
     # network_analytics_service._APPROX_NODE_THRESHOLD) so metrics/roles/
     # community-insights don't hang on large audience graphs.
@@ -232,6 +240,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
     ) -> CommenterNetworkGraph:
         """Interactive audience graph for the requested projection/scope."""
         built = self._compute(
@@ -241,6 +250,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         nodes = [
             CommenterGraphNode(
@@ -286,6 +296,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
     ) -> CommenterNetworkMetrics:
         """Aggregate audience-network statistics + bridge/core/prolific ranks."""
         built = self._compute(
@@ -295,6 +306,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         G = built.G
         metrics = CommenterNetworkMetrics(
@@ -359,6 +371,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
     ) -> CommenterNetworkCentralities:
         """Full per-node centrality battery for the audience graph (N0/N3)."""
         built = self._compute(
@@ -368,6 +381,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         battery = centrality_battery(built.G, weighted=built.weighted)
         nodes = {
@@ -402,6 +416,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
         role_model: str = "core_broker_periphery_bridge",
     ) -> dict[str, Any]:
         """Structural roles for the audience graph (N3).
@@ -417,6 +432,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         if built.G.number_of_nodes() == 0:
             return {
@@ -464,6 +480,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
     ) -> dict[str, Any]:
         """Per-community composition for the audience graph (N3).
 
@@ -478,6 +495,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         if built.G.number_of_nodes() == 0:
             return {"communities": [], "algorithm": "networkx", "computed_at": _now()}
@@ -525,6 +543,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
         """Identify a commenter and list their comments within the scope.
@@ -639,6 +658,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
         min_size: int = 1,
     ) -> dict[str, Any]:
         """Communities as first-class graph entities for the audience network (N4).
@@ -656,6 +676,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         if built.G.number_of_nodes() == 0:
             return {
@@ -780,6 +801,7 @@ class CommenterNetworkService:
         projection: str = "commenter",
         weight: str = "co_comment:jaccard",
         weighted: bool = True,
+        max_candidates: int | None = None,
     ) -> tuple[str, str | bytes, str]:
         """Serialize the audience graph via the recommendation serializers.
 
@@ -795,6 +817,7 @@ class CommenterNetworkService:
             projection=projection,
             weight=weight,
             weighted=weighted,
+            max_candidates=max_candidates,
         )
         gnodes = [
             GraphNode(
@@ -931,6 +954,7 @@ class CommenterNetworkService:
         projection: str,
         weight: str | None,
         weighted: bool,
+        max_candidates: int | None = None,
     ) -> _BuiltGraph:
         ws = parse_weight_spec(weight) if weight else parse_weight_spec("co_comment:jaccard")
         cache_key = (
@@ -940,6 +964,7 @@ class CommenterNetworkService:
             tuple(sorted(channel_ids or [])),
             tuple(sorted(run_ids or [])),
             bool(weighted),
+            int(max_candidates or 0),
         )
         cached = _COMMENTER_BUILD_CACHE.get(cache_key)
         if cached is not None and (time.time() - cached[0]) < _COMMENTER_BUILD_TTL:
@@ -953,7 +978,15 @@ class CommenterNetworkService:
             cached = _COMMENTER_BUILD_CACHE.get(cache_key)
             if cached is not None and (time.time() - cached[0]) < _COMMENTER_BUILD_TTL:
                 return cached[1]
-            built = self._build(projection, ws, weighted, video_ids, channel_ids, run_ids)
+            built = self._build(
+                projection,
+                ws,
+                weighted,
+                video_ids,
+                channel_ids,
+                run_ids,
+                max_candidates,
+            )
             _COMMENTER_BUILD_CACHE[cache_key] = (time.time(), built)
             while len(_COMMENTER_BUILD_CACHE) > _COMMENTER_BUILD_MAX:
                 _COMMENTER_BUILD_CACHE.pop(next(iter(_COMMENTER_BUILD_CACHE)))
@@ -967,6 +1000,7 @@ class CommenterNetworkService:
         video_ids: list[str] | None,
         channel_ids: list[str] | None,
         run_ids: list[str] | None,
+        max_candidates: int | None = None,
     ) -> _BuiltGraph:
         video_set, channel_set, video_channel = self._scope_sets(
             video_ids, channel_ids, run_ids
@@ -1008,6 +1042,7 @@ class CommenterNetworkService:
                 comment_counts,
                 ws,
                 min_shared,
+                max_candidates,
             )
         elif projection == "co_comment_video":
             self._add_bipartite(
@@ -1113,14 +1148,43 @@ class CommenterNetworkService:
         comment_counts: Counter,
         ws: WeightSpec,
         min_shared: int,
+        max_candidates: int | None = None,
     ) -> None:
+        # User-selectable ceiling on how many candidate commenters are
+        # considered when building the co-comment projection. Higher = more
+        # complete graph but longer compute time. Clamped to a hard safety
+        # ceiling so a huge value can't exhaust the worker.
+        hard_cap = 50000
+        cap = self._TOP_CANDIDATE_CAP
+        if max_candidates is not None:
+            cap = max(1, min(int(max_candidates), hard_cap))
+        # A commenter can only share >= min_shared videos with another
+        # commenter if it itself commented on at least min_shared videos.
+        # Pre-filtering to that set removes the enormous long tail (most
+        # commenters appear on a single video) before the O(k^2) per-video
+        # pair enumeration, which is the dominant cost on large scopes.
+        cand: set[str] = {
+            c for c, vids in commenter_videos.items() if len(vids) >= min_shared
+        }
+        # For min_shared == 1 every commenter qualifies, so additionally bound
+        # the candidate set to the most active commenters when it exceeds cap.
+        if len(cand) > cap:
+            cand = set(
+                sorted(
+                    cand,
+                    key=lambda c: comment_counts.get(c, 0),
+                    reverse=True,
+                )[:cap]
+            )
         co: Counter = Counter()
         for vid, authors in video_commenters.items():
             if len(authors) > self._MAX_PER_ENTITY:
                 authors = dict(
                     sorted(authors.items(), key=lambda kv: -kv[1])[: self._MAX_PER_ENTITY]
                 )
-            ks = list(authors)
+            ks = [a for a in authors if a in cand]
+            if len(ks) < 2:
+                continue
             for a, b in combinations(ks, 2):
                 co[(a, b)] += 1
         pairs: list[tuple[str, str, float, int]] = []

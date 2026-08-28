@@ -170,6 +170,13 @@ def commenter_network_graph(
     min_shared: int | None = Query(None, ge=1, description="Override weight spec min_shared"),
     top_n: int | None = Query(None, ge=1, le=1000, description="Override weight spec top_n fan-out cap"),
     weighted: bool = Query(True, description="Use the spec's weights for community/centrality math"),
+    max_candidates: int | None = Query(
+        None,
+        ge=1,
+        le=50000,
+        description="Cap candidate commenters for the co-comment build. Higher = "
+        "more complete graph but longer compute time.",
+    ),
 ):
     """Audience (commenter) network graph for the chosen projection + scope (N2/WS7).
 
@@ -191,6 +198,7 @@ def commenter_network_graph(
         projection=projection,
         weight=spec,
         weighted=weighted,
+        max_candidates=max_candidates,
     )
 
 
@@ -214,6 +222,13 @@ def commenter_network_metrics(
     min_shared: int | None = Query(None, ge=1),
     top_n: int | None = Query(None, ge=1, le=1000),
     weighted: bool = Query(True),
+    max_candidates: int | None = Query(
+        None,
+        ge=1,
+        le=50000,
+        description="Cap candidate commenters for the co-comment build. Higher = "
+        "more complete graph but longer compute time.",
+    ),
 ):
     """Audience-network aggregate statistics + bridge / core / prolific ranks (N2/WS7).
 
@@ -234,6 +249,7 @@ def commenter_network_metrics(
         projection=projection,
         weight=spec,
         weighted=weighted,
+        max_candidates=max_candidates,
     )
 
 
@@ -256,6 +272,13 @@ def commenter_network_roles(
     min_shared: int | None = Query(None, ge=1),
     top_n: int | None = Query(None, ge=1, le=1000),
     weighted: bool = Query(True),
+    max_candidates: int | None = Query(
+        None,
+        ge=1,
+        le=50000,
+        description="Cap candidate commenters for the co-comment build. Higher = "
+        "more complete graph but longer compute time.",
+    ),
     role_model: str = Query("core_broker_periphery_bridge"),
 ):
     """Structural roles for the audience graph (N3): core / broker / bridge / periphery."""
@@ -272,6 +295,7 @@ def commenter_network_roles(
         projection=projection,
         weight=spec,
         weighted=weighted,
+        max_candidates=max_candidates,
         role_model=role_model,
     )
 
@@ -295,6 +319,13 @@ def commenter_network_community_insights(
     min_shared: int | None = Query(None, ge=1),
     top_n: int | None = Query(None, ge=1, le=1000),
     weighted: bool = Query(True),
+    max_candidates: int | None = Query(
+        None,
+        ge=1,
+        le=50000,
+        description="Cap candidate commenters for the co-comment build. Higher = "
+        "more complete graph but longer compute time.",
+    ),
 ):
     """Per-community composition for the audience graph (N3)."""
     if projection not in _COMMENTER_PROJECTIONS:
@@ -310,6 +341,7 @@ def commenter_network_community_insights(
         projection=projection,
         weight=spec,
         weighted=weighted,
+        max_candidates=max_candidates,
     )
 
 
@@ -332,6 +364,13 @@ def commenter_network_communities(
     min_shared: int | None = Query(None, ge=1),
     top_n: int | None = Query(None, ge=1, le=1000),
     weighted: bool = Query(True),
+    max_candidates: int | None = Query(
+        None,
+        ge=1,
+        le=50000,
+        description="Cap candidate commenters for the co-comment build. Higher = "
+        "more complete graph but longer compute time.",
+    ),
     min_size: int = Query(1, ge=1),
 ):
     """Communities as graph entities for the audience network: member node-ids (N4)."""
@@ -348,6 +387,7 @@ def commenter_network_communities(
         projection=projection,
         weight=spec,
         weighted=weighted,
+        max_candidates=max_candidates,
         min_size=min_size,
     )
 

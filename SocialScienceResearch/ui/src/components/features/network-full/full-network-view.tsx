@@ -393,6 +393,7 @@ export function FullNetworkView() {
     setGraphConnected(null);
     setGraphScraped(null);
     setGraphIncludeSubRuns(false);
+    setGraphCommunityId("all");
   };
 
   const scrapeRunMutation = useScrapeNetwork("run");
@@ -534,6 +535,7 @@ export function FullNetworkView() {
   // N4: derive communities client-side from the already-fetched graph so the
   // UI can isolate any community as a highlighted sub-graph.
   const [highlightedCommunityId, setHighlightedCommunityId] = useState<string | null>(null);
+  const [graphCommunityId, setGraphCommunityId] = useState<number | "all">("all");
   const graphCommunities = useMemo<CommunityEntity[]>(() => {
     if (!graphQuery.data) return [];
     const nodes =
@@ -832,7 +834,11 @@ export function FullNetworkView() {
                   hrefFor={(id) => `/network/videos/${id}`}
                 />
               </div>
-              <CentralitiesPanel runId={runId} />
+              <CentralitiesPanel
+                runId={runId}
+                titleFor={(id) => videoTitleMap.get(id)}
+                hrefFor={(id) => `/network/videos/${id}`}
+              />
             </>
           ) : (
             <LoadingState label="Loading network metrics…" />
@@ -1085,15 +1091,61 @@ export function FullNetworkView() {
             ) : graphProps ? (
               <>
                 {graphCommunities.length > 0 ? (
-                  <div className="mb-3">
+                  <div className="mb-3 flex flex-wrap items-center gap-3">
                     <CommunityHighlightControls
                       communities={graphCommunities}
                       selectedId={highlightedCommunityId}
                       onSelect={setHighlightedCommunityId}
                     />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Hide other communities
+                      </Label>
+                      <div
+                        role="tablist"
+                        aria-label="Hide other communities"
+                        className="flex flex-wrap items-center gap-1"
+                      >
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={graphCommunityId === "all"}
+                          onClick={() => setGraphCommunityId("all")}
+                          className={
+                            "rounded-full border px-2.5 py-0.5 text-xs outline-none focus-visible:border-ring " +
+                            (graphCommunityId === "all"
+                              ? "border-primary bg-primary/10 text-primary"
+                              : "border-border text-muted-foreground hover:bg-muted")
+                          }
+                        >
+                          All
+                        </button>
+                        {graphCommunities.map((c) => (
+                          <button
+                            key={c.community_id}
+                            type="button"
+                            role="tab"
+                            aria-selected={graphCommunityId === c.community_id}
+                            onClick={() => setGraphCommunityId(c.community_id)}
+                            className={
+                              "rounded-full border px-2.5 py-0.5 text-xs outline-none focus-visible:border-ring " +
+                              (graphCommunityId === c.community_id
+                                ? "border-primary bg-primary/10 text-primary"
+                                : "border-border text-muted-foreground hover:bg-muted")
+                            }
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
-                <NetworkGraph {...graphProps} />
+                <NetworkGraph
+                  {...graphProps}
+                  communityId={graphCommunityId}
+                  onCommunityIdChange={setGraphCommunityId}
+                />
               </>
             ) : (
               <LoadingState label="Loading network graph…" />

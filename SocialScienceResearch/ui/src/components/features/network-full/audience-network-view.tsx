@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +16,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { EmptyState, ErrorState, LoadingState } from "@/components/features/state";
 import {
   NetworkGraph,
+  CommenterDetailDrawer,
+  communityColorFor,
   type GraphLink,
   type GraphNode,
 } from "@/components/features/network-graph";
+import {
+  Drawer,
+  DrawerContent,
+} from "@/components/ui/drawer";
 import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
 import {
   getCommenterDetail,
@@ -79,6 +90,7 @@ export function AudienceNetworkView({
   const [weight, setWeight] = useState<string>("co_comment:jaccard");
   const [minShared, setMinShared] = useState<number>(2);
   const [topN, setTopN] = useState<number>(200);
+  const [maxCandidates, setMaxCandidates] = useState<number>(2000);
   const [weighted, setWeighted] = useState<boolean>(true);
 
   const hasScope = !!runId || !!(jobIds && jobIds.length > 0);
@@ -106,6 +118,7 @@ export function AudienceNetworkView({
     weight,
     minShared,
     topN,
+    maxCandidates,
     weighted,
     enabled: hasScope,
   });
@@ -116,6 +129,7 @@ export function AudienceNetworkView({
     weight,
     minShared,
     topN,
+    maxCandidates,
     weighted,
     enabled: hasScope,
   });
@@ -204,23 +218,116 @@ export function AudienceNetworkView({
             <Select
               value={projection}
               onValueChange={(v) => setProjection(v as CommenterProjection)}
-              items={PROJECTIONS}
-            />
+            >
+              <SelectTrigger className="w-56" aria-label="Select projection">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROJECTIONS.map((p) => (
+                  <SelectItem key={p.value} value={p.value}>
+                    {p.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Weight
-            </Label>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Weight
+              </Label>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="What is weight?"
+                      className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </PopoverTrigger>
+                <PopoverContent className="max-w-xs space-y-2 text-xs leading-relaxed">
+                  <p>
+                    Nodes are <span className="font-medium">commenters</span>. An
+                    edge links two commenters when they co-commented on the same
+                    videos or channels.
+                  </p>
+                  <p>
+                    The edge <span className="font-medium">weight</span> scores
+                    how similar their commenting behaviour is, by the chosen
+                    metric:
+                  </p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    <li>
+                      <span className="font-medium">Jaccard</span> — shared ÷
+                      union of their videos (0–1).
+                    </li>
+                    <li>
+                      <span className="font-medium">Overlap</span> — shared ÷ the
+                      smaller commenter&apos;s video set (0–1).
+                    </li>
+                    <li>
+                      <span className="font-medium">Intersection / Counts</span> —
+                      raw number of shared videos.
+                    </li>
+                  </ul>
+                  <p>
+                    The <span className="font-medium">Weighted</span> toggle
+                    decides whether those strengths feed the centrality / role /
+                    community math (ON) or every link counts equally (OFF).
+                  </p>
+                </PopoverContent>
+              </Popover>
+            </div>
             <Select
               value={weight}
               onValueChange={(v) => setWeight((v as string) ?? "co_comment:jaccard")}
-              items={CO_COMMENT_WEIGHTS}
-            />
+            >
+              <SelectTrigger className="w-56" aria-label="Select weight metric">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CO_COMMENT_WEIGHTS.map((w) => (
+                  <SelectItem key={w.value} value={w.value}>
+                    {w.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Min shared
-            </Label>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Min shared
+              </Label>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="What is min shared?"
+                      className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </PopoverTrigger>
+                <PopoverContent className="max-w-xs space-y-2 text-xs leading-relaxed">
+                  <p>
+                    Only commenter pairs that co-commented on at least this many
+                    shared videos become linked. A pair with fewer shared videos
+                    is dropped, so weak one-off overlaps don&apos;t create edges.
+                  </p>
+                  <p>
+                    Higher values keep only the strongest, most consistent
+                    co-comment relationships; lower values let looser overlaps
+                    through.
+                  </p>
+                </PopoverContent>
+              </Popover>
+            </div>
             <Input
               type="number"
               min={1}
@@ -246,6 +353,30 @@ export function AudienceNetworkView({
               )}
               className="w-24"
             />
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Max candidates
+              </Label>
+              <Info className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+            <Input
+              type="number"
+              min={100}
+              max={50000}
+              value={maxCandidates}
+              onChange={(e) =>
+                setMaxCandidates(
+                  Math.min(50000, Math.max(100, Number(e.target.value) || 100)),
+                )
+              }
+              className="w-28"
+            />
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              Cap on commenters scanned for co-comment edges. Higher = more
+              complete graph, but a longer compute time (larger runs may time out).
+            </p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
@@ -311,11 +442,46 @@ export function AudienceNetworkView({
                   <Badge variant="outline">
                     {graphQuery.data.community_count} communities
                   </Badge>
-                  {graphQuery.data.modularity != null ? (
-                    <Badge variant="outline">
-                      Q={graphQuery.data.modularity.toFixed(3)}
-                    </Badge>
-                  ) : null}
+                  {(() => {
+                    const q = graphQuery.data.modularity;
+                    if (q == null) return null;
+                    return (
+                      <>
+                        <Badge variant="outline">Q={q.toFixed(3)}</Badge>
+                        <Popover>
+                          <PopoverTrigger
+                            render={
+                              <button
+                                type="button"
+                                aria-label="What is Q (modularity)?"
+                                className="rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                              />
+                            }
+                          >
+                            <Info className="size-3.5" aria-hidden />
+                          </PopoverTrigger>
+                          <PopoverContent className="max-w-xs space-y-2 text-xs leading-relaxed">
+                            <p>
+                              <span className="font-medium">Q (modularity)</span>{" "}
+                              scores how strongly the network splits into separate
+                              communities.
+                            </p>
+                            <p>
+                              Roughly −0.5 to 1: 0 means no better than random;
+                              higher means nodes connect far more within their
+                              community than by chance.
+                            </p>
+                            <p>
+                              <span className="font-medium">Q={q.toFixed(3)}</span>{" "}
+                              here is very high — the commenter groups are tightly
+                              and cleanly separated. Above ~0.3 signals clear
+                              structure; above 0.7 is unusually strong.
+                            </p>
+                          </PopoverContent>
+                        </Popover>
+                      </>
+                    );
+                  })()}
                 </div>
                 <NetworkGraph
                   nodes={graphNodes}
@@ -326,6 +492,7 @@ export function AudienceNetworkView({
                   loadCommenterDetail={loadCommenterDetail}
                   inspectNodeId={inspectNodeId}
                   onInspectNodeChange={setInspectNodeId}
+                  weighted={weighted}
                 />
                 {audienceCommunities.length > 0 ? (
                   <div className="mt-3">
@@ -337,12 +504,22 @@ export function AudienceNetworkView({
                   </div>
                 ) : null}
                 <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  {(["commenter", "video", "channel"] as const).map((k) => (
-                    <span key={k} className="inline-flex items-center gap-1.5">
-                      <span className="inline-block size-2.5 rounded-full bg-border" />
-                      {k}
-                    </span>
-                  ))}
+                  {audienceCommunities.length > 0 ? (
+                    audienceCommunities.map((c) => (
+                      <span
+                        key={c.id}
+                        className="inline-flex items-center gap-1.5"
+                      >
+                        <span
+                          className="inline-block size-2.5 rounded-full"
+                          style={{ backgroundColor: communityColorFor(c.community_id) }}
+                        />
+                        {c.label}
+                      </span>
+                    ))
+                  ) : (
+                    <span>No community coloring</span>
+                  )}
                 </div>
                 {reproducibilityFooter}
               </>
@@ -433,7 +610,15 @@ export function AudienceNetworkView({
         </TabsContent>
 
         <TabsContent value="roles" className="mt-4 space-y-4">
-          <CommenterRolesPanel runId={runId} projection={projection} weight={weight} />
+          <CommenterRolesPanel
+            runId={runId}
+            projection={projection}
+            weight={weight}
+            minShared={minShared}
+            topN={topN}
+            maxCandidates={maxCandidates}
+            onSelectCommenter={setInspectNodeId}
+          />
         </TabsContent>
 
         <TabsContent value="communities" className="mt-4 space-y-4">
@@ -441,9 +626,31 @@ export function AudienceNetworkView({
             runId={runId}
             projection={projection}
             weight={weight}
+            minShared={minShared}
+            topN={topN}
+            maxCandidates={maxCandidates}
+            onSelectCommenter={setInspectNodeId}
           />
         </TabsContent>
       </Tabs>
+
+      {/* Commenter detail drawer, available from any tab (the graph's own
+          drawer only exists while the Graph tab is mounted). */}
+      <Drawer
+        open={tab !== "graph" && !!inspectNodeId}
+        onOpenChange={(open) => {
+          if (!open) setInspectNodeId(null);
+        }}
+      >
+        <DrawerContent side="right">
+          {inspectNodeId ? (
+            <CommenterDetailDrawer
+              handle={inspectNodeId}
+              loader={loadCommenterDetail}
+            />
+          ) : null}
+        </DrawerContent>
+      </Drawer>
     </div>
   );
 }
