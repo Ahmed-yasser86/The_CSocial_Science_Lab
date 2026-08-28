@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -164,8 +164,10 @@ def compress_intelligence_report(state: GraphState, report_type: str = "subject"
         }
         
         print(f"✅ {report_type.capitalize()} Intelligence compression complete.")
-        print(f"   Covered topics: {len(result.covered_topics.split('\n'))} items")
-        print(f"   Confirmed positions: {len(result.confirmed_positions.split('\n'))} items")
+        covered_count = len(result.covered_topics.split("\n"))
+        confirmed_count = len(result.confirmed_positions.split("\n"))
+        print(f"   Covered topics: {covered_count} items")
+        print(f"   Confirmed positions: {confirmed_count} items")
         
         return {
             **state,
@@ -185,6 +187,24 @@ def compress_intelligence_report(state: GraphState, report_type: str = "subject"
             }
         }
 
+
+
+def compress_subject_intelligence(state: GraphState) -> Dict[str, Any]:
+    """
+    Convenience wrapper used by the Intelligence nodes and the research
+    compressor tests.
+
+    It expects the raw subject report to live under ``subject_intelligence_report``
+    (as produced by the summarization / briefing nodes) and compresses it as a
+    "subject" report, returning the same ``{"compressed_intelligence": ...}``
+    shape as :func:`compress_intelligence_report`.
+    """
+    report_content = state.get("subject_intelligence_report", "")
+    sub_state: GraphState = {
+        **state,
+        "reports": {"subject": {"content": report_content}},
+    }
+    return compress_intelligence_report(sub_state, "subject")
 
 
 def format_compressed_for_injection(compressed: dict) -> str:

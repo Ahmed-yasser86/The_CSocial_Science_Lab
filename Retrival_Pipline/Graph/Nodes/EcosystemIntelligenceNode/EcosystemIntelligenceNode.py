@@ -23,6 +23,7 @@ if RETRIVAL_PIPELINE_PATH not in sys.path:
 from Retrival_Pipline.Graph.Nodes.GPT_ResearcherNode.ResearchNode import make_research
 from Retrival_Pipline.Graph.Nodes.CompressionNode import (
     compress_intelligence_report,
+    compress_subject_intelligence,
     format_compressed_for_injection,
 )
 from Retrival_Pipline.Graph.StateGraph import GraphState
@@ -402,12 +403,13 @@ async def run_ecosystem_intelligence(
 
     print("⏳ Running Ecosystem Intelligence Agent...")
     result = await make_research(research_state)
-    
+
     # Extract results
-    identity_result = result.get("identity_data", {})
-    report = identity_result.get("report", "")
-    sources = identity_result.get("sources", [])
-    costs = identity_result.get("costs", 0.0)
+    candidates = result.get("profile_candidates", [])
+    candidate = candidates[0] if candidates else {}
+    report = candidate.get("full_report", "")
+    sources = candidate.get("sources", [])
+    costs = candidate.get("costs", 0.0)
     
     # Store the result in state.reports
     if report:

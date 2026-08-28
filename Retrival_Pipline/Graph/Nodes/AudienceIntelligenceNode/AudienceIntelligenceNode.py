@@ -22,6 +22,7 @@ if RETRIVAL_PIPELINE_PATH not in sys.path:
 from Retrival_Pipline.Graph.Nodes.GPT_ResearcherNode.ResearchNode import make_research
 from Retrival_Pipline.Graph.Nodes.CompressionNode import (
     compress_intelligence_report,
+    compress_subject_intelligence,
     format_compressed_for_injection,
 )
 from Retrival_Pipline.Graph.StateGraph import GraphState
@@ -451,27 +452,13 @@ async def run_audience_intelligence(
         # Fallback for when running from node directory
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "Chains", "tests"))
         from mcp_config import build_audience_mcp_configs, load_environment
-    
-    load_environment()
-    mcp_configs = build_audience_mcp_configs()
 
-    # Build audience query with profile + combined summary
-    full_query = build_audience_query(subject_name, profile_summary, briefing_summary)
-
-    # Build audience query with profile + combined summary
-    full_query = build_audience_query(subject_name, subject_profile, combined_summary)
-
-    # Load environment and MCP configs
-    try:
-        from Retrival_Pipline.Graph.Chains.tests.mcp_config import build_audience_mcp_configs, load_environment
-    except ImportError:
-        # Fallback for when running from node directory
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "Chains", "tests"))
-        from mcp_config import build_audience_mcp_configs, load_environment
-    
     load_environment()
     mcp_configs = state.get("mcp_configs", build_audience_mcp_configs())
     mcp_strategy = state.get("mcp_strategy", "fast")
+
+    # Build audience query from the resolved profile + briefing summaries
+    full_query = build_audience_query(subject_name, profile_summary, briefing_summary)
     
     # Prepare the state for research
     research_state: GraphState = {
@@ -496,16 +483,17 @@ async def run_audience_intelligence(
     }
 
     print("⏳ Running Audience Intelligence Agent...")
-    print(f"   📄 Profile: {os.path.basename(profile_path)}")
-    print(f"   📄 Combined Summary: {len(combined_summary)} chars")
+    print(f"   📄 Profile: {len(profile_summary)} chars")
+    print(f"   📄 Combined Summary: {len(briefing_summary)} chars")
     
     result = await make_research(research_state)
-    
+
     # Extract results
-    identity_result = result.get("identity_data", {})
-    report = identity_result.get("report", "")
-    sources = identity_result.get("sources", [])
-    costs = identity_result.get("costs", 0.0)
+    candidates = result.get("profile_candidates", [])
+    candidate = candidates[0] if candidates else {}
+    report = candidate.get("full_report", "")
+    sources = candidate.get("sources", [])
+    costs = candidate.get("costs", 0.0)
     
     # Store the result in state.reports
     if report:

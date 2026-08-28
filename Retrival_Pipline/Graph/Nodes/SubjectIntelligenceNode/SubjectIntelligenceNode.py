@@ -316,12 +316,13 @@ async def run_subject_intelligence(
 
     print("⏳ Running Subject Intelligence Agent...")
     result = await make_research(research_state)
-    
+
     # Extract results
-    identity_result = result.get("identity_data", {})
-    report = identity_result.get("report", "")
-    sources = identity_result.get("sources", [])
-    costs = identity_result.get("costs", 0.0)
+    candidates = result.get("profile_candidates", [])
+    candidate = candidates[0] if candidates else {}
+    report = candidate.get("full_report", "")
+    sources = candidate.get("sources", [])
+    costs = candidate.get("costs", 0.0)
     
     # Store the result in state.reports
     if report:

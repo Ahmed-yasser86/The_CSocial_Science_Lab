@@ -20,7 +20,7 @@ import asyncio
 import os
 import logging
 
-from Retrival_Pipline.Graph.state import GraphState
+from Retrival_Pipline.Graph.StateGraph import GraphState
 from gpt_researcher.retrievers import TavilySearch
 from gpt_researcher.retrievers.mcp.retriever import MCPRetriever
 
