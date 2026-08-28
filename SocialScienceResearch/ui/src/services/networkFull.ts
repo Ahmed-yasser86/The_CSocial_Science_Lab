@@ -9,6 +9,7 @@ import type {
   ChannelProjection,
   CommenterCommunityInsights,
   CommenterCommunities,
+  CommenterDetail,
   CommenterNetworkGraph,
   CommenterNetworkMetrics,
   CommenterProjection,
@@ -500,6 +501,23 @@ export function useCommenterNetworkMetrics(
     enabled: params.enabled ?? true,
     retry: 1,
   });
+}
+
+export function getCommenterDetail(
+  handle: string,
+  params: CommenterNetworkParams = {},
+): Promise<CommenterDetail> {
+  return request(
+    `/network/commenters/${encodeURIComponent(handle)}/detail${toQuery({
+      run_ids: params.runId ? params.runId : undefined,
+      job_ids: params.jobIds?.length ? params.jobIds.join(",") : undefined,
+      video_ids: params.videoIds?.join(","),
+      channel_ids: params.channelIds?.join(","),
+      projection: params.projection,
+      weight: params.weight,
+      weighted: params.weighted,
+    })}`,
+  );
 }
 
 export function getCommenterNetworkExportUrl(

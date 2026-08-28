@@ -410,6 +410,53 @@ def commenter_network_export(
 
 
 @router.get(
+    "/network/commenters/{handle}/detail",
+    tags=["network"],
+)
+def commenter_network_detail(
+    request: Request,
+    handle: str,
+    video_ids: str | None = Query(None),
+    channel_ids: str | None = Query(None),
+    run_ids: str | None = Query(None),
+    job_ids: str | None = Query(
+        None,
+        description="Comma-separated collection-job ids; scope = union of those jobs' "
+        "child runs (AND-combined with run_ids when both given).",
+    ),
+    projection: str = Query("commenter"),
+    weight: str | None = Query(None),
+    min_shared: int | None = Query(None, ge=1),
+    top_n: int | None = Query(None, ge=1, le=1000),
+    weighted: bool = Query(True),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Identify a commenter and read their comments within the audience scope (N-fix).
+
+    Returns the resolved label/kind, total comment count, the videos/channels
+    they commented on (with titles), and up to ``limit`` sampled comment texts
+    (each with its publishing video + channel) so clicking a node shows real
+    evidence, not the video-style drawer.
+    """
+    if projection not in _COMMENTER_PROJECTIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"projection must be one of {_COMMENTER_PROJECTIONS}",
+        )
+    spec = _resolve_weight(weight, min_shared, top_n)
+    return _network_service(request).commenter_detail(
+        handle,
+        video_ids=_id_list(video_ids),
+        channel_ids=_id_list(channel_ids),
+        run_ids=_resolve_run_scope(request, run_ids, job_ids),
+        projection=projection,
+        weight=spec,
+        weighted=weighted,
+        limit=limit,
+    )
+
+
+@router.get(
     "/network/commenters/{author_key}/profile",
     tags=["network"],
     response_model=CommenterProfile,

@@ -345,6 +345,7 @@ class CommentRepository(ABC):
         self,
         chunk_size: int = 5000,
         columns: list[str] | None = None,
+        video_ids: list[str] | None = None,
     ) -> Iterator[list[Comment]]:
         """Yield comments in bounded chunks for full-corpus scans.
 
@@ -352,7 +353,10 @@ class CommentRepository(ABC):
         backends override with a keyset-paginated, column-projected query so
         analytics over millions of rows never load every row (and never the
         heavy ``raw_json`` blobs) into memory at once. ``columns`` names the
-        fields the caller actually consumes; unsupported backends ignore it.
+        fields the caller actually consumes; ``video_ids`` scopes the scan to a
+        set of videos server-side (SQL backend only) so audience-network
+        analytics don't scan the whole comment corpus. Unsupported backends
+        ignore ``video_ids``.
         """
         comments = self.list_comments()
         for start in range(0, len(comments), max(1, chunk_size)):

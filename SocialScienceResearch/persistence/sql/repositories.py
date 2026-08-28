@@ -477,7 +477,10 @@ class SqlCommentRepository(_SqlEntityRepository, CommentRepository):
         return [_row(Comment, r) for r in rows]  # type: ignore[return-value]
 
     def iter_comments(
-        self, chunk_size: int = 5000, columns: list[str] | None = None
+        self,
+        chunk_size: int = 5000,
+        columns: list[str] | None = None,
+        video_ids: list[str] | None = None,
     ) -> Iterator[list[Comment]]:
         """Keyset-paginated, column-projected comment scan (bounded memory).
 
@@ -485,8 +488,14 @@ class SqlCommentRepository(_SqlEntityRepository, CommentRepository):
         ``comment_id`` primary key, resuming after the last seen key) so a
         full-corpus scan never materializes the whole result set -- an
         unbounded ``SELECT`` on the production corpus exhausts client memory.
-        ``columns`` projects only the fields the caller consumes; the model's
-        required columns are always included so rows rebuild into ``Comment``.
+        ``columns`` projects only the fields the caller consumes; ``video_ids``
+        scopes the scan to a set of videos server-side. The model's required
+        columns are always included so rows rebuild into ``Comment``.
+
+        When ``video_ids`` is given we scope with ``video_id = ANY(...)`` and
+        paginate by OFFSET (the result set is already bounded by the video set,
+        so the planner can use the video_id index instead of a full table
+        scan keyed by comment_id).
         """
         declared = [c for c in headers_for(Comment) if c != "raw_json"]
         wanted = [c for c in (columns or declared) if c in declared]
@@ -494,10 +503,30 @@ class SqlCommentRepository(_SqlEntityRepository, CommentRepository):
             if required not in wanted:
                 wanted.append(required)
         col_sql = ", ".join(f'"{c}"' for c in wanted)
+        if video_ids:
+            params: dict[str, Any] = {
+                "chunk": chunk_size,
+                "vids": list(video_ids),
+                "offset": 0,
+            }
+            while True:
+                sql = (
+                    f'SELECT {col_sql} FROM "comments" '
+                    'WHERE "video_id" = ANY(%(vids)s) '
+                    'ORDER BY "comment_id" LIMIT %(chunk)s OFFSET %(offset)s'
+                )
+                rows = self._db.execute(sql, params)
+                if not rows:
+                    break
+                yield [_row(Comment, r) for r in rows]  # type: ignore[misc]
+                if len(rows) < chunk_size:
+                    break
+                params["offset"] += chunk_size
+            return
         last_key: str | None = None
         while True:
             sql = f'SELECT {col_sql} FROM "comments"'
-            params: dict[str, Any] = {"chunk": chunk_size}
+            params = {"chunk": chunk_size}
             if last_key is not None:
                 sql += ' WHERE "comment_id" > %(last)s'
                 params["last"] = last_key

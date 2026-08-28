@@ -339,6 +339,23 @@ export function FullNetworkView() {
     graphJobIds,
   );
 
+  // Best-effort video-id → title lookup so ranking panels can show titles
+  // (the metrics payload only returns ids) instead of bare video ids.
+  const videoTitleMap = useMemo(() => {
+    const m = new Map<string, string>();
+    const data = graphQuery.data;
+    const nodes = (data && "nodes" in data ? data.nodes : []) as {
+      video_id?: string;
+      id?: string;
+      title?: string | null;
+    }[];
+    for (const n of nodes) {
+      const id = n.video_id ?? n.id;
+      if (id && n.title) m.set(id, n.title);
+    }
+    return m;
+  }, [graphQuery.data]);
+
   const hasActiveGraphFilters =
     graphRunId !== null ||
     graphChannelIds.length > 0 ||
@@ -607,6 +624,19 @@ export function FullNetworkView() {
                 onChange={(value) => setRunId(value)}
               />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Scope (collection job)
+              </Label>
+              <JobMultiSelect
+                jobs={(jobsQuery.data ?? []).map((j) => ({
+                  job_id: j.job_id,
+                  kind: j.kind,
+                }))}
+                selected={graphJobIds}
+                onChange={setGraphJobIds}
+              />
+            </div>
           </div>
         </Card>
         <AudienceNetworkView runId={runId} jobIds={graphJobIds} />
@@ -773,10 +803,34 @@ export function FullNetworkView() {
               <NetworkMetricTiles metrics={metrics.data} />
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <DegreeDistributionPanel distribution={metrics.data.degree_distribution} />
-                <RankingPanel title="Top hubs" videos={metrics.data.top_hubs} valueLabel="hub" />
-                <RankingPanel title="Top authorities" videos={metrics.data.top_authorities} valueLabel="auth" />
-                <RankingPanel title="Most recommended" videos={metrics.data.most_recommended} valueLabel="×" />
-                <RankingPanel title="Most active sources" videos={metrics.data.most_active_sources} valueLabel="→" />
+                <RankingPanel
+                  title="Top hubs"
+                  videos={metrics.data.top_hubs}
+                  valueLabel="hub"
+                  titleFor={(id) => videoTitleMap.get(id)}
+                  hrefFor={(id) => `/network/videos/${id}`}
+                />
+                <RankingPanel
+                  title="Top authorities"
+                  videos={metrics.data.top_authorities}
+                  valueLabel="auth"
+                  titleFor={(id) => videoTitleMap.get(id)}
+                  hrefFor={(id) => `/network/videos/${id}`}
+                />
+                <RankingPanel
+                  title="Most recommended"
+                  videos={metrics.data.most_recommended}
+                  valueLabel="×"
+                  titleFor={(id) => videoTitleMap.get(id)}
+                  hrefFor={(id) => `/network/videos/${id}`}
+                />
+                <RankingPanel
+                  title="Most active sources"
+                  videos={metrics.data.most_active_sources}
+                  valueLabel="→"
+                  titleFor={(id) => videoTitleMap.get(id)}
+                  hrefFor={(id) => `/network/videos/${id}`}
+                />
               </div>
               <CentralitiesPanel runId={runId} />
             </>

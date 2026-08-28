@@ -25,6 +25,7 @@ via :func:`resolve_author`, exactly like the overlap service.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -54,6 +55,18 @@ from SocialScienceResearch.services.weight_spec import (
     normalize_weights,
     parse_weight_spec,
 )
+
+
+# Module-level build cache so every request in the process shares ONE heavy
+# audience-graph build per scope. (The UI fires graph/metrics/roles/
+# community-insights in parallel; without cross-request sharing each rebuilds the
+# slow co-comment graph and contends past the browser timeout.) A class attribute
+# was not reliably shared across requests in this app's lifecycle, so we use an
+# explicit module-level dict + lock instead.
+_COMMENTER_BUILD_CACHE: dict[tuple, tuple[float, "_BuiltGraph"]] = {}
+_COMMENTER_BUILD_LOCKS: dict[tuple, threading.Lock] = {}
+_COMMENTER_BUILD_TTL = 300.0
+_COMMENTER_BUILD_MAX = 256
 
 
 def _now() -> str:
@@ -177,6 +190,15 @@ class CommenterNetworkService:
     _TTL_SECONDS = 60.0
     _CACHE_MAX_ENTRIES = 128
     _CHUNK_SIZE = 5000
+    # Above this many commenters on a single video (or authors on a single
+    # channel) we keep only the top-N most active before building co-comment
+    # pairs, bounding the O(k^2) combination blow-up on viral videos. Small
+    # scopes stay exact; only pathological high-degree nodes are sampled.
+    _MAX_PER_ENTITY = 300
+    # Above this many nodes, betweenness switches to k-sampling (matches
+    # network_analytics_service._APPROX_NODE_THRESHOLD) so metrics/roles/
+    # community-insights don't hang on large audience graphs.
+    _APPROX_NODE_THRESHOLD = 5000
 
     def __init__(self, repos: Repositories) -> None:
         self._repos = repos
@@ -184,7 +206,7 @@ class CommenterNetworkService:
     @classmethod
     def clear_commenter_network_cache(cls) -> None:
         """Invalidate cached audience graphs (call after any comment write)."""
-        cls._cache.clear()
+        _COMMENTER_BUILD_CACHE.clear()
 
     # ------------------------------------------------------------------
     # Public API
@@ -270,7 +292,8 @@ class CommenterNetworkService:
         )
         if G.number_of_edges() == 0:
             return metrics
-        battery = centrality_battery(G, weighted=built.weighted)
+        approximate = G.number_of_nodes() > self._APPROX_NODE_THRESHOLD
+        battery = centrality_battery(G, weighted=built.weighted, approximate=approximate)
         metrics.density = float(nx.density(G))
         metrics.weakly_connected_components = len(list(nx.connected_components(G)))
         metrics.avg_clustering = float(nx.average_clustering(G))
@@ -446,7 +469,8 @@ class CommenterNetworkService:
         )
         if built.G.number_of_nodes() == 0:
             return {"communities": [], "algorithm": "networkx", "computed_at": _now()}
-        battery = centrality_battery(built.G, weighted=built.weighted)
+        approximate = built.G.number_of_nodes() > self._APPROX_NODE_THRESHOLD
+        battery = centrality_battery(built.G, weighted=built.weighted, approximate=approximate)
         by_community: dict[int, list[str]] = {}
         for nid in built.G.nodes:
             cid = int(built.node_community.get(nid, -1))
@@ -478,6 +502,119 @@ class CommenterNetworkService:
             )
         communities.sort(key=lambda c: c["size"], reverse=True)
         return {"communities": communities, "algorithm": "networkx", "computed_at": _now()}
+
+    def commenter_detail(
+        self,
+        handle: str,
+        *,
+        video_ids: list[str] | None = None,
+        channel_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        projection: str = "commenter",
+        weight: str = "co_comment:jaccard",
+        weighted: bool = True,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Identify a commenter and list their comments within the scope.
+
+        Returns the resolved label/kind, the total comment count in scope, the
+        videos/channels they commented on (with titles), and up to ``limit``
+        sampled comment texts (each with its publishing video + channel) so a
+        researcher can read the actual evidence behind a graph node instead of
+        the video-style drawer the generic graph shows.
+        """
+        video_set, channel_set, video_channel = self._scope_sets(
+            video_ids, channel_ids, run_ids
+        )
+        if not video_set and not channel_set:
+            raise ValueError(
+                "Provide at least one of video_ids, channel_ids, or run_ids"
+            )
+        channel_videos = {
+            vid for vid, ch in video_channel.items() if ch in channel_set
+        }
+        scope_video_ids = sorted(video_set | channel_videos)
+        video_titles = {
+            v.video_id: v.title for v in self._repos.videos.list_videos()
+        }
+        channel_titles = {
+            c.channel_id: c.title for c in self._repos.channels.list_channels()
+        }
+
+        label: str | None = None
+        kind: str | None = None
+        total = 0
+        per_video: Counter = Counter()
+        per_channel: Counter = Counter()
+        samples: list[dict[str, Any]] = []
+        columns = [
+            "author_id",
+            "author_name",
+            "is_author",
+            "published_at",
+            "comment_text",
+            "video_id",
+        ]
+        for chunk in self._repos.comments.iter_comments(
+            chunk_size=self._CHUNK_SIZE,
+            columns=columns,
+            video_ids=scope_video_ids,
+        ):
+            for c in chunk:
+                vid = c.video_id
+                ch = video_channel.get(vid)
+                in_v = vid in video_set
+                in_ch = ch is not None and ch in channel_set
+                if not (in_v or in_ch):
+                    continue
+                _, key, display = resolve_author(c)
+                if key != handle:
+                    continue
+                if display:
+                    label = display
+                if kind is None and _ is not None:
+                    kind = _
+                total += 1
+                per_video[vid] += 1
+                if ch:
+                    per_channel[ch] += 1
+                if len(samples) < limit and c.comment_text:
+                    samples.append(
+                        {
+                            "text": c.comment_text,
+                            "video_id": vid,
+                            "video_title": video_titles.get(vid),
+                            "channel_id": ch,
+                            "channel_title": channel_titles.get(ch) if ch else None,
+                            "published_at": (
+                                c.published_at.isoformat() if c.published_at else None
+                            ),
+                            "is_author": bool(c.is_author),
+                        }
+                    )
+        videos = [
+            {"video_id": vid, "title": video_titles.get(vid), "comment_count": cnt}
+            for vid, cnt in per_video.most_common(50)
+        ]
+        channels = [
+            {
+                "channel_id": ch,
+                "title": channel_titles.get(ch),
+                "comment_count": cnt,
+            }
+            for ch, cnt in per_channel.most_common(50)
+        ]
+        return {
+            "id": handle,
+            "label": label,
+            "kind": kind,
+            "comment_count": total,
+            "sampled_comments": samples,
+            "videos": videos,
+            "channels": channels,
+            "algorithm": "networkx",
+            "computed_at": _now(),
+        }
 
     def communities(
         self,
@@ -720,8 +857,20 @@ class CommenterNetworkService:
         commenter_channels: dict[str, set[str]] = defaultdict(set)
         comment_counts: Counter = Counter()
         columns = ["author_id", "author_name", "is_author", "published_at"]
+        # Scope the scan server-side. For a run/video scope we scan exactly those
+        # videos (fast). Only when there are NO explicit videos (channel-only
+        # scope) do we expand channels -> their videos (inherently larger).
+        if video_set:
+            scope_video_ids: list[str] = sorted(video_set)
+        else:
+            channel_videos = {
+                vid for vid, ch in video_channel.items() if ch in channel_set
+            }
+            scope_video_ids = sorted(channel_videos)
         for chunk in self._repos.comments.iter_comments(
-            chunk_size=self._CHUNK_SIZE, columns=columns
+            chunk_size=self._CHUNK_SIZE,
+            columns=columns,
+            video_ids=scope_video_ids,
         ):
             for c in chunk:
                 vid = c.video_id
@@ -768,7 +917,6 @@ class CommenterNetworkService:
     ) -> _BuiltGraph:
         ws = parse_weight_spec(weight) if weight else parse_weight_spec("co_comment:jaccard")
         cache_key = (
-            id(self._repos),
             projection,
             ws.to_token(),
             tuple(sorted(video_ids or [])),
@@ -776,14 +924,23 @@ class CommenterNetworkService:
             tuple(sorted(run_ids or [])),
             bool(weighted),
         )
-        cached = self._cache.get(cache_key)
-        if cached is not None and (time.time() - cached[0]) < self._TTL_SECONDS:
+        cached = _COMMENTER_BUILD_CACHE.get(cache_key)
+        if cached is not None and (time.time() - cached[0]) < _COMMENTER_BUILD_TTL:
             return cached[1]
-        built = self._build(projection, ws, weighted, video_ids, channel_ids, run_ids)
-        self._cache[cache_key] = (time.time(), built)
-        while len(self._cache) > self._CACHE_MAX_ENTRIES:
-            self._cache.pop(next(iter(self._cache)))
-        return built
+        # Coalesce concurrent identical builds: the first caller builds, the
+        # rest wait and then read the cached result. Without this, the UI firing
+        # graph/metrics/roles/community-insights together each triggers a full
+        # (slow) build and they contend past the request timeout.
+        lock = _COMMENTER_BUILD_LOCKS.setdefault(cache_key, threading.Lock())
+        with lock:
+            cached = _COMMENTER_BUILD_CACHE.get(cache_key)
+            if cached is not None and (time.time() - cached[0]) < _COMMENTER_BUILD_TTL:
+                return cached[1]
+            built = self._build(projection, ws, weighted, video_ids, channel_ids, run_ids)
+            _COMMENTER_BUILD_CACHE[cache_key] = (time.time(), built)
+            while len(_COMMENTER_BUILD_CACHE) > _COMMENTER_BUILD_MAX:
+                _COMMENTER_BUILD_CACHE.pop(next(iter(_COMMENTER_BUILD_CACHE)))
+            return built
 
     def _build(
         self,
@@ -942,6 +1099,10 @@ class CommenterNetworkService:
     ) -> None:
         co: Counter = Counter()
         for vid, authors in video_commenters.items():
+            if len(authors) > self._MAX_PER_ENTITY:
+                authors = dict(
+                    sorted(authors.items(), key=lambda kv: -kv[1])[: self._MAX_PER_ENTITY]
+                )
             ks = list(authors)
             for a, b in combinations(ks, 2):
                 co[(a, b)] += 1
@@ -992,6 +1153,10 @@ class CommenterNetworkService:
     ) -> None:
         cands: list[tuple[str, str, float]] = []
         for eid, authors in entity_commenters.items():
+            if len(authors) > self._MAX_PER_ENTITY:
+                authors = dict(
+                    sorted(authors.items(), key=lambda kv: -kv[1])[: self._MAX_PER_ENTITY]
+                )
             for key, cnt in authors.items():
                 if cnt < min_shared:
                     continue

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,7 @@ import {
 } from "@/components/features/network-graph";
 import { CommunityHighlightControls } from "@/components/features/network-full/community-highlight-controls";
 import {
+  getCommenterDetail,
   getCommenterNetworkExportUrl,
   useCommenterNetworkGraph,
   useCommenterNetworkMetrics,
@@ -35,6 +36,8 @@ import {
 import { ReproducibilityFooter } from "@/components/features/network-full/reproducibility-footer";
 import {
   EXPORT_FORMATS,
+  type CommenterDetail,
+  type CommenterNetworkMetrics,
   type CommenterProjection,
   type CommunityEntity,
 } from "@/lib/network-full-types";
@@ -79,6 +82,22 @@ export function AudienceNetworkView({
   const [weighted, setWeighted] = useState<boolean>(true);
 
   const hasScope = !!runId || !!(jobIds && jobIds.length > 0);
+
+  // Controlled node inspector so ranking rows can open a commenter's detail
+  // drawer from outside the graph canvas.
+  const [inspectNodeId, setInspectNodeId] = useState<string | null>(null);
+
+  const loadCommenterDetail = useCallback(
+    (handle: string): Promise<CommenterDetail> =>
+      getCommenterDetail(handle, {
+        runId,
+        jobIds: jobIds ?? undefined,
+        projection,
+        weight,
+        weighted,
+      }),
+    [runId, jobIds, projection, weight, weighted],
+  );
 
   const graphQuery = useCommenterNetworkGraph({
     runId,
@@ -304,6 +323,9 @@ export function AudienceNetworkView({
                   height={620}
                   colorMode="community"
                   highlightedNodeIds={highlightedNodeIds}
+                  loadCommenterDetail={loadCommenterDetail}
+                  inspectNodeId={inspectNodeId}
+                  onInspectNodeChange={setInspectNodeId}
                 />
                 {audienceCommunities.length > 0 ? (
                   <div className="mt-3">
@@ -372,18 +394,36 @@ export function AudienceNetworkView({
                   />
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Click a handle to inspect that commenter.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() =>
+                      exportRankingsCsv(metricsQuery.data)
+                    }
+                  >
+                    <Download className="size-3.5" aria-hidden />
+                    Export CSV
+                  </Button>
+                </div>
+                <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-3">
                   <RankingList
                     title="Top bridges"
                     rows={metricsQuery.data.top_bridges}
+                    onSelect={setInspectNodeId}
                   />
                   <RankingList
                     title="Top core"
                     rows={metricsQuery.data.top_core}
+                    onSelect={setInspectNodeId}
                   />
                   <RankingList
                     title="Top prolific"
                     rows={metricsQuery.data.top_prolific}
+                    onSelect={setInspectNodeId}
                   />
                 </div>
               </>
@@ -411,9 +451,11 @@ export function AudienceNetworkView({
 function RankingList({
   title,
   rows,
+  onSelect,
 }: {
   title: string;
   rows: { id: string; label?: string | null; betweenness: number }[];
+  onSelect?: (id: string) => void;
 }) {
   return (
     <div className="rounded-md border border-border p-3">
@@ -423,20 +465,46 @@ function RankingList({
       ) : (
         <ol className="space-y-1 text-sm">
           {rows.map((r, i) => (
-            <li
-              key={r.id}
-              className="flex items-center justify-between gap-2 font-mono text-xs"
-            >
-              <span className="truncate">
-                {i + 1}. {r.label ?? r.id}
-              </span>
-              <span className="text-muted-foreground">
-                {r.betweenness.toFixed(3)}
-              </span>
+            <li key={r.id}>
+              <button
+                type="button"
+                disabled={!onSelect}
+                onClick={() => onSelect?.(r.id)}
+                className="flex w-full items-center justify-between gap-2 font-mono text-xs text-left hover:text-primary disabled:cursor-default disabled:hover:text-inherit"
+              >
+                <span className="truncate">
+                  {i + 1}. {r.label ?? r.id}
+                </span>
+                <span className="text-muted-foreground">
+                  {r.betweenness.toFixed(3)}
+                </span>
+              </button>
             </li>
           ))}
         </ol>
       )}
     </div>
   );
+}
+
+function exportRankingsCsv(m: CommenterNetworkMetrics) {
+  const sections: [string, CommenterNetworkMetrics["top_bridges"]][] = [
+    ["top_bridges", m.top_bridges],
+    ["top_core", m.top_core],
+    ["top_prolific", m.top_prolific],
+  ];
+  const lines = ["section,rank,id,label,betweenness"];
+  for (const [name, rows] of sections) {
+    rows.forEach((r, i) => {
+      const label = `"${(r.label ?? "").replace(/"/g, '""')}"`;
+      lines.push(`${name},${i + 1},${r.id},${label},${r.betweenness}`);
+    });
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "audience-rankings.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }

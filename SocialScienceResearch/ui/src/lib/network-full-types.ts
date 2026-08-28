@@ -383,6 +383,29 @@ export interface BridgeRank {
   betweenness: number;
 }
 
+/** Per-commenter detail returned by GET /network/commenters/{handle}/detail.
+ * Used by the audience graph's node inspector so clicking a commenter node
+ * shows their comment text, the videos/channels they commented on, etc. */
+export interface CommenterDetail {
+  id: string;
+  label: string | null;
+  kind: string;
+  comment_count: number;
+  sampled_comments: {
+    text: string;
+    video_id: string;
+    video_title: string | null;
+    channel_id: string | null;
+    channel_title: string | null;
+    published_at: string | null;
+    is_author: boolean;
+  }[];
+  videos: { id: string; title: string | null; comment_count: number }[];
+  channels: { id: string; title: string | null; comment_count: number }[];
+  algorithm?: string | null;
+  computed_at?: string | null;
+}
+
 export interface CommenterNetworkMetrics {
   node_count: number;
   edge_count: number;

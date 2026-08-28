@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -112,10 +113,16 @@ export function RankingPanel({
   title,
   videos,
   valueLabel,
+  titleFor,
+  hrefFor,
 }: {
   title: string;
   videos: RankedVideo[];
   valueLabel: string;
+  /** Optional enrichment: maps a video id to a human title (falls back to id). */
+  titleFor?: (videoId: string) => string | undefined;
+  /** Optional link target for each row (e.g. the video's detail page). */
+  hrefFor?: (videoId: string) => string | undefined;
 }) {
   if (videos.length === 0) return null;
   return (
@@ -129,14 +136,38 @@ export function RankingPanel({
               : video.times_recommended !== undefined
                 ? video.times_recommended
                 : video.outgoing;
-          return (
-            <li key={video.video_id} className="flex items-center justify-between gap-2 text-sm">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">
-                  {index + 1}
-                </span>
-                <code className="truncate font-mono text-xs">{video.video_id}</code>
+          const label = titleFor?.(video.video_id) ?? video.video_id;
+          const href = hrefFor?.(video.video_id);
+          const content = (
+            <>
+              <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">
+                {index + 1}
               </span>
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate text-xs">{label}</span>
+                <code className="truncate font-mono text-[10px] text-muted-foreground">
+                  {video.video_id}
+                </code>
+              </span>
+            </>
+          );
+          return (
+            <li
+              key={video.video_id}
+              className="flex items-center justify-between gap-2 text-sm"
+            >
+              {href ? (
+                <Link
+                  href={href}
+                  className="flex min-w-0 flex-1 items-center gap-2 hover:text-primary"
+                >
+                  {content}
+                </Link>
+              ) : (
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  {content}
+                </span>
+              )}
               <Badge variant="outline" className="tabular-nums">
                 {value === undefined ? "—" : formatNumber(value)} {valueLabel}
               </Badge>

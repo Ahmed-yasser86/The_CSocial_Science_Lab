@@ -14,7 +14,7 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
-import { LoadingState } from "@/components/features/state";
+import { ErrorState, LoadingState } from "@/components/features/state";
 import { CHART_VARS, resolveChartColors } from "@/lib/colors";
 import { useTheme } from "@/lib/theme";
 import { formatDuration, formatNumber } from "@/lib/format";
@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import type {
   ChannelFacet,
+  CommenterDetail,
   GraphNodeKind,
   RunFacet,
 } from "@/lib/network-full-types";
@@ -124,6 +125,15 @@ export interface NetworkGraphProps {
   onOverlapClick?: (videoId: string) => void;
   /** Increment to re-fit the layout into view (used by fullscreen focus mode). */
   zoomResetSignal?: number;
+  /** Fetches audience (commenter) detail for a node whose `kind` is "commenter".
+   * When provided, clicking a commenter node opens a commenter-specific drawer
+   * (their comments + the videos/channels they commented on) instead of the
+   * generic video drawer. */
+  loadCommenterDetail?: (handle: string) => Promise<CommenterDetail>;
+  /** Controlled inspected-node id. When set, the drawer tracks this id instead
+   * of internal click state (used to open the inspector from ranking rows). */
+  inspectNodeId?: string | null;
+  onInspectNodeChange?: (id: string | null) => void;
 }
 
 const roleColors: Record<GraphNodeKind, string> = {
@@ -331,6 +341,9 @@ export function NetworkGraph({
   onOverlapClick,
   zoomResetSignal,
   highlightedNodeIds,
+  loadCommenterDetail,
+  inspectNodeId,
+  onInspectNodeChange,
 }: NetworkGraphProps) {
   const { theme } = useTheme();
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
@@ -347,7 +360,14 @@ export function NetworkGraph({
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(
     null,
   );
-  const [inspectId, setInspectId] = useState<string | null>(null);
+  const [internalInspectId, setInternalInspectId] = useState<string | null>(null);
+  // Support both internal click state and an externally-controlled inspected id
+  // (so ranking rows can open the node inspector from outside the canvas).
+  const inspectId = inspectNodeId !== undefined ? inspectNodeId : internalInspectId;
+  function setInspectId(id: string | null) {
+    if (inspectNodeId !== undefined) onInspectNodeChange?.(id);
+    else setInternalInspectId(id);
+  }
   const [scraping, setScraping] = useState(false);
 
   // Display preferences: node size is persisted in the lab session so it
@@ -1125,6 +1145,12 @@ export function NetworkGraph({
       >
         <DrawerContent side="right">
           {inspectedNode ? (
+            inspectedNode.kind === "commenter" && loadCommenterDetail ? (
+              <CommenterDetailDrawer
+                handle={inspectedNode.id}
+                loader={loadCommenterDetail}
+              />
+            ) : (
             <>
               <DrawerHeader>
                 <DrawerTitle className="break-all">
@@ -1205,9 +1231,117 @@ export function NetworkGraph({
                 </Button>
               </div>
             </>
-          ) : null}
+          )) : null}
         </DrawerContent>
       </Drawer>
+    </div>
+  );
+}
+
+/** Drawer body for an audience (commenter) node: shows the commenter's recent
+ * comments and the videos/channels they commented on (fetched from the
+ * `/network/commenters/{handle}/detail` endpoint). */
+function CommenterDetailDrawer({
+  handle,
+  loader,
+}: {
+  handle: string;
+  loader: (handle: string) => Promise<CommenterDetail>;
+}) {
+  const [state, setState] = useState<{
+    status: "loading" | "ok" | "error";
+    data?: CommenterDetail;
+    error?: string;
+  }>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    loader(handle)
+      .then((d) => {
+        if (!cancelled) setState({ status: "ok", data: d });
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setState({
+            status: "error",
+            error: e instanceof Error ? e.message : "Failed to load commenter",
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [handle, loader]);
+
+  return (
+    <>
+      <DrawerHeader>
+        <DrawerTitle className="break-all">
+          {state.data?.label ?? handle}
+        </DrawerTitle>
+        <DrawerDescription className="line-clamp-2">
+          Commenter · {state.data?.comment_count ?? 0} comments
+        </DrawerDescription>
+      </DrawerHeader>
+      <DrawerBody className="space-y-4">
+        {state.status === "loading" ? (
+          <LoadingState label="Loading commenter…" />
+        ) : state.status === "error" ? (
+          <ErrorState message={state.error ?? "Failed to load commenter"} />
+        ) : (
+          <CommenterDetailBody detail={state.data!} />
+        )}
+      </DrawerBody>
+    </>
+  );
+}
+
+function CommenterDetailBody({ detail }: { detail: CommenterDetail }) {
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <Row label="Kind" value={detail.kind} />
+        <Row label="Comments" value={String(detail.comment_count)} />
+      </dl>
+
+      <div>
+        <h5 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Recent comments
+        </h5>
+        {detail.sampled_comments.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No sampled comments available.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {detail.sampled_comments.map((c, i) => (
+              <li key={i} className="rounded-md border border-border p-2 text-sm">
+                <p className="line-clamp-3 text-foreground/90">{c.text}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {c.video_title ?? c.video_id}
+                  {c.channel_title ? ` · ${c.channel_title}` : ""}
+                  {c.is_author ? " · author" : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {detail.videos.length > 0 ? (
+        <div>
+          <h5 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Videos commented on
+          </h5>
+          <ul className="space-y-0.5 text-xs text-muted-foreground">
+            {detail.videos.slice(0, 8).map((v) => (
+              <li key={v.id} className="truncate">
+                {v.title ?? v.id} · {v.comment_count}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
