@@ -96,3 +96,14 @@ class GraphState(TypedDict, total=False):
     reports: IntelligenceReports
     input_paths: dict[str, str]
     run_folder: str
+
+    # --- Report execution control ---
+    report_plan: list[str]
+    """Ordered list of report keys to generate this run (subset of the three
+    intelligence reports). Defaults to all three in canonical dependency order
+    (subject -> audience -> ecosystem)."""
+    skip_existing_reports: bool
+    """When True (default), a report node is skipped if its output already exists
+    in state['reports'] (used for resuming an earlier run without recomputing)."""
+    force_reports: list[str]
+    """Report keys to (re)generate even if already present in state."""

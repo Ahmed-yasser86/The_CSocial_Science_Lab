@@ -15,7 +15,7 @@ import asyncio
 import uuid
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -44,6 +44,66 @@ ECOSYSTEM_INTELLIGENCE = "ecosystem_intelligence"
 PROFILE_SUMMARIZATION = "profile_summarization"
 BRIEFING_SUMMARIZATION = "briefing_summarization"
 MAX_ITERATIONS = 3
+
+# Ordered list of the three intelligence reports and their dependencies.
+# Each report depends on the previous one, so the canonical execution order is
+# subject -> audience -> ecosystem.
+REPORT_KEYS = ["subject", "audience", "ecosystem"]
+REPORT_NODES = {
+    "subject": SUBJECT_INTELLIGENCE,
+    "audience": AUDIENCE_INTELLIGENCE,
+    "ecosystem": ECOSYSTEM_INTELLIGENCE,
+}
+
+
+def normalize_report_plan(requested: Optional[List[str]]) -> List[str]:
+    """
+    Resolve a user-requested report subset into a valid execution plan.
+
+    Always returns the requested reports in canonical dependency order, and
+    automatically includes any prerequisite reports that are missing. For example:
+      - None / []            -> ["subject", "audience", "ecosystem"]
+      - ["audience"]         -> ["subject", "audience"]
+      - ["ecosystem"]        -> ["subject", "audience", "ecosystem"]
+    """
+    if not requested:
+        return list(REPORT_KEYS)
+    plan = [k for k in REPORT_KEYS if k in requested]
+    # Add missing prerequisites in canonical order.
+    for prereq in REPORT_KEYS:
+        if prereq in plan:
+            continue
+        depends = any(
+            REPORT_KEYS.index(later) > REPORT_KEYS.index(prereq) and later in plan
+            for later in plan
+        )
+        if depends:
+            plan.append(prereq)
+    plan.sort(key=lambda k: REPORT_KEYS.index(k))
+    return plan
+
+
+def report_router(state: GraphState):
+    """
+    Conditional-edge router.
+
+    Returns the next report node to execute: the first report in the plan whose
+    output is not already present in state (respecting skip_existing_reports), or
+    END if every requested report is satisfied. This lets a single compiled graph
+    serve both "all three in one run" and "one report at a time, resumed later".
+    """
+    plan = state.get("report_plan") or list(REPORT_KEYS)
+    reports = state.get("reports", {}) or {}
+    skip = state.get("skip_existing_reports", True)
+    force = set(state.get("force_reports", []) or [])
+    for key in REPORT_KEYS:
+        if key not in plan:
+            continue
+        existing = reports.get(key, {}) or {}
+        if existing.get("content") and skip and key not in force:
+            continue
+        return REPORT_NODES[key]
+    return END
 
 
 def create_run_folder() -> str:
@@ -176,7 +236,15 @@ async def subject_intelligence_node(state: GraphState) -> GraphState:
     and ideology.
     """
     print("---SUBJECT INTELLIGENCE---")
-    
+
+    # Skip if this report already exists and we are allowed to reuse prior results.
+    _reports = state.get("reports", {}) or {}
+    _skip = state.get("skip_existing_reports", True)
+    _force = set(state.get("force_reports", []) or [])
+    if _skip and "subject" not in _force and _reports.get("subject", {}).get("content"):
+        print("---SUBJECT INTELLIGENCE (skipped: already present in state)---")
+        return state
+
     # Get run folder from state with default
     run_folder = state.get("run_folder", "")
     if not run_folder:
@@ -224,7 +292,15 @@ async def audience_intelligence_node(state: GraphState) -> GraphState:
     with the subject.
     """
     print("---AUDIENCE INTELLIGENCE---")
-    
+
+    # Skip if this report already exists and we are allowed to reuse prior results.
+    _reports = state.get("reports", {}) or {}
+    _skip = state.get("skip_existing_reports", True)
+    _force = set(state.get("force_reports", []) or [])
+    if _skip and "audience" not in _force and _reports.get("audience", {}).get("content"):
+        print("---AUDIENCE INTELLIGENCE (skipped: already present in state)---")
+        return state
+
     # Get run folder from state with default
     run_folder = state.get("run_folder", "")
     if not run_folder:
@@ -275,7 +351,15 @@ async def ecosystem_intelligence_node(state: GraphState) -> GraphState:
     dynamics, systemic risks, and environmental factors.
     """
     print("---ECOSYSTEM INTELLIGENCE---")
-    
+
+    # Skip if this report already exists and we are allowed to reuse prior results.
+    _reports = state.get("reports", {}) or {}
+    _skip = state.get("skip_existing_reports", True)
+    _force = set(state.get("force_reports", []) or [])
+    if _skip and "ecosystem" not in _force and _reports.get("ecosystem", {}).get("content"):
+        print("---ECOSYSTEM INTELLIGENCE (skipped: already present in state)---")
+        return state
+
     # Get run folder from state with default
     run_folder = state.get("run_folder", "")
     if not run_folder:
@@ -316,26 +400,43 @@ async def ecosystem_intelligence_node(state: GraphState) -> GraphState:
     return state
 
 
-def create_initial_state(user_query: str, subject_profile_path: str, briefing_1_path: str, briefing_2_path: str) -> GraphState:
+def create_initial_state(
+    user_query: str,
+    subject_profile_path: str,
+    briefing_1_path: str,
+    briefing_2_path: str,
+    report_plan: Optional[List[str]] = None,
+    skip_existing_reports: bool = True,
+    force_reports: Optional[List[str]] = None,
+) -> GraphState:
     """
     Creates the initial state for the graph with user input.
-    
+
     Args:
         user_query: The user's research query
         subject_profile_path: Path to subject profile document
         briefing_1_path: Path to first briefing document
         briefing_2_path: Path to second briefing document
-        
+        report_plan: Subset of ["subject", "audience", "ecosystem"] to generate.
+            None (default) generates all three. Prerequisites are added
+            automatically (e.g. requesting "audience" also schedules "subject").
+        skip_existing_reports: When True (default), reports already present in a
+            resumed state are not recomputed.
+        force_reports: Report keys to (re)generate even if already present.
+
     Returns:
         Initialized GraphState
     """
     # Create run folder
     run_folder = create_run_folder()
-    
+
     return {
         "user_initial_query": user_query,
         "mcp_strategy": "fast",
         "run_folder": run_folder,
+        "report_plan": normalize_report_plan(report_plan),
+        "skip_existing_reports": skip_existing_reports,
+        "force_reports": force_reports or [],
         "input_paths": {
             "subject_profile_path": subject_profile_path,
             "briefing_1_path": briefing_1_path,
@@ -361,15 +462,24 @@ workflow.add_node(ECOSYSTEM_INTELLIGENCE, ecosystem_intelligence_node)
 
 # Set entry point
 workflow.set_entry_point(IDENTITY_RESEARCH)
-
-# Add sequential edges
 workflow.add_edge(IDENTITY_RESEARCH, PROFILE_SUMMARIZATION)
-workflow.add_edge(PROFILE_SUMMARIZATION, SUBJECT_INTELLIGENCE)
-workflow.add_edge(SUBJECT_INTELLIGENCE, AUDIENCE_INTELLIGENCE)
-workflow.add_edge(AUDIENCE_INTELLIGENCE, ECOSYSTEM_INTELLIGENCE)
-workflow.add_edge(ECOSYSTEM_INTELLIGENCE, END)
 
-# Compile with memory
+# Conditional routing: after each step, run the next requested report in canonical
+# dependency order (subject -> audience -> ecosystem), skipping any report that is
+# already present (when skip_existing_reports is True). This supports both
+# "generate all three in one run" and "one report at a time, resumed later" modes.
+_PATH_MAP = {
+    SUBJECT_INTELLIGENCE: SUBJECT_INTELLIGENCE,
+    AUDIENCE_INTELLIGENCE: AUDIENCE_INTELLIGENCE,
+    ECOSYSTEM_INTELLIGENCE: ECOSYSTEM_INTELLIGENCE,
+    END: END,
+}
+workflow.add_conditional_edges(PROFILE_SUMMARIZATION, report_router, _PATH_MAP)
+workflow.add_conditional_edges(SUBJECT_INTELLIGENCE, report_router, _PATH_MAP)
+workflow.add_conditional_edges(AUDIENCE_INTELLIGENCE, report_router, _PATH_MAP)
+workflow.add_conditional_edges(ECOSYSTEM_INTELLIGENCE, report_router, _PATH_MAP)
+
+# Compile with memory (enables in-session pause/resume via thread_id)
 memory = MemorySaver()
 app = workflow.compile(checkpointer=memory)
 
@@ -378,6 +488,83 @@ try:
     app.get_graph().draw_mermaid_png(output_file_path="intelligence_graph.png")
 except Exception as e:
     print(f"Could not save graph visualization: {e}")
+
+
+def load_state_from_file(path: str) -> GraphState:
+    """Load a previously saved graph state JSON (created by save_state_to_file)."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def prepare_resume_state(
+    loaded_state: GraphState,
+    report_plan: Optional[List[str]] = None,
+    force_reports: Optional[List[str]] = None,
+) -> GraphState:
+    """
+    Prepare a loaded state for a follow-up run.
+
+    Keeps all previously generated reports (so they are reused, not recomputed)
+    and sets the report_plan to the newly requested report(s). Prerequisites are
+    added automatically and already-present reports are skipped.
+    """
+    loaded_state = dict(loaded_state)
+    loaded_state["report_plan"] = normalize_report_plan(report_plan)
+    loaded_state["skip_existing_reports"] = True
+    loaded_state["force_reports"] = force_reports or []
+    return loaded_state
+
+
+async def run_intelligence_pipeline(initial_state: GraphState, config: dict = None, interrupt_after=None) -> GraphState:
+    """
+    Run the intelligence graph.
+
+    Mode 1 (all three at once):  run_intelligence_pipeline(create_initial_state(...))
+    Mode 2 (one at a time):      run_intelligence_pipeline(state, interrupt_after="subject_intelligence")
+                                 ... later resume_intelligence_pipeline(config, report_plan=["audience"])
+
+    Args:
+        initial_state: Graph state (e.g. from create_initial_state).
+        config: LangGraph run config; a stable thread_id enables pause/resume.
+        interrupt_after: Node name(s) (e.g. "subject_intelligence") after which to
+            pause. Resume later with the same config via resume_intelligence_pipeline.
+
+    Returns:
+        Final GraphState with the requested reports populated.
+    """
+    if config is None:
+        config = {"configurable": {"thread_id": f"run_{uuid.uuid4().hex[:8]}"}}
+    if isinstance(interrupt_after, str):
+        interrupt_after = [interrupt_after]
+    kwargs = {}
+    if interrupt_after:
+        kwargs["interrupt_after"] = interrupt_after
+    return await app.ainvoke(initial_state, config=config, **kwargs)
+
+
+async def resume_intelligence_pipeline(
+    config: dict,
+    report_plan: Optional[List[str]] = None,
+    force_reports: Optional[List[str]] = None,
+    interrupt_after=None,
+) -> GraphState:
+    """
+    Resume a paused (or previous) run using its thread_id.
+
+    Optionally extend the report_plan (e.g. request the next report) before
+    continuing. Uses the in-memory checkpointer, so this works within the same
+    process/session. Cross-process resumption should use load_state_from_file +
+    prepare_resume_state instead.
+    """
+    if report_plan is not None:
+        plan = normalize_report_plan(report_plan)
+        app.update_state(config, {"report_plan": plan, "force_reports": force_reports or []})
+    if isinstance(interrupt_after, str):
+        interrupt_after = [interrupt_after]
+    kwargs = {}
+    if interrupt_after:
+        kwargs["interrupt_after"] = interrupt_after
+    return await app.ainvoke(None, config=config, **kwargs)
 
 
 # Test run

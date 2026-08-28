@@ -9,7 +9,16 @@ async def make_identity_research(state: GraphState) -> Dict[str, Any]:
     Identity Research Node: Performs research and returns IdentityData.
     """
     print("---IDENTITY RESEARCH NODE---")
-    
+
+    # Skip if identity research already exists and we are allowed to reuse it
+    # (used when resuming a prior run so we don't re-run expensive research).
+    _existing = state.get("identity_data", {}) or {}
+    _skip = state.get("skip_existing_reports", True)
+    _force = set(state.get("force_reports", []) or [])
+    if _skip and "identity" not in _force and _existing.get("report"):
+        print("---IDENTITY RESEARCH NODE (skipped: already present in state)---")
+        return {"identity_data": _existing}
+
     chain_input = state.get("chain_input", {})
     query = chain_input.get("query", "")
     
