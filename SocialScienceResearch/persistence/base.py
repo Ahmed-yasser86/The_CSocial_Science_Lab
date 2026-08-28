@@ -80,7 +80,7 @@ class ChannelRepository(ABC):
         """Return the channel with the given stable id, if present."""
 
     @abstractmethod
-    def list_channels(self) -> list[Channel]:
+    def list_channels(self, channel_ids: list[str] | None = None) -> list[Channel]:
         """Return all known channels."""
 
     def list_channel_titles(self) -> dict[str, str]:
@@ -195,8 +195,12 @@ class VideoRepository(ABC):
         """Return the video with the given stable id, if present."""
 
     @abstractmethod
-    def list_videos(self, channel_id: str | None = None) -> list[Video]:
-        """Return all videos, optionally filtered by channel."""
+    def list_videos(
+        self,
+        channel_id: str | None = None,
+        video_ids: list[str] | None = None,
+    ) -> list[Video]:
+        """Return all videos, optionally filtered by channel or an explicit id set."""
 
     @abstractmethod
     def list_videos_by_run(self, run_id: str) -> list[Video]:

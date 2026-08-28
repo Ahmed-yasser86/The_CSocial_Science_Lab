@@ -73,6 +73,18 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _iso(value: Any) -> str | None:
+    """Serialize a timestamp that may be a ``datetime`` or an already-formatted
+    string (Excel-imported rows often store ISO strings) without raising."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 class _Base(BaseModel):
     """``extra="allow"`` response-model base (matches network analytics)."""
 
@@ -534,11 +546,15 @@ class CommenterNetworkService:
             vid for vid, ch in video_channel.items() if ch in channel_set
         }
         scope_video_ids = sorted(video_set | channel_videos)
+        # Titles are only needed for the in-scope videos/channels (bounded set),
+        # not the entire corpus -- keeps the drill-down fast on large workspaces.
         video_titles = {
-            v.video_id: v.title for v in self._repos.videos.list_videos()
+            v.video_id: v.title
+            for v in self._repos.videos.list_videos(video_ids=list(video_set))
         }
         channel_titles = {
-            c.channel_id: c.title for c in self._repos.channels.list_channels()
+            c.channel_id: c.title
+            for c in self._repos.channels.list_channels(channel_ids=list(channel_set))
         }
 
         label: str | None = None
@@ -586,9 +602,7 @@ class CommenterNetworkService:
                             "video_title": video_titles.get(vid),
                             "channel_id": ch,
                             "channel_title": channel_titles.get(ch) if ch else None,
-                            "published_at": (
-                                c.published_at.isoformat() if c.published_at else None
-                            ),
+                            "published_at": _iso(c.published_at),
                             "is_author": bool(c.is_author),
                         }
                     )
@@ -829,8 +843,11 @@ class CommenterNetworkService:
             ):
                 video_set.add(e.source_video_id)
                 video_set.add(e.recommended_video_id)
-        videos = {v.video_id: v for v in self._repos.videos.list_videos()}
-        video_channel = {vid: v.channel_id for vid, v in videos.items()}
+        if video_set:
+            scoped = self._repos.videos.list_videos(video_ids=list(video_set))
+            video_channel = {v.video_id: v.channel_id for v in scoped}
+        else:
+            video_channel = {}
         for vid in video_set:
             ch = video_channel.get(vid)
             if ch:

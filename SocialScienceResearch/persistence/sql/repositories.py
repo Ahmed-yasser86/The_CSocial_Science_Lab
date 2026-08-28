@@ -172,8 +172,16 @@ class SqlChannelRepository(_SqlEntityRepository, ChannelRepository):
     def get_channel(self, channel_id: str) -> Channel | None:
         return self._get(channel_id)  # type: ignore[return-value]
 
-    def list_channels(self) -> list[Channel]:
-        return self._list()  # type: ignore[return-value]
+    def list_channels(self, channel_ids: list[str] | None = None) -> list[Channel]:
+        if channel_ids is None:
+            return self._list()  # type: ignore[return-value]
+        cols = [c for c in headers_for(Channel) if c != "raw_json"]
+        col_sql = ", ".join(f'"{c}"' for c in cols)
+        rows = self._db.execute(
+            f'SELECT {col_sql} FROM "channels" WHERE "channel_id" = ANY(%(ids)s)',
+            {"ids": list(channel_ids)},
+        )
+        return [_row(Channel, r) for r in rows]  # type: ignore[return-value]
 
     def list_channel_titles(self) -> dict[str, str]:
         rows = self._db.execute('SELECT "channel_id", "title" FROM "channels"')
@@ -296,10 +304,21 @@ class SqlVideoRepository(_SqlEntityRepository, VideoRepository):
     def get_video(self, video_id: str) -> Video | None:
         return self._get(video_id)  # type: ignore[return-value]
 
-    def list_videos(self, channel_id: str | None = None) -> list[Video]:
+    def list_videos(
+        self,
+        channel_id: str | None = None,
+        video_ids: list[str] | None = None,
+    ) -> list[Video]:
         cols = [c for c in headers_for(Video) if c != "raw_json"]
         col_sql = ", ".join(f'"{c}"' for c in cols)
-        if channel_id is None:
+        if video_ids is not None:
+            # Scope to the explicit id set (bounded query; avoids a full-table scan
+            # for audience-detail lookups that only need a handful of videos).
+            rows = self._db.execute(
+                f'SELECT {col_sql} FROM "videos" WHERE "video_id" = ANY(%(vids)s)',
+                {"vids": list(video_ids)},
+            )
+        elif channel_id is None:
             rows = self._db.execute(f'SELECT {col_sql} FROM "videos"')
         else:
             rows = self._db.execute(

@@ -134,6 +134,11 @@ export interface NetworkGraphProps {
    * of internal click state (used to open the inspector from ranking rows). */
   inspectNodeId?: string | null;
   onInspectNodeChange?: (id: string | null) => void;
+  /** Controlled community filter: when set to a community id, only nodes in that
+   * community are shown (the rest are hidden). "all" shows everything. */
+  communityId?: number | "all";
+  /** Called whenever the community filter changes (keeps external controls in sync). */
+  onCommunityIdChange?: (id: number | "all") => void;
 }
 
 const roleColors: Record<GraphNodeKind, string> = {
@@ -344,6 +349,8 @@ export function NetworkGraph({
   loadCommenterDetail,
   inspectNodeId,
   onInspectNodeChange,
+  communityId: controlledCommunityId,
+  onCommunityIdChange,
 }: NetworkGraphProps) {
   const { theme } = useTheme();
   const [colorMode, setColorMode] = useState<"role" | "layer" | "community">(initialColorMode);
@@ -400,7 +407,12 @@ export function NetworkGraph({
   const [search, setSearch] = useState("");
   const [minDegree, setMinDegree] = useState(0);
   const [kinds, setKinds] = useState<GraphNodeKind[]>([]);
-  const [communityId, setCommunityId] = useState<number | "all">("all");
+  const [communityIdState, setCommunityIdState] = useState<number | "all">("all");
+  const communityId = controlledCommunityId ?? communityIdState;
+  const setCommunityId = (id: number | "all") => {
+    setCommunityIdState(id);
+    onCommunityIdChange?.(id);
+  };
 
   const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -1335,8 +1347,8 @@ function CommenterDetailBody({ detail }: { detail: CommenterDetail }) {
           </h5>
           <ul className="space-y-0.5 text-xs text-muted-foreground">
             {detail.videos.slice(0, 8).map((v) => (
-              <li key={v.id} className="truncate">
-                {v.title ?? v.id} · {v.comment_count}
+              <li key={v.video_id} className="truncate">
+                {v.title ?? v.video_id} · {v.comment_count}
               </li>
             ))}
           </ul>

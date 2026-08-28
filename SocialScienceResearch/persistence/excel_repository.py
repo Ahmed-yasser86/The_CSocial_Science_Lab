@@ -147,8 +147,11 @@ class ExcelChannelRepository(_ExcelEntityRepository, ChannelRepository):
     def get_channel(self, channel_id: str) -> Channel | None:
         return self._get(channel_id)  # type: ignore[return-value]
 
-    def list_channels(self) -> list[Channel]:
-        return self._list()  # type: ignore[return-value]
+    def list_channels(self, channel_ids: list[str] | None = None) -> list[Channel]:
+        channels = self._list()  # type: ignore[return-value]
+        if channel_ids is not None:
+            channels = [c for c in channels if c.channel_id in set(channel_ids)]
+        return channels
 
     def save_channel_observation(self, observation: ChannelObservation) -> None:
         self._save_observation(observation)
@@ -186,10 +189,15 @@ class ExcelVideoRepository(_ExcelEntityRepository, VideoRepository):
     def get_video(self, video_id: str) -> Video | None:
         return self._get(video_id)  # type: ignore[return-value]
 
-    def list_videos(self, channel_id: str | None = None) -> list[Video]:
+    def list_videos(
+        self, channel_id: str | None = None, video_ids: list[str] | None = None
+    ) -> list[Video]:
         videos = self._list()  # type: ignore[return-value]
         if channel_id is not None:
             videos = [v for v in videos if v.channel_id == channel_id]
+        if video_ids is not None:
+            wanted = set(video_ids)
+            videos = [v for v in videos if v.video_id in wanted]
         return videos
 
     def list_videos_by_run(self, run_id: str) -> list[Video]:

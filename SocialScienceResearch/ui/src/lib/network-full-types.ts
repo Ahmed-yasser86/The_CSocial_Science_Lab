@@ -400,8 +400,8 @@ export interface CommenterDetail {
     published_at: string | null;
     is_author: boolean;
   }[];
-  videos: { id: string; title: string | null; comment_count: number }[];
-  channels: { id: string; title: string | null; comment_count: number }[];
+  videos: { video_id: string; title: string | null; comment_count: number }[];
+  channels: { channel_id: string; title: string | null; comment_count: number }[];
   algorithm?: string | null;
   computed_at?: string | null;
 }
