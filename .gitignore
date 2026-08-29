@@ -231,3 +231,28 @@ frontend*.out
 frontend*.err
 ui_serve.err
 ui_serve.out
+
+# ---- Cloned external repo kept locally, not part of this project ----
+OpenGenerativeUI/
+
+# ---- Session/scratch artifacts generated while working in this repo ----
+ui.err
+ui.out
+intelligence_graph.png
+Retrival_Pipline/Graph/intelligence_graph.png
+Test Subject_*.md
+
+# ---- Runtime logs / scratch responses / generated session data ----
+intelligence_data/
+*.res
+agent.page.html
+Retrival_Pipline/*.err
+Retrival_Pipline/*.out
+Retrival_Pipline/*.res
+Retrival_Pipline/agent-ui/
+SocialScienceResearch/ui/*.err
+SocialScienceResearch/ui/*.out
+SocialScienceResearch/ui/agent.page.html
+SocialScienceResearch/ui/cpk-install.*
+SocialScienceResearch/ui/nextdev.*
+SocialScienceResearch/ui/ui.dev.*
