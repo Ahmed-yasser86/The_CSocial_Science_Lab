@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gpt-researcher"))
 
-from gpt_researcher.multi_agents.agents.writer import WriterAgent
+from multi_agents.agents.writer import WriterAgent
 
 
 @pytest.mark.asyncio

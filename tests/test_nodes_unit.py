@@ -451,9 +451,8 @@ async def test_summarize_briefings_mocked(base_state, monkeypatch):
         )
     )
     monkeypatch.setattr(research_compressor_node, "intelligence_compressor", fake_llm)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as b1, \
-         tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as b2:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as b1, \
+         tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as b2:
         b1.write("briefing one")
         b2.write("briefing two")
         p1, p2 = b1.name, b2.name

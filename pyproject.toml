@@ -282,6 +282,8 @@ pythonpath = [
     ".",
     "Ingestion_Pipline",
     "RetrievalPipeline",
-    "RetrievalPipeline/Graph/Chains"
+    "RetrievalPipeline/Graph",
+    "RetrievalPipeline/Graph/Chains",
+    "gpt-researcher"
 ]
 testpaths = ["RetrievalPipeline/Graph/Chains/tests"]

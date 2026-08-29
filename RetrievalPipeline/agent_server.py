@@ -906,18 +906,20 @@ async def agent_stop(threadId: str):
     return {"status": "ok"}
 
 
+app = FastAPI(title="Research Agent Server", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(agent_router)
+register_agent(app)
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    _app = FastAPI(title="Research Agent Server", version="0.1.0")
-    _app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    _app.include_router(agent_router)
-    register_agent(_app)
     port = int(os.getenv("AGENT_BACKEND_PORT", "8001"))
-    uvicorn.run(_app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
