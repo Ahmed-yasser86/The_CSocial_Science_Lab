@@ -30,7 +30,17 @@ async def make_identity_research(state: GraphState) -> Dict[str, Any]:
     
     # Perform research
     result = await research_identity(query=query)
-    
+
+    # `result["subtopics"]` is a pydantic `Subtopics` model; flatten it to a
+    # plain list[str] so the graph state stays JSON-serializable downstream.
+    _raw = result.get("subtopics")
+    if isinstance(_raw, list):
+        subtopics = [getattr(s, "task", str(s)) for s in _raw]
+    elif hasattr(_raw, "subtopics"):
+        subtopics = [getattr(s, "task", str(s)) for s in _raw.subtopics]
+    else:
+        subtopics = []
+
     # Return only IdentityData fields
     return {
         "identity_data": {
@@ -38,7 +48,7 @@ async def make_identity_research(state: GraphState) -> Dict[str, Any]:
             "sources": result["source_urls"],
             "research_sources": result["research_sources"],
             "costs": result["costs"],
-            "subtopics": result.get("subtopics", []),
+            "subtopics": subtopics,
             "needs_reprocessing": False,  # Reset for next cycle
             "feedback_notes": "",  # Reset feedback after research
             "research_iteration": iteration  # Preserve iteration count
