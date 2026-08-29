@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: social_science_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: social_science
+    ports:
+      - "5432:5432"
+    volumes:
+      - social_science_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  social_science_pgdata:

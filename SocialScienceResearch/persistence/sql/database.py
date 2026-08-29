@@ -13,6 +13,7 @@ via ``SqlDatabase.create_schema()``.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from psycopg.rows import dict_row
@@ -20,9 +21,14 @@ from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
-#: Default connection string (matches the local dev Postgres created during the
-#: migration; override via ``SOCIAL_DATABASE_URL``).
-DEFAULT_DATABASE_URL = "postgresql://postgres:123456@localhost:5432/social_science"
+#: Default connection string. Override with the ``SOCIAL_DATABASE_URL`` env var so a
+#: forked copy works against any PostgreSQL (e.g. a local ``docker compose up -d``
+#: instance). For zero-setup local dev, docker-compose.yml provisions a Postgres
+#: matching these exact credentials.
+DEFAULT_DATABASE_URL = os.environ.get(
+    "SOCIAL_DATABASE_URL",
+    "postgresql://postgres:123456@localhost:5432/social_science",
+)
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -348,6 +354,33 @@ def build_schema_sql() -> str:
     return "\n\n".join(statements)
 
 
+def ensure_database_exists(url: str) -> None:
+    """Create the target database if it does not exist yet.
+
+    Lets a freshly forked repo boot against a Postgres server without a manual
+    ``createdb`` step (plug-and-play). Connects to the default ``postgres``
+    database, checks ``pg_database``, and runs ``CREATE DATABASE`` when missing.
+    """
+    from urllib.parse import urlparse
+
+    from psycopg import connect
+
+    parsed = urlparse(url)
+    dbname = parsed.path.lstrip("/") or "social_science"
+    admin = parsed._replace(path="/postgres")
+    try:
+        with connect(admin.geturl(), connect_timeout=5) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,))
+                if cur.fetchone() is None:
+                    # Identifier can't be parameterized; dbname comes from our own URL.
+                    cur.execute(f'CREATE DATABASE "{dbname}"')
+                    logger.info("Auto-created database %s", dbname)
+    except Exception as exc:  # noqa: BLE001 - Postgres may be absent / wrong creds
+        logger.warning("Could not auto-create database %s: %s", dbname, exc)
+
+
 class SqlDatabase:
     """Thread-safe PostgreSQL connection pool with JSONB helpers."""
 
@@ -366,6 +399,8 @@ class SqlDatabase:
 
     def create_schema(self) -> None:
         """Create all tables/indexes idempotently."""
+        # Auto-provision the database so a fork boots without a manual createdb.
+        ensure_database_exists(self._url)
         # Run column migrations FIRST: on an existing database the CREATE TABLE
         # statements are no-ops, so any column that backs a new index must
         # exist before the index DDL runs.
