@@ -75,9 +75,48 @@ def _get_global_embed_request_limiter() -> Any:
 
 def build_embeddings(
     settings: EmbeddingSettings | None = None,
-) -> GoogleGenerativeAIEmbeddings:
+) -> Any:
+    """Build an embedder, honoring the ``EMBEDDING`` env var.
+
+    ``EMBEDDING`` is ``provider:model`` — e.g. ``cohere:embed-multilingual-v3.0``,
+    ``openai:text-embedding-3-large`` or ``google_genai:gemini-embedding-2-preview``.
+    When unset or unrecognized, Google Generative AI embeddings are used (the
+    historical default).
+    """
     settings = settings or EmbeddingSettings()
-    embedder = GoogleGenerativeAIEmbeddings(model=settings.model or DEFAULT_EMBEDDING_MODEL)
+    spec = (os.environ.get("EMBEDDING") or "").strip()
+    if ":" in spec:
+        provider, model = spec.split(":", 1)
+        provider, model = provider.strip().lower(), model.strip()
+    else:
+        provider, model = "google_genai", (spec or settings.model or DEFAULT_EMBEDDING_MODEL)
+
+    embedder: Any = None
+    if provider in ("cohere",):
+        try:
+            from langchain_cohere import CohereEmbeddings
+        except Exception:
+            logger.warning("langchain_cohere unavailable; falling back to Google GenAI embeddings")
+        else:
+            embedder = CohereEmbeddings(
+                model=model or "embed-multilingual-v3.0",
+                cohere_api_key=os.environ.get("COHERE_API_KEY", ""),
+            )
+    elif provider in ("openai", "openai_compatible"):
+        try:
+            from langchain_openai import OpenAIEmbeddings
+        except Exception:
+            logger.warning("langchain_openai unavailable; falling back to Google GenAI embeddings")
+        else:
+            embedder = OpenAIEmbeddings(
+                model=model,
+                api_key=os.environ.get("OPENAI_API_KEY", ""),
+                base_url=os.environ.get("OPENAI_BASE_URL") or None,
+            )
+
+    if embedder is None:
+        embedder = GoogleGenerativeAIEmbeddings(model=model or settings.model or DEFAULT_EMBEDDING_MODEL)
+
     limiter = _get_global_embed_request_limiter()
     if limiter is not None:
         embedder = _RequestRateLimitedEmbedder(embedder, limiter)

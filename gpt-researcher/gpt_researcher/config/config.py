@@ -83,9 +83,20 @@ class Config:
             self.retrievers = ["tavily"]
 
     def _set_embedding_attributes(self) -> None:
-        """Parse and set embedding provider and model attributes."""
+        """Parse and set embedding provider and model attributes.
+
+        GPT Researcher uses GPT_RESEARCHER_EMBEDDING when set, otherwise falls
+        back to the shared EMBEDDING variable (used by ingestion / graph retrieval).
+        """
+        resolved = (
+            os.getenv("GPT_RESEARCHER_EMBEDDING")
+            or getattr(self, "embedding", None)
+            or os.getenv("EMBEDDING")
+            or ""
+        )
+        self.embedding = resolved
         self.embedding_provider, self.embedding_model = self.parse_embedding(
-            self.embedding
+            resolved
         )
 
     def _set_llm_attributes(self) -> None:
