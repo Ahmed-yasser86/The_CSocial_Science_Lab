@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
+# Structured, production-grade state logging streamed to the UI via /api/agent/logs.
+from loghub import LOG_HUB
+
 # Import all nodes
 from StateGraph import GraphState
 from Nodes import (
@@ -502,12 +505,64 @@ def create_initial_state(
 # Build workflow
 workflow = StateGraph(GraphState)
 
-# Add nodes
-workflow.add_node(IDENTITY_RESEARCH, make_identity_research)
-workflow.add_node(PROFILE_SUMMARIZATION, profile_summarization_node)
-workflow.add_node(SUBJECT_INTELLIGENCE, subject_intelligence_node)
-workflow.add_node(AUDIENCE_INTELLIGENCE, audience_intelligence_node)
-workflow.add_node(ECOSYSTEM_INTELLIGENCE, ecosystem_intelligence_node)
+
+def _state_label(key: str) -> str:
+    return {
+        IDENTITY_RESEARCH: "Identity Research",
+        PROFILE_SUMMARIZATION: "Profile Summarization",
+        SUBJECT_INTELLIGENCE: "Subject Intelligence",
+        AUDIENCE_INTELLIGENCE: "Audience Intelligence",
+        ECOSYSTEM_INTELLIGENCE: "Ecosystem Intelligence",
+    }.get(key, key)
+
+
+def _stage_wrap(key: str, fn):
+    """Wrap a graph node so the UI always knows exactly which state the agent is in."""
+
+    async def _wrapped(state: GraphState):
+        run_id = state.get("session_id")
+        label = _state_label(key)
+        if run_id:
+            await LOG_HUB.put(run_id, {
+                "type": "stage_start",
+                "stage": label,
+                "state_key": key,
+                "run_id": run_id,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            })
+        try:
+            result = await fn(state)
+        except Exception as e:
+            if run_id:
+                await LOG_HUB.put(run_id, {
+                    "type": "error",
+                    "stage": label,
+                    "state_key": key,
+                    "message": str(e),
+                    "run_id": run_id,
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                })
+            raise
+        if run_id:
+            await LOG_HUB.put(run_id, {
+                "type": "stage_done",
+                "stage": label,
+                "state_key": key,
+                "run_id": run_id,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            })
+        return result
+
+    _wrapped.__name__ = getattr(fn, "__name__", key)
+    return _wrapped
+
+
+# Add nodes (each wrapped so the agent's current state is always observable)
+workflow.add_node(IDENTITY_RESEARCH, _stage_wrap(IDENTITY_RESEARCH, make_identity_research))
+workflow.add_node(PROFILE_SUMMARIZATION, _stage_wrap(PROFILE_SUMMARIZATION, profile_summarization_node))
+workflow.add_node(SUBJECT_INTELLIGENCE, _stage_wrap(SUBJECT_INTELLIGENCE, subject_intelligence_node))
+workflow.add_node(AUDIENCE_INTELLIGENCE, _stage_wrap(AUDIENCE_INTELLIGENCE, audience_intelligence_node))
+workflow.add_node(ECOSYSTEM_INTELLIGENCE, _stage_wrap(ECOSYSTEM_INTELLIGENCE, ecosystem_intelligence_node))
 
 # Set entry point
 workflow.set_entry_point(IDENTITY_RESEARCH)
