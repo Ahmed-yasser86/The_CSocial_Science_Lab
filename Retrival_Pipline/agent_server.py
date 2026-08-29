@@ -28,8 +28,11 @@ import re
 import sys
 import uuid
 import json
+import queue
 import asyncio
 import logging
+import contextvars
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -39,8 +42,11 @@ from dotenv import load_dotenv
 GRAPH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Graph")
 if GRAPH_DIR not in sys.path:
     sys.path.insert(0, GRAPH_DIR)
+# Retrival_Pipline root (holds sample_profile.txt / briefing_*.txt used as
+# run defaults when the UI does not supply input_paths).
+RETRIVAL_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from fastapi import FastAPI, Query, Request, HTTPException  # noqa: E402
+from fastapi import APIRouter, FastAPI, Query, Request, HTTPException  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from sse_starlette.sse import EventSourceResponse  # noqa: E402
@@ -51,7 +57,10 @@ from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 # same file the user edits by hand.
 ROOT_ENV = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
 if os.path.exists(ROOT_ENV):
-    load_dotenv(dotenv_path=ROOT_ENV, override=False)
+    # override=True so the repo .env always wins over any pre-existing shell env
+    # vars (otherwise edits made via the AI Config UI / .env would be silently
+    # ignored at runtime).
+    load_dotenv(dotenv_path=ROOT_ENV, override=True)
 log = logging.getLogger("agent_server")
 
 
@@ -91,67 +100,78 @@ def _token_usage(response: Any) -> Optional[Dict[str, int]]:
 
 # --------------------------------------------------------------------------- #
 # Log hub: in-process pub/sub with replay buffer per run
+# (defined in loghub.py so the research graph can emit events too)
 # --------------------------------------------------------------------------- #
-class LogHub:
-    def __init__(self) -> None:
-        self._runs: Dict[str, Dict[str, Any]] = {}
-        # Global fan-out: a single stream of every event, used when the UI
-        # does not (yet) know a specific run_id.
-        self._global_events: List[Dict[str, Any]] = []
-        self._global_subs: List["asyncio.Queue"] = []
+from loghub import LOG_HUB  # noqa: E402
 
-    def subscribe(self, run_id: str) -> "asyncio.Queue":
-        run = self._runs.setdefault(run_id, {"events": [], "subs": [], "done": False})
-        q: "asyncio.Queue" = asyncio.Queue()
-        for ev in run["events"]:
-            q.put_nowait(ev)
-        if run["done"]:
-            q.put_nowait({"type": "done", "run_id": run_id})
-        run["subs"].append(q)
-        return q
 
-    def subscribe_global(self) -> "asyncio.Queue":
-        q: "asyncio.Queue" = asyncio.Queue()
-        for ev in self._global_events:
-            q.put_nowait(ev)
-        self._global_subs.append(q)
-        return q
+# --------------------------------------------------------------------------- #
+# Backend log forwarding: pipe Python logging (gpt_researcher, research, httpx,
+# langchain, ...) into the LogHub so the UI's Activity panel shows the REAL
+# backend console instead of only structured stage events.
+# --------------------------------------------------------------------------- #
+LOG_RUN_ID = contextvars.ContextVar("log_run_id", default=None)
 
-    async def put(self, run_id: str, event: Dict[str, Any]) -> None:
-        run = self._runs.setdefault(run_id, {"events": [], "subs": [], "done": False})
-        run["events"].append(event)
-        if len(run["events"]) > 2000:
-            run["events"] = run["events"][-2000:]
-        for q in list(run["subs"]):
-            try:
-                q.put_nowait(event)
-            except Exception:
-                pass
-        # Global fan-out (capped replay buffer).
-        self._global_events.append(event)
-        if len(self._global_events) > 4000:
-            self._global_events = self._global_events[-4000:]
-        for q in list(self._global_subs):
-            try:
-                q.put_nowait(event)
-            except Exception:
-                pass
+# A dedicated event loop (in its own daemon thread) drives the async push of
+# log records into the LogHub. Going through this loop (instead of the uvicorn
+# loop) means logs flow reliably even from worker threads / callbacks.
+_DRAIN_LOOP = asyncio.new_event_loop()
 
-    async def done(self, run_id: str) -> None:
-        run = self._runs.get(run_id)
-        if not run or run["done"]:
+
+def _run_drain_loop() -> None:
+    asyncio.set_event_loop(_DRAIN_LOOP)
+    _DRAIN_LOOP.run_forever()
+
+
+threading.Thread(target=_run_drain_loop, daemon=True).start()
+
+
+class LogForwarder(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+        except Exception:
             return
-        run["done"] = True
-        ev = {"type": "done", "run_id": run_id, "ts": _now()}
-        run["events"].append(ev)
-        for q in list(run["subs"]):
-            try:
-                q.put_nowait(ev)
-            except Exception:
-                pass
+        rid = LOG_RUN_ID.get()
+        ev = {
+            "type": "log",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": msg,
+            "run_id": rid,
+            "ts": _now(),
+        }
+        # Schedule the async hub write on the dedicated loop (thread-safe).
+        try:
+            _DRAIN_LOOP.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(LOG_HUB.put(rid or "backend", ev))
+            )
+        except Exception:
+            pass
 
 
-LOG_HUB = LogHub()
+class _NoUvicornFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.name.startswith("uvicorn")
+
+
+def install_log_forwarding() -> None:
+    root = logging.getLogger()
+    if any(isinstance(h, LogForwarder) for h in root.handlers):
+        return
+    fwd = LogForwarder()
+    fwd.setLevel(logging.INFO)
+    fwd.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    fwd.addFilter(_NoUvicornFilter())
+    root.addHandler(fwd)
+    # Ensure the libraries we care about actually emit INFO-level records.
+    for name in ("gpt_researcher", "research", "langchain", "httpx",
+                 "agent_server", "copilotkit", "ag_ui_langgraph"):
+        logging.getLogger(name).setLevel(logging.INFO)
+    log.info("Backend log forwarding installed (-> LogHub).")
+
+
+install_log_forwarding()
 
 
 # --------------------------------------------------------------------------- #
@@ -211,7 +231,7 @@ class ResearchLoggerCallbackHandler(BaseCallbackHandler):
 
     async def on_llm_end(self, response, *, name=None, **kwargs):
         await LOG_HUB.put(self.run_id, {
-            "type": "llm", "action": "end", "model": _model_name(serialized),
+            "type": "llm", "action": "end", "model": None,
             "tokens": _token_usage(response),
             "run_id": self.run_id, "ts": _now(),
         })
@@ -320,6 +340,15 @@ def _resolve_run_state(body: dict):
 
     ip = body.get("input_paths") or {}
     ip = ip if isinstance(ip, dict) else {}
+    # The UI's "Run pipeline" button does not collect input file paths, so
+    # fall back to the bundled sample profile/briefings so a run can actually
+    # proceed (the user can override by passing input_paths explicitly).
+    if not ip.get("subject_profile_path"):
+        ip["subject_profile_path"] = os.path.join(RETRIVAL_DIR, "sample_profile.txt")
+    if not ip.get("briefing_1_path"):
+        ip["briefing_1_path"] = os.path.join(RETRIVAL_DIR, "briefing_1.txt")
+    if not ip.get("briefing_2_path"):
+        ip["briefing_2_path"] = os.path.join(RETRIVAL_DIR, "briefing_2.txt")
     state = create_initial_state(
         user_query=body.get("user_query") or body.get("user_initial_query") or "",
         subject_profile_path=ip.get("subject_profile_path", "") or "",
@@ -346,16 +375,25 @@ async def _wrapped_ainvoke(state, config=None, **kwargs):
         raise RuntimeError("research graph unavailable")
     state = _flesh_out_state(state)
     patched, run_id = _patch_config(config)
-    await LOG_HUB.put(run_id, {"type": "run_start", "run_id": run_id, "ts": _now()})
+    token = LOG_RUN_ID.set(run_id)
     try:
-        result = await research_graph.ainvoke(state, config=patched, **kwargs)
-    except Exception as e:
-        await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
-                                   "message": str(e), "run_id": run_id, "ts": _now()})
+        await LOG_HUB.put(run_id, {
+            "type": "run_start",
+            "run_id": run_id,
+            "plan": list((state.get("report_plan") or [])),
+            "ts": _now(),
+        })
+        try:
+            result = await research_graph.ainvoke(state, config=patched, **kwargs)
+        except Exception as e:
+            await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
+                                       "message": str(e), "run_id": run_id, "ts": _now()})
+            await LOG_HUB.done(run_id)
+            raise
         await LOG_HUB.done(run_id)
-        raise
-    await LOG_HUB.done(run_id)
-    return result
+        return result
+    finally:
+        LOG_RUN_ID.reset(token)
 
 
 def _wrapped_astream(state, config=None, **kwargs):
@@ -363,16 +401,20 @@ def _wrapped_astream(state, config=None, **kwargs):
     state = _flesh_out_state(state)
 
     async def _gen():
-        await LOG_HUB.put(run_id, {"type": "run_start", "run_id": run_id, "ts": _now()})
+        token = LOG_RUN_ID.set(run_id)
         try:
-            async for chunk in research_graph.astream(state, config=patched, **kwargs):
-                yield chunk
-        except Exception as e:
-            await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
-                                       "message": str(e), "run_id": run_id, "ts": _now()})
-            raise
+            await LOG_HUB.put(run_id, {"type": "run_start", "run_id": run_id, "ts": _now()})
+            try:
+                async for chunk in research_graph.astream(state, config=patched, **kwargs):
+                    yield chunk
+            except Exception as e:
+                await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
+                                            "message": str(e), "run_id": run_id, "ts": _now()})
+                raise
+            finally:
+                await LOG_HUB.done(run_id)
         finally:
-            await LOG_HUB.done(run_id)
+            LOG_RUN_ID.reset(token)
 
     return _gen()
 
@@ -382,42 +424,45 @@ def _wrapped_astream_events(state, config=None, **kwargs):
     state = _flesh_out_state(state)
 
     async def _gen():
-        await LOG_HUB.put(run_id, {"type": "run_start", "run_id": run_id, "ts": _now()})
+        token = LOG_RUN_ID.set(run_id)
         try:
-            async for chunk in research_graph.astream_events(state, config=patched, **kwargs):
-                yield chunk
-        except Exception as e:
-            await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
-                                       "message": str(e), "run_id": run_id, "ts": _now()})
-            raise
+            await LOG_HUB.put(run_id, {"type": "run_start", "run_id": run_id, "ts": _now()})
+            try:
+                async for chunk in research_graph.astream_events(state, config=patched, **kwargs):
+                    yield chunk
+            except Exception as e:
+                await LOG_HUB.put(run_id, {"type": "error", "stage": "pipeline",
+                                            "message": str(e), "run_id": run_id, "ts": _now()})
+                raise
+            finally:
+                await LOG_HUB.done(run_id)
         finally:
-            await LOG_HUB.done(run_id)
+            LOG_RUN_ID.reset(token)
 
     return _gen()
 
 
-if research_graph is not None:
-    research_graph.ainvoke = _wrapped_ainvoke
-    research_graph.astream = _wrapped_astream
-    if hasattr(research_graph, "astream_events"):
-        research_graph.astream_events = _wrapped_astream_events
+# NOTE: the wrappers are invoked directly by the endpoints (e.g. run_agent calls
+# _wrapped_ainvoke). They call the ORIGINAL compiled graph's methods via the
+# `research_graph` reference below. We must NOT monkey-patch `research_graph.ainvoke`
+# with the wrapper, otherwise the wrapper would recurse into itself forever.
 
 
 # --------------------------------------------------------------------------- #
 # FastAPI app
 # --------------------------------------------------------------------------- #
-app = FastAPI(title="Research Agent Server", version="0.1.0")
+agent_router = APIRouter()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Active run registry, used by the UI "Stop run" / cancel button.
+# Each run executes in its OWN worker thread (with its own event loop) so the
+# uvicorn event loop stays free to serve the cancel endpoint + SSE stream even
+# while gpt-researcher is busy (its LLM retry path can block the loop it runs
+# on). We keep a handle to the worker loop + task so cancel can interrupt it.
+RUN_WORKERS: dict[str, "tuple[asyncio.AbstractEventLoop, asyncio.Task]"] = {}
+RUN_CANCEL: dict[str, bool] = {}
 
 
-@app.get("/health")
+@agent_router.get("/health")
 async def health():
     return {"status": "ok", "graph_loaded": research_graph is not None}
 
@@ -440,12 +485,12 @@ AGENT_MANIFEST = {
 }
 
 
-@app.get("/copilotkit/info")
+@agent_router.get("/copilotkit/info")
 async def agent_info():
     return AGENT_MANIFEST
 
 
-@app.get("/api/agent/logs")
+@agent_router.get("/api/agent/logs")
 async def logs(run_id: str = Query(None)):
     queue = LOG_HUB.subscribe_global() if not run_id else LOG_HUB.subscribe(run_id)
 
@@ -460,43 +505,108 @@ async def logs(run_id: str = Query(None)):
     return EventSourceResponse(event_gen())
 
 
-@app.post("/api/agent/run")
+@agent_router.post("/api/agent/run")
 async def run_agent(request: Request):
-    if research_graph is None:
-        return {"ok": False, "error": "research graph not importable in this environment"}
+    # The graph run is executed in a dedicated WORKER THREAD (own event loop) so
+    # the uvicorn loop stays responsive — the run_id is returned immediately, the
+    # UI streams logs live, and the user can CANCEL via POST /api/agent/run/{run_id}/cancel.
+    run_id = None
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
-    try:
+        if research_graph is None:
+            raise RuntimeError("research graph not importable in this environment")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
         state_in, run_id = _resolve_run_state(body)
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
-    config = {"configurable": {"thread_id": run_id}}
+        RUN_CANCEL[run_id] = False
+        # Create the worker loop + task on THIS thread so RUN_WORKERS is populated
+        # synchronously — the cancel endpoint must find the handle immediately,
+        # before the worker thread has had a chance to run.
+        loop = asyncio.new_event_loop()
+        task = loop.create_task(_run_graph_async(state_in, run_id, body))
+        RUN_WORKERS[run_id] = (loop, task)
+        threading.Thread(
+            target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+            daemon=True,
+        ).start()
+        return {"ok": True, "run_id": run_id, "report_plan": normalize_report_plan(body.get("stages"))}
+    except Exception as e:  # noqa: BLE001 - surface as JSON + log event, never 500
+        msg = str(e) or repr(e)
+        try:
+            rid = run_id or f"run_{uuid.uuid4().hex[:12]}"
+            await LOG_HUB.put(rid, {"type": "error", "stage": "pipeline", "message": msg, "run_id": rid, "ts": _now()})
+            await LOG_HUB.done(rid)
+        except Exception:
+            pass
+        return {"ok": False, "error": msg}
+
+
+async def _run_graph_async(state_in: dict, run_id: str, body: dict) -> None:
     try:
+        config = {"configurable": {"thread_id": run_id}}
         final_state = await _wrapped_ainvoke(state_in, config=config)
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-    reports = final_state.get("reports", {}) if isinstance(final_state, dict) else {}
-    summary = {
-        "run_folder": final_state.get("run_folder"),
-        "reports": {
-            k: {
-                "path": (v.get("path") if isinstance(v, dict) else None),
-                "chars": len(v.get("content", "")) if isinstance(v, dict) else 0,
-                "sources": len(v.get("sources", [])) if isinstance(v, dict) else 0,
-                "costs": v.get("costs") if isinstance(v, dict) else None,
-            }
-            for k, v in reports.items()
-            if isinstance(v, dict)
-        },
-    }
-    return {"ok": True, "run_id": run_id, "report_plan": normalize_report_plan(body.get("stages")), "summary": summary}
+        reports = final_state.get("reports", {}) if isinstance(final_state, dict) else {}
+        summary = {
+            "run_folder": (str(final_state.get("run_folder")) if isinstance(final_state, dict) and final_state.get("run_folder") is not None else None),
+            "reports": {
+                k: {
+                    "path": (str(v.get("path")) if isinstance(v, dict) and v.get("path") is not None else None),
+                    "chars": len(v.get("content", "")) if isinstance(v, dict) else 0,
+                    "sources": len(v.get("sources", [])) if isinstance(v, dict) else 0,
+                    "costs": (v.get("costs") if isinstance(v, dict) and isinstance(v.get("costs"), (int, float, dict)) else (str(v.get("costs")) if isinstance(v, dict) and v.get("costs") is not None else None)),
+                }
+                for k, v in reports.items()
+                if isinstance(v, dict)
+            },
+        }
+        # _wrapped_ainvoke already emitted a "done" event on success; announce the
+        # completed summary so the UI can refresh the reports panel.
+        await LOG_HUB.put(run_id, {"type": "run_complete", "run_id": run_id, "summary": summary, "ts": _now()})
+    except asyncio.CancelledError:
+        # Cancelled by the UI "Stop run" button — end the SSE stream cleanly.
+        try:
+            await LOG_HUB.done(run_id)
+        except Exception:
+            pass
+    except Exception:
+        # _wrapped_ainvoke already emitted an error + done event.
+        pass
+    finally:
+        # Clean up the registry and stop the worker loop so the thread can exit.
+        RUN_WORKERS.pop(run_id, None)
+        RUN_CANCEL.pop(run_id, None)
+        try:
+            loop = asyncio.get_event_loop()
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
 
 
-@app.get("/api/agent/runs")
+@agent_router.post("/api/agent/run/{run_id}/cancel")
+async def cancel_run(run_id: str):
+    # Signal + force-cancel the worker run task. The task's CancelledError handler
+    # closes the SSE stream; we also emit a "cancelled" event immediately so the UI
+    # reflects the stop without waiting for the graph to unwind.
+    RUN_CANCEL[run_id] = True
+    worker = RUN_WORKERS.get(run_id)
+    if worker is not None:
+        loop, task = worker
+        if not task.done():
+            loop.call_soon_threadsafe(task.cancel)
+        try:
+            await LOG_HUB.put(run_id, {"type": "cancelled", "run_id": run_id,
+                                       "message": "Run cancelled by user.", "ts": _now()})
+        except Exception:
+            pass
+        return {"ok": True, "cancelled": True, "run_id": run_id}
+    # Run already finished / unknown — nothing to cancel, but report success.
+    return {"ok": True, "cancelled": False, "run_id": run_id}
+
+
+@agent_router.get("/api/agent/runs")
 async def list_runs():
     try:
         store = get_store()
@@ -512,7 +622,7 @@ async def list_runs():
         return {"runs": [], "error": str(e)}
 
 
-@app.get("/api/agent/runs/{run_id}")
+@agent_router.get("/api/agent/runs/{run_id}")
 async def get_run(run_id: str):
     store = get_store()
     session = store.get_session(run_id)
@@ -525,7 +635,7 @@ async def get_run(run_id: str):
     return {"session": session, "reports": reports}
 
 
-@app.get("/api/agent/runs/{run_id}/reports/{report_key}")
+@agent_router.get("/api/agent/runs/{run_id}/reports/{report_key}")
 async def get_run_report(run_id: str, report_key: str):
     store = get_store()
     rec = store.get_report(run_id, report_key)
@@ -682,7 +792,7 @@ def apply_env_values(values: Dict[str, str], path: str = ROOT_ENV) -> List[str]:
     return written
 
 
-@app.get("/api/agent/env")
+@agent_router.get("/api/agent/env")
 async def get_env():
     return {
         "groups": ENV_GROUPS,
@@ -691,7 +801,7 @@ async def get_env():
     }
 
 
-@app.post("/api/agent/env")
+@agent_router.post("/api/agent/env")
 async def post_env(request: Request):
     try:
         body = await request.json()
@@ -707,7 +817,7 @@ async def post_env(request: Request):
     return {"ok": True, "written": written, "path": ROOT_ENV}
 
 
-@app.get("/api/agent/ai-config")
+@agent_router.get("/api/agent/ai-config")
 async def get_ai_config():
     """Dynamic AI service/provider catalog + current values (source of truth)."""
     return {
@@ -721,7 +831,16 @@ async def get_ai_config():
 # --------------------------------------------------------------------------- #
 # CopilotKit AGUI runtime (only when the graph is available)
 # --------------------------------------------------------------------------- #
-if research_graph is not None:
+def register_agent(app: "FastAPI") -> None:
+    """Mount the CopilotKit AGUI runtime onto the (single) backend app.
+
+    Kept separate from the router so the runtime is attached to whatever real
+    FastAPI app serves it (the merged social-science backend, or the standalone
+    dev server).
+    """
+    if research_graph is None:
+        log.warning("research graph not importable; CopilotKit runtime not mounted")
+        return
     try:
         from copilotkit import LangGraphAGUIAgent
         from ag_ui_langgraph import add_langgraph_fastapi_endpoint
@@ -744,9 +863,24 @@ if research_graph is not None:
     except Exception as e:  # pragma: no cover
         log.warning("CopilotKit endpoint could not be mounted: %s", e)
 
+    # Never let an exception escape as a silent plain-text 500: return JSON and
+    # surface it as a log-hub error event the UI can render.
+    @app.exception_handler(Exception)
+    async def _unhandled_exc(request: "Request", exc: Exception):
+        from fastapi.responses import JSONResponse
+
+        msg = str(exc) or repr(exc)
+        try:
+            log.exception("Unhandled exception on %s %s", request.method, request.url.path)
+            await LOG_HUB.put("backend", {"type": "error", "stage": "server",
+                                          "message": f"500: {msg}", "run_id": "backend", "ts": _now()})
+        except Exception:
+            pass
+        return JSONResponse(status_code=500, content={"ok": False, "error": msg})
+
 
 # Minimal stubs for the AGUI client's optional lifecycle calls so they don't 404.
-@app.post("/copilotkit/agent/research_agent/connect")
+@agent_router.post("/copilotkit/agent/research_agent/connect")
 async def agent_connect(request: Request):
     async def _gen():
         yield ": connected\n\n"
@@ -760,7 +894,7 @@ async def agent_connect(request: Request):
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
 
-@app.post("/copilotkit/agent/research_agent/stop/{threadId}")
+@agent_router.post("/copilotkit/agent/research_agent/stop/{threadId}")
 async def agent_stop(threadId: str):
     return {"status": "ok"}
 
@@ -768,5 +902,15 @@ async def agent_stop(threadId: str):
 if __name__ == "__main__":
     import uvicorn
 
+    _app = FastAPI(title="Research Agent Server", version="0.1.0")
+    _app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    _app.include_router(agent_router)
+    register_agent(_app)
     port = int(os.getenv("AGENT_BACKEND_PORT", "8001"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(_app, host="0.0.0.0", port=port)
