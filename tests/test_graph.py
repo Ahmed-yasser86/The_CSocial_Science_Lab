@@ -16,12 +16,22 @@ from RetrievalPipeline.Graph.intelligence_graph import (
     PROFILE_SUMMARIZATION,
     SUBJECT_INTELLIGENCE,
     AUDIENCE_INTELLIGENCE,
-    ECOSYSTEM_INTELLIGENCE
-)
-
-
-@pytest.fixture
-def test_data_dir():
+    ECOSYSTEM_INTELLIGENCE
+)
+
+
+def _live_tests_enabled() -> bool:
+    return os.getenv("RUN_LIVE_TESTS") == "1"
+
+
+pytestmark = pytest.mark.skipif(
+    not _live_tests_enabled(),
+    reason="live integration test: set RUN_LIVE_TESTS=1 with valid LLM/MCP credentials and network",
+)
+
+
+@pytest.fixture
+def test_data_dir():
     """Fixture providing path to test data directory."""
     return os.path.join(os.path.dirname(__file__), "test_data")
 

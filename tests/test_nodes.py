@@ -22,6 +22,16 @@ from Nodes import (
 )
 
 
+def _live_tests_enabled() -> bool:
+    return os.getenv("RUN_LIVE_TESTS") == "1"
+
+
+pytestmark = pytest.mark.skipif(
+    not _live_tests_enabled(),
+    reason="live integration test: set RUN_LIVE_TESTS=1 with valid LLM/MCP credentials and network",
+)
+
+
 @pytest.fixture
 def sample_state() -> GraphState:
     """Fixture providing a sample state for testing."""
