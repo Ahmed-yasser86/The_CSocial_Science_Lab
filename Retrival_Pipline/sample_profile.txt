@@ -1,0 +1,5 @@
+Subject: ACME Corporation
+Type: Public technology company
+Region: Global
+Summary: ACME Corporation is a multinational technology firm focused on cloud infrastructure and consumer devices. Known for aggressive product launches and a contested public narrative around data privacy.
+Key narratives: innovation leadership, privacy concerns, market dominance.
