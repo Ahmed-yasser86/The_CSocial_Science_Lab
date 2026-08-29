@@ -14,8 +14,8 @@ import pytest
 WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
 sys.path.insert(0, WORKSPACE_ROOT)
 
-from Retrival_Pipline.Graph.Nodes.CompressionNode import research_compressor_node as rc
-from Retrival_Pipline.Graph.persistence import IntelligenceStore
+from RetrievalPipeline.Graph.Nodes.CompressionNode import research_compressor_node as rc
+from RetrievalPipeline.Graph.persistence import IntelligenceStore
 
 
 # ---------------------------------------------------------------------------

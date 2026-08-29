@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from StateGraph import GraphState
 from Ingestion_Pipline.config.settings import ChatModelSettings
-from Retrival_Pipline.Graph.Chains.ChainUtil import build_chat_model
+from RetrievalPipeline.Graph.Chains.ChainUtil import build_chat_model
 
 
 class CompressedIntelligence(BaseModel):

@@ -1,6 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from Retrival_Pipline.Graph.Chains.ChainUtil import build_chat_model
+from RetrievalPipeline.Graph.Chains.ChainUtil import build_chat_model
 
 prompt = ChatPromptTemplate.from_messages(
     [

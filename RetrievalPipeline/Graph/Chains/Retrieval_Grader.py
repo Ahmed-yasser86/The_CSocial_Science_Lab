@@ -8,7 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from Ingestion_Pipline.config.settings import ChatModelSettings, DEFAULT_RETRIEVAL_K, EmbeddingSettings
-from Retrival_Pipline.Graph.Chains.ChainUtil import build_chat_model
+from RetrievalPipeline.Graph.Chains.ChainUtil import build_chat_model
 
 
 class GradeDocuments(BaseModel):

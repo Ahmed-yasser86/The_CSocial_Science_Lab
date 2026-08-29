@@ -10,7 +10,7 @@
 # from Generate import generate_chain  
 # from Ingestion_Pipline.RagRetrival import  retive_query
 # from hallucination_grader import hallucination_grader
-# from Retrival_Grader import GradeDocuments , retrival_grader
+# from Retrieval_Grader import GradeDocuments , retrieval_grader
 # from router import question_router
 
 # embeddings = build_embeddings(EmbeddingSettings())

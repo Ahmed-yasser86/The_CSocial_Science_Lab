@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from pydantic import BaseModel, Field
-from Retrival_Pipline.Graph.Chains.ChainUtil import build_chat_model
+from RetrievalPipeline.Graph.Chains.ChainUtil import build_chat_model
 
 
 class GradeAnswer(BaseModel):
