@@ -123,6 +123,12 @@ class IntelligenceStore:
             row = c.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
         return dict(row) if row else None
 
+    def list_sessions(self, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()]
+
     # -- reports ----------------------------------------------------------
     def add_report(self, session_id: str, report_type: str, path: str,
                    summary: str = "", sources_count: int = 0, costs: float = 0.0,
