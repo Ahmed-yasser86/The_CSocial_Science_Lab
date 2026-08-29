@@ -890,6 +890,32 @@ def create_app(
     app.include_router(session.router, prefix=prefix)
     app.include_router(workspaces.router, prefix=prefix)
 
+    # ------------------------------------------------------------------
+    # Research Agent API (single-backend consolidation).
+    # The agent server (Retrival_Pipline/agent_server.py) is merged into this
+    # one backend rather than running as a separate process. Its routes
+    # (/api/agent/*, /copilotkit/*, /health) are served here on port 8000.
+    # ------------------------------------------------------------------
+    import logging as _logging
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    _log = _logging.getLogger(__name__)
+    _ROOT = _Path(__file__).resolve().parents[2]  # graph-rag-agent
+    _RETRIVAL = str(_ROOT / "Retrival_Pipline")
+    _GRAPH = str(_ROOT / "Retrival_Pipline" / "Graph")
+    for _p in (_RETRIVAL, _GRAPH):
+        if _p not in _sys.path:
+            _sys.path.insert(0, _p)
+    try:
+        from agent_server import agent_router as _agent_router, register_agent as _register_agent
+
+        app.include_router(_agent_router)
+        _register_agent(app)
+        _log.info("Research Agent API mounted (/api/agent/*, /copilotkit/*)")
+    except Exception as _e:  # pragma: no cover
+        _log.warning("Research Agent API could not be mounted: %s", _e)
+
     # Align the initial service binding with the persisted active-workspace
     # pointer (no-op when it still points at the default/Legacy configuration).
     runtime.sync(app)
