@@ -335,3 +335,59 @@ def test_community_insights_endpoint_200(client):
     comm = body["communities"][0]
     assert "dominant_kinds" in comm
     assert "top_bridges" in comm
+
+
+# ----------------------------------------------------------------------
+# N3 acceptance: roles deterministic (seed=42), community composition schema,
+# and the full centrality battery (all measures + global assortativity).
+# ----------------------------------------------------------------------
+
+
+def test_roles_deterministic_and_schema(tmp_path):
+    svc = CommenterNetworkService(_repos(tmp_path))
+    r1 = svc.roles(video_ids=["v1", "v2"], projection="commenter")
+    r2 = svc.roles(video_ids=["v1", "v2"], projection="commenter")
+    assert r1["role_model"] == "core_broker_periphery_bridge"
+    assert r1["algorithm"] == "networkx"
+    # louvain(seed=42) + percentile thresholds => identical across calls.
+    assert r1["nodes"] == r2["nodes"]
+    valid = {"core", "broker", "bridge", "periphery"}
+    for node in r1["nodes"].values():
+        assert node["role"] in valid
+        assert "community_id" in node
+
+
+def test_community_insights_schema_service(tmp_path):
+    svc = CommenterNetworkService(_repos(tmp_path))
+    out = svc.community_insights(video_ids=["v1", "v2"], projection="commenter")
+    assert out["algorithm"] == "networkx"
+    assert len(out["communities"]) >= 1
+    for c in out["communities"]:
+        assert c["size"] >= 1
+        assert "dominant_kinds" in c
+        assert "top_bridges" in c
+        for b in c["top_bridges"]:
+            assert "id" in b and "label" in b and "betweenness" in b
+
+
+def test_centralities_full_battery(tmp_path):
+    svc = CommenterNetworkService(_repos(tmp_path))
+    out = svc.centralities(video_ids=["v1", "v2"], projection="commenter")
+    assert out.algorithm == "networkx"
+    # N3 full battery (Burt structural-hole + bridging + clustering included).
+    measures = {
+        "degree",
+        "closeness",
+        "eigenvector",
+        "betweenness",
+        "pagerank",
+        "harmonic",
+        "constraint",
+        "effective_size",
+        "bridging",
+        "clustering",
+    }
+    assert out.nodes
+    for vals in out.nodes.values():
+        for m in measures:
+            assert isinstance(getattr(vals, m), (int, float)), m
