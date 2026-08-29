@@ -2,25 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   canContinue,
   isTerminalDetection,
-  scoreBand,
   shapeTimeline,
   type EchoDetection,
   type EchoLayerSnapshot,
 } from "@/lib/echo-chamber";
-
-describe("scoreBand", () => {
-  it("maps plan §2.2 band edges", () => {
-    expect(scoreBand(null)).toBeNull();
-    expect(scoreBand(0)).toBe("no_chamber_yet");
-    expect(scoreBand(0.399)).toBe("no_chamber_yet");
-    expect(scoreBand(0.4)).toBe("weak");
-    expect(scoreBand(0.6)).toBe("weak");
-    expect(scoreBand(0.601)).toBe("moderate");
-    expect(scoreBand(0.75)).toBe("moderate");
-    expect(scoreBand(0.751)).toBe("strong");
-    expect(scoreBand(1)).toBe("strong");
-  });
-});
 
 describe("shapeTimeline", () => {
   const snap = (overrides: Partial<EchoLayerSnapshot>): EchoLayerSnapshot => ({

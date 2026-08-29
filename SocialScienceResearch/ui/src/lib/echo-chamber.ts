@@ -51,12 +51,9 @@ export interface EchoScoreComponent {
   status: EchoSignalStatus;
 }
 
-export type EchoVerdict =
-  | "no_chamber_yet"
-  | "weak"
-  | "moderate"
-  | "strong"
-  | "inconclusive";
+// NOTE: the composite "strong / weak / moderate" echo-chamber verdict has been
+// removed by request — only honest, non-labeling statuses remain.
+export type EchoVerdict = "no_chamber_yet" | "inconclusive";
 
 export interface EchoScore {
   value: number | null;
@@ -98,46 +95,8 @@ export interface EchoDetection {
 }
 
 // ---------------------------------------------------------------------------
-// Verdict bands (plan §2.2 thresholds)
+// Detection lifecycle status labels (verdict bands removed by request)
 // ---------------------------------------------------------------------------
-
-export function scoreBand(value: number | null): EchoVerdict | null {
-  if (value === null || value === undefined) return null;
-  if (value < 0.4) return "no_chamber_yet";
-  if (value <= 0.6) return "weak";
-  if (value <= 0.75) return "moderate";
-  return "strong";
-}
-
-/** Tailwind classes per verdict band for the chip in the UI. */
-export const VERDICT_CHIP_CLASSES: Record<EchoVerdict, string> = {
-  no_chamber_yet: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
-  weak: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  moderate: "bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300",
-  strong: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
-  inconclusive: "bg-muted text-muted-foreground",
-};
-
-export const VERDICT_LABELS: Record<EchoVerdict, string> = {
-  no_chamber_yet: "No chamber yet",
-  weak: "Weak structure",
-  moderate: "Moderate structure",
-  strong: "Strong structure",
-  inconclusive: "Inconclusive",
-};
-
-export const VERDICT_DESCRIPTIONS: Record<EchoVerdict, string> = {
-  no_chamber_yet:
-    "After the crawled layers, the observed structure does not look like an echo chamber yet.",
-  weak:
-    "Some observed signals lean toward repeated, concentrated recommendations.",
-  moderate:
-    "A substantial share of crawled edges returned to already-crawled content.",
-  strong:
-    "Most new edges returned to already-crawled content and the network is highly concentrated.",
-  inconclusive:
-    "Not all core signals could be observed, so no verdict is claimed. The indicative score is shown for transparency only.",
-};
 
 /** Human label of a detection lifecycle status (incl. natural stops). */
 export function statusLabel(status: EchoDetectionStatus): string {

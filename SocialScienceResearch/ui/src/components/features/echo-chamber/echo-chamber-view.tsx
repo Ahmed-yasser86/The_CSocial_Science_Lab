@@ -40,9 +40,6 @@ import {
   ECHO_DISCLAIMERS,
   shapeTimeline,
   statusLabel,
-  VERDICT_CHIP_CLASSES,
-  VERDICT_DESCRIPTIONS,
-  VERDICT_LABELS,
   type CommunityStructure,
   type EchoAudience,
   type EchoDetection,
@@ -52,7 +49,6 @@ import {
   type EchoSignalStatus,
   type EchoStructure,
   type EchoTimelineRow,
-  type EchoVerdict,
   type EchoChannelShare,
   type MetricEnvelope,
   type NullModelPayload,
@@ -146,102 +142,6 @@ function SectionCard({
       </CardHeader>
       <CardContent className="space-y-3">{children}</CardContent>
     </Card>
-  );
-}
-
-function VerdictBanner({ detection }: { detection: EchoDetection }) {
-  const score = detection.score;
-  const verdict: EchoVerdict =
-    score?.verdict ?? (canContinue(detection) ? "inconclusive" : "inconclusive");
-  const naturalStop =
-    detection.status === "exhausted" || detection.status === "unsupported_stop";
-  return (
-    <SectionCard title="Custom Research Index" testId="echo-verdict"
-      description="Researcher-defined composite of selected structural signals — not a probability, not causation."
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <span
-          data-testid="echo-verdict-chip"
-          className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium ${VERDICT_CHIP_CLASSES[verdict]}`}
-        >
-          {VERDICT_LABELS[verdict]}
-        </span>
-        {score?.value != null ? (
-          <span className="font-mono text-sm text-muted-foreground">
-            Custom Lens Score: {score.value.toFixed(3)}
-          </span>
-        ) : null}
-      </div>
-      {naturalStop ? (
-        <p className="flex items-start gap-2 text-xs text-muted-foreground">
-          <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          {detection.status === "exhausted"
-            ? "The frontier was exhausted: every reachable video's recommendations have been observed. This natural stop is distinct from a verdict."
-            : "A crawled layer observed zero recommendation edges, so the crawl stopped honestly instead of inventing content."}
-        </p>
-      ) : null}
-      <div className="overflow-hidden rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Component</TableHead>
-              <TableHead>Lens</TableHead>
-              <TableHead>Raw value</TableHead>
-              <TableHead>Normalized</TableHead>
-              <TableHead>Weight</TableHead>
-              <TableHead>Contribution</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(score?.components ?? []).map((component) => (
-              <TableRow key={component.key}>
-                <TableCell className="text-sm">{component.label}</TableCell>
-                <TableCell>
-                  <Badge variant="outline">{component.lens ?? "—"}</Badge>
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {component.status === "available" &&
-                  component.value_raw != null
-                    ? component.value_raw.toFixed(4)
-                    : "—"}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {component.status === "available" &&
-                  component.value_normalized != null
-                    ? component.value_normalized.toFixed(4)
-                    : "—"}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {component.weight != null
-                    ? `${(component.weight * 100).toFixed(0)}%`
-                    : "—"}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {component.status === "available"
-                    ? (component.weighted_contribution ?? 0).toFixed(4)
-                    : "—"}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      component.status === "available" ? "default" : "outline"
-                    }
-                  >
-                    {component.status}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        All values are observed structural properties of the crawled
-        recommendation graph around the seed. Nothing here claims anything
-        about viewer beliefs or causation.
-      </p>
-    </SectionCard>
   );
 }
 
@@ -1557,8 +1457,6 @@ export function EchoChamberView() {
               layer completes.
             </Card>
           )}
-
-          {detection.score ? <VerdictBanner detection={detection} /> : null}
 
           <DisclaimersCard />
         </div>
