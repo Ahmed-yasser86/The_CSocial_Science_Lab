@@ -5,7 +5,7 @@ import os
 import sys
 from Nodes.GPT_ResearcherNode.ResearchNode import make_research
 from StateGraph import GraphState
-from Nodes.research_compressor_node import (
+from Nodes.CompressionNode.research_compressor_node import (
     compress_subject_intelligence,
     format_compressed_for_injection,
 )

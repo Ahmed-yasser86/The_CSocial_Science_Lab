@@ -12,14 +12,17 @@ def test_normalize_query_for_tavily_truncates_long_queries():
     assert normalized.startswith("A")
 
 
-def test_websearch_handles_non_list_documents(monkeypatch):
-    class DummyTool:
-        def invoke(self, payload):
-            return {"results": [{"content": "ok"}]}
-
-    monkeypatch.setattr(web_search_module, "web_search_tool", DummyTool())
-
-    result = web_search_module.websearch({"question": "short question", "documents": "not-a-list"})
-
-    assert isinstance(result["documents"], list)
-    assert result["documents"][0].page_content == "ok"
+def test_websearch_handles_non_list_documents(monkeypatch):
+    class FakeTavily:
+        def __init__(self, query=None, query_domains=None, **kwargs):
+            pass
+
+        def search(self, max_results=5):
+            return {"results": [{"url": "http://example.com", "content": "ok", "title": "t"}]}
+
+    monkeypatch.setattr(web_search_module, "TavilySearch", FakeTavily)
+
+    result = web_search_module.websearch({"question": "short question", "documents": "not-a-list"})
+
+    assert isinstance(result["documents"], list)
+    assert any("ok" in d.page_content for d in result["documents"])

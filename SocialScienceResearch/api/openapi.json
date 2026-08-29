@@ -414,6 +414,26 @@
               "title": "Weighted"
             },
             "description": "Use the spec's weights for community/centrality math"
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time.",
+              "title": "Max Candidates"
+            },
+            "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time."
           }
         ],
         "responses": {
@@ -585,6 +605,26 @@
               "default": true,
               "title": "Weighted"
             }
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time.",
+              "title": "Max Candidates"
+            },
+            "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time."
           }
         ],
         "responses": {
@@ -756,6 +796,26 @@
               "default": true,
               "title": "Weighted"
             }
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time.",
+              "title": "Max Candidates"
+            },
+            "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time."
           },
           {
             "name": "role_model",
@@ -935,6 +995,26 @@
               "default": true,
               "title": "Weighted"
             }
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time.",
+              "title": "Max Candidates"
+            },
+            "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time."
           }
         ],
         "responses": {
@@ -1104,6 +1184,26 @@
               "default": true,
               "title": "Weighted"
             }
+          },
+          {
+            "name": "max_candidates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50000,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time.",
+              "title": "Max Candidates"
+            },
+            "description": "Cap candidate commenters for the co-comment build. Higher = more complete graph but longer compute time."
           },
           {
             "name": "min_size",
@@ -7810,6 +7910,433 @@
         }
       }
     },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/info": {
+      "get": {
+        "summary": "Agent Info",
+        "operationId": "agent_info_copilotkit_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/logs": {
+      "get": {
+        "summary": "Logs",
+        "operationId": "logs_api_agent_logs_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/run": {
+      "post": {
+        "summary": "Run Agent",
+        "operationId": "run_agent_api_agent_run_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/run/{run_id}/cancel": {
+      "post": {
+        "summary": "Cancel Run",
+        "operationId": "cancel_run_api_agent_run__run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/runs": {
+      "get": {
+        "summary": "List Runs",
+        "operationId": "list_runs_api_agent_runs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/runs/{run_id}": {
+      "get": {
+        "summary": "Get Run",
+        "operationId": "get_run_api_agent_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/runs/{run_id}/reports/{report_key}": {
+      "get": {
+        "summary": "Get Run Report",
+        "operationId": "get_run_report_api_agent_runs__run_id__reports__report_key__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "report_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Report Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/env": {
+      "get": {
+        "summary": "Get Env",
+        "operationId": "get_env_api_agent_env_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Post Env",
+        "operationId": "post_env_api_agent_env_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent/ai-config": {
+      "get": {
+        "summary": "Get Ai Config",
+        "description": "Dynamic AI service/provider catalog + current values (source of truth).",
+        "operationId": "get_ai_config_api_agent_ai_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent/connect": {
+      "post": {
+        "summary": "Agent Connect",
+        "operationId": "agent_connect_copilotkit_agent_research_agent_connect_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent/stop/{threadId}": {
+      "post": {
+        "summary": "Agent Stop",
+        "operationId": "agent_stop_copilotkit_agent_research_agent_stop__threadId__post",
+        "parameters": [
+          {
+            "name": "threadId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Threadid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent/run": {
+      "post": {
+        "summary": "Langgraph Agent Endpoint",
+        "operationId": "langgraph_agent_endpoint_copilotkit_agent_research_agent_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAgentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent/run/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check.",
+        "operationId": "health_copilotkit_agent_research_agent_run_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent": {
+      "post": {
+        "summary": "Langgraph Agent Endpoint",
+        "operationId": "langgraph_agent_endpoint_copilotkit_agent_research_agent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunAgentInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/copilotkit/agent/research_agent/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check.",
+        "operationId": "health_copilotkit_agent_research_agent_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/social-science/collect/channel": {
       "post": {
         "tags": [
@@ -7939,7 +8466,7 @@
           "collection"
         ],
         "summary": "Collect Spec",
-        "description": "Submit a spec-driven collection experiment; returns a job id.\n\nRuns in the background (worker thread) so the client can poll progress\nvia ``GET /jobs/{job_id}`` and cancel via ``POST /jobs/{job_id}/cancel``.",
+        "description": "Submit a spec-driven collection experiment; returns a job id.\n\n\n\nRuns in the background (worker thread) so the client can poll progress\n\nvia ``GET /jobs/{job_id}`` and cancel via ``POST /jobs/{job_id}/cancel``.",
         "operationId": "collect_spec_api_v1_social_science_collect_post",
         "requestBody": {
           "content": {
@@ -7981,7 +8508,7 @@
           "collection"
         ],
         "summary": "Scrape Recommendations",
-        "description": "Submit a recommendation scrape job for a single video.\n\nRuns in the background (worker thread) so the client can poll progress\nvia ``GET /jobs/{job_id}`` and cancel via ``POST /jobs/{job_id}/cancel``.",
+        "description": "Submit a recommendation scrape job for a single video.\n\n\n\nRuns in the background (worker thread) so the client can poll progress\n\nvia ``GET /jobs/{job_id}`` and cancel via ``POST /jobs/{job_id}/cancel``.",
         "operationId": "scrape_recommendations_api_v1_social_science_scrape_recommendations_post",
         "requestBody": {
           "content": {
@@ -8267,7 +8794,7 @@
           "jobs"
         ],
         "summary": "Kill Stuck Jobs",
-        "description": "Force-terminate every pending/running job and recycle the worker pool.\n\nJobs blocked on a stalled yt-dlp/network call cannot be cancelled\ncooperatively (cancellation is only honoured at unit boundaries), so\nthis marks them terminal and abandons their worker threads, unblocking\nthe queue. Intended as an explicit operator escape hatch.\n\nDeclared before ``/jobs/{job_id}`` so the static path wins over the\n``{job_id}`` path parameter for POST requests.",
+        "description": "Force-terminate every pending/running job and recycle the worker pool.\n\n\n\nJobs blocked on a stalled yt-dlp/network call cannot be cancelled\n\ncooperatively (cancellation is only honoured at unit boundaries), so\n\nthis marks them terminal and abandons their worker threads, unblocking\n\nthe queue. Intended as an explicit operator escape hatch.\n\n\n\nDeclared before ``/jobs/{job_id}`` so the static path wins over the\n\n``{job_id}`` path parameter for POST requests.",
         "operationId": "kill_stuck_jobs_api_v1_social_science_jobs_kill_stuck_post",
         "responses": {
           "200": {
@@ -8413,7 +8940,7 @@
           "jobs"
         ],
         "summary": "Stream Job",
-        "description": "Server-Sent Events stream of a job's live state.\n\nPush-based alternative to polling ``GET /jobs/{job_id}``: emits one\n``data:`` event per state/progress change (plus a keep-alive comment\nevery 15s) and closes once the job reaches a terminal state. The\nclient connects with ``EventSource`` and reconnects automatically.",
+        "description": "Server-Sent Events stream of a job's live state.\n\n\n\nPush-based alternative to polling ``GET /jobs/{job_id}``: emits one\n\n``data:`` event per state/progress change (plus a keep-alive comment\n\nevery 15s) and closes once the job reaches a terminal state. The\n\nclient connects with ``EventSource`` and reconnects automatically.",
         "operationId": "stream_job_api_v1_social_science_jobs__job_id__stream_get",
         "parameters": [
           {
@@ -8633,7 +9160,7 @@
           "runs"
         ],
         "summary": "List Sub Runs",
-        "description": "List the runs registered as children of this run (lineage).\n\nA bulk/expansion scrape creates one ``RECOMMENDATION`` run per source\nvideo; each is registered with ``parent_run_id`` pointing at the run\nthat triggered it, so the trigger run's sub-runs are always visible.",
+        "description": "List the runs registered as children of this run (lineage).\n\n\n\nA bulk/expansion scrape creates one ``RECOMMENDATION`` run per source\n\nvideo; each is registered with ``parent_run_id`` pointing at the run\n\nthat triggered it, so the trigger run's sub-runs are always visible.",
         "operationId": "list_sub_runs_api_v1_social_science_runs__run_id__sub_runs_get",
         "parameters": [
           {
@@ -8803,7 +9330,7 @@
           "runs"
         ],
         "summary": "Run Videos",
-        "description": "List videos collected by a run.\n\nFor a recommendation run the collected videos are the videos its edges\nobserved (targets + sources, deduplicated) -- this matches the run's\n``entities_succeeded`` edge count, so \"scraped 10\" shows 10 videos.\nFor channel/video runs the videos are those first discovered in the\nrun (``first_observed_run_id``).",
+        "description": "List videos collected by a run.\n\n\n\nFor a recommendation run the collected videos are the videos its edges\n\nobserved (targets + sources, deduplicated) -- this matches the run's\n\n``entities_succeeded`` edge count, so \"scraped 10\" shows 10 videos.\n\nFor channel/video runs the videos are those first discovered in the\n\nrun (``first_observed_run_id``).",
         "operationId": "run_videos_api_v1_social_science_runs__run_id__videos_get",
         "parameters": [
           {
@@ -9470,7 +9997,7 @@
           "corpus"
         ],
         "summary": "Channel Top Videos",
-        "description": "Top videos by the latest observed engagement metric.\n\nVideos whose metric is MISSING are kept and annotated with\n``availability: \"missing\"`` (ranked last) rather than dropped, so the\nchannel-level leaderboard never silently loses videos.",
+        "description": "Top videos by the latest observed engagement metric.\n\n\n\nVideos whose metric is MISSING are kept and annotated with\n\n``availability: \"missing\"`` (ranked last) rather than dropped, so the\n\nchannel-level leaderboard never silently loses videos.",
         "operationId": "channel_top_videos_api_v1_social_science_channels__channel_id__videos_top_get",
         "parameters": [
           {
@@ -9639,7 +10166,7 @@
           "sampling"
         ],
         "summary": "Sample Advanced",
-        "description": "Advanced sampling with complex filter combinations across channels, videos, and users.\n\nSupports researcher scenarios:\n- Sample/population of specific user comments across all videos and channels\n- Sample/population within specific channel(s)\n- Sample/population of specific users with their IDs\n- Sample/population of non-specified users across one channel but among specified videos\n- Video filters within same channel (date range, type, duration, views, etc.)\n- Multiple channels among specific period",
+        "description": "Advanced sampling with complex filter combinations across channels, videos, and users.\n\n\n\nSupports researcher scenarios:\n\n- Sample/population of specific user comments across all videos and channels\n\n- Sample/population within specific channel(s)\n\n- Sample/population of specific users with their IDs\n\n- Sample/population of non-specified users across one channel but among specified videos\n\n- Video filters within same channel (date range, type, duration, views, etc.)\n\n- Multiple channels among specific period",
         "operationId": "sample_advanced_api_v1_social_science_sampling_advanced_post",
         "requestBody": {
           "content": {
@@ -9966,7 +10493,7 @@
           "analytics"
         ],
         "summary": "Video Comment Stats",
-        "description": "Comment statistics for a video:\n- max_replies: maximum reply_count from comment observations\n- max_unique_repliers: for the comment with max replies, count distinct author_ids of its replies\n- total_replies: sum of all reply_counts\n- total_unique_repliers: count of distinct author_ids across all replies",
+        "description": "Comment statistics for a video:\n\n- max_replies: maximum reply_count from comment observations\n\n- max_unique_repliers: for the comment with max replies, count distinct author_ids of its replies\n\n- total_replies: sum of all reply_counts\n\n- total_unique_repliers: count of distinct author_ids across all replies",
         "operationId": "video_comment_stats_api_v1_social_science_videos__video_id__comments_stats_get",
         "parameters": [
           {
@@ -10031,7 +10558,7 @@
           "export"
         ],
         "summary": "Export Data",
-        "description": "Export selected data to Excel file.\n\nTwo modes:\n- ``project_id`` set: export *everything the project collected* as a\n  multi-sheet workbook (Videos, Comments, Channels, Recommendations, Runs).\n- otherwise: export a single entity type (optionally filtered by ``ids``/\n  ``columns``) to one sheet.",
+        "description": "Export selected data to Excel file.\n\n\n\nTwo modes:\n\n- ``project_id`` set: export *everything the project collected* as a\n\n  multi-sheet workbook (Videos, Comments, Channels, Recommendations, Runs).\n\n- otherwise: export a single entity type (optionally filtered by ``ids``/\n\n  ``columns``) to one sheet.",
         "operationId": "export_data_api_v1_social_science_export_post",
         "requestBody": {
           "content": {
@@ -10402,7 +10929,7 @@
           "research"
         ],
         "summary": "Research Query Preview",
-        "description": "Evaluate a research query and report the ordered funnel stages.\n\n``stages`` flatten the condition tree: each stage's ``cumulative`` is\nthe count matching the conditions-so-far (AND-ed prefix) and\n``matched`` is the incremental drop. OR/NOT groups appear once.",
+        "description": "Evaluate a research query and report the ordered funnel stages.\n\n\n\n``stages`` flatten the condition tree: each stage's ``cumulative`` is\n\nthe count matching the conditions-so-far (AND-ed prefix) and\n\n``matched`` is the incremental drop. OR/NOT groups appear once.",
         "operationId": "research_query_preview_api_v1_social_science_research_query_preview_post",
         "requestBody": {
           "content": {
@@ -10483,6 +11010,61 @@
   },
   "components": {
     "schemas": {
+      "ActivityMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "activity",
+            "title": "Role",
+            "default": "activity"
+          },
+          "activityType": {
+            "type": "string",
+            "title": "Activitytype"
+          },
+          "content": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Content"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "activityType",
+          "content"
+        ],
+        "title": "ActivityMessage",
+        "description": "An activity progress message emitted between chat messages."
+      },
       "AdvancedSamplingSpec": {
         "properties": {
           "strategy": {
@@ -10866,6 +11448,141 @@
         "title": "AdvancedSamplingSpec",
         "description": "Advanced sampling specification for cross-channel, multi-video, and user-based sampling.\n\nSupports complex researcher scenarios:\n- Sample/population of specific user comments across all videos and channels\n- Sample/population within specific channel(s)\n- Sample/population of specific users with their IDs\n- Sample/population of non-specified users across one channel but among specified videos\n- Video filters within same channel (date range, type, duration, views, etc.)\n- Multiple channels among specific period\n- Combination of channel IDs, video IDs, author IDs with sampling strategies"
       },
+      "AssistantMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "assistant",
+            "title": "Role",
+            "default": "assistant"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          },
+          "toolCalls": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolCall"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolcalls"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "AssistantMessage",
+        "description": "An assistant message."
+      },
+      "AudioInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "audio",
+            "title": "Type",
+            "default": "audio"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputContentDataSource"
+              },
+              {
+                "$ref": "#/components/schemas/InputContentUrlSource"
+              }
+            ],
+            "title": "Source",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "data": "#/components/schemas/InputContentDataSource",
+                "url": "#/components/schemas/InputContentUrlSource"
+              }
+            }
+          },
+          "metadata": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "AudioInputContent",
+        "description": "An audio input content fragment."
+      },
       "AuthorCommentCount": {
         "properties": {
           "author_id": {
@@ -10902,6 +11619,71 @@
         ],
         "title": "AuthorCommentCount",
         "description": "Comment counts for one distinct author."
+      },
+      "BinaryInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "binary",
+            "title": "Type",
+            "default": "binary"
+          },
+          "mimeType": {
+            "type": "string",
+            "title": "Mimetype"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "mimeType"
+        ],
+        "title": "BinaryInputContent",
+        "description": "A deprecated binary payload reference in a multimodal user message."
       },
       "BridgeCommenter": {
         "properties": {
@@ -13200,6 +13982,26 @@
         "title": "ContentHomophilyStartRequest",
         "description": "Body for ``POST .../network/content-homophily`` (``extra=\"forbid\"``).\n\nOpt-in, on-demand CONTENT evidence over ANY network scope: ``run_id``\npins the analysis to one run's slice, ``video_ids`` to an explicit set;\nwith neither, the whole persisted recommendation network is analyzed.\nTranscript collection is targeted at the sampled videos only."
       },
+      "Context": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "description",
+          "value"
+        ],
+        "title": "Context",
+        "description": "Additional context for the agent."
+      },
       "CoverageReport": {
         "properties": {
           "generated_at": {
@@ -13964,6 +14766,121 @@
         ],
         "title": "DeleteSampleResponse",
         "description": "Response of ``DELETE {prefix}/samples/{sample_id}`` (404 if missing)."
+      },
+      "DeveloperMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "developer",
+            "title": "Role",
+            "default": "developer"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "DeveloperMessage",
+        "description": "A developer message."
+      },
+      "DocumentInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "document",
+            "title": "Type",
+            "default": "document"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputContentDataSource"
+              },
+              {
+                "$ref": "#/components/schemas/InputContentUrlSource"
+              }
+            ],
+            "title": "Source",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "data": "#/components/schemas/InputContentDataSource",
+                "url": "#/components/schemas/InputContentUrlSource"
+              }
+            }
+          },
+          "metadata": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "DocumentInputContent",
+        "description": "A document input content fragment."
       },
       "EchoContinueRequest": {
         "properties": {
@@ -14962,6 +15879,26 @@
         "title": "ExportResponse",
         "description": "Response for export endpoint (file download handled separately)."
       },
+      "FunctionCall": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "arguments": {
+            "type": "string",
+            "title": "Arguments"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "arguments"
+        ],
+        "title": "FunctionCall",
+        "description": "Name and arguments of a function call."
+      },
       "GraphEdge": {
         "properties": {
           "source": {
@@ -15198,6 +16135,108 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ImageInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type",
+            "default": "image"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputContentDataSource"
+              },
+              {
+                "$ref": "#/components/schemas/InputContentUrlSource"
+              }
+            ],
+            "title": "Source",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "data": "#/components/schemas/InputContentDataSource",
+                "url": "#/components/schemas/InputContentUrlSource"
+              }
+            }
+          },
+          "metadata": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "ImageInputContent",
+        "description": "An image input content fragment."
+      },
+      "InputContentDataSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "data",
+            "title": "Type",
+            "default": "data"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "mimeType": {
+            "type": "string",
+            "title": "Mimetype"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "value",
+          "mimeType"
+        ],
+        "title": "InputContentDataSource",
+        "description": "Inline base64-encoded source."
+      },
+      "InputContentUrlSource": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "url",
+            "title": "Type",
+            "default": "url"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "mimeType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mimetype"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "InputContentUrlSource",
+        "description": "URL-referenced source."
       },
       "JobCancelPayload": {
         "properties": {
@@ -19939,6 +20978,66 @@
         ],
         "title": "RawVideoPayload"
       },
+      "ReasoningMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "reasoning",
+            "title": "Role",
+            "default": "reasoning"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "ReasoningMessage",
+        "description": "A reasoning message containing the agent's internal reasoning process."
+      },
       "RecommendationPayload": {
         "properties": {
           "observation_id": {
@@ -20149,6 +21248,161 @@
         ],
         "title": "ResearchQueryRequest",
         "description": "HTTP body for ``POST /research/query/preview`` and ``.../resolve``."
+      },
+      "ResumeEntry": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "interruptId": {
+            "type": "string",
+            "title": "Interruptid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "resolved",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "payload": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "interruptId",
+          "status"
+        ],
+        "title": "ResumeEntry",
+        "description": "A per-interrupt response in the resume array of a RunAgentInput.\n\n``metadata`` carries envelope data about the response \u2014 signatures, routing\nkeys \u2014 as opposed to ``payload``, which is the answer the agent asked for\nand will act on."
+      },
+      "RunAgentInput": {
+        "properties": {
+          "threadId": {
+            "type": "string",
+            "title": "Threadid"
+          },
+          "runId": {
+            "type": "string",
+            "title": "Runid"
+          },
+          "parentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentrunid"
+          },
+          "state": {
+            "title": "State"
+          },
+          "messages": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/DeveloperMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/SystemMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/AssistantMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/UserMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/ActivityMessage"
+                },
+                {
+                  "$ref": "#/components/schemas/ReasoningMessage"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "role",
+                "mapping": {
+                  "activity": "#/components/schemas/ActivityMessage",
+                  "assistant": "#/components/schemas/AssistantMessage",
+                  "developer": "#/components/schemas/DeveloperMessage",
+                  "reasoning": "#/components/schemas/ReasoningMessage",
+                  "system": "#/components/schemas/SystemMessage",
+                  "tool": "#/components/schemas/ToolMessage",
+                  "user": "#/components/schemas/UserMessage"
+                }
+              }
+            },
+            "type": "array",
+            "title": "Messages"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/Tool"
+            },
+            "type": "array",
+            "title": "Tools"
+          },
+          "context": {
+            "items": {
+              "$ref": "#/components/schemas/Context"
+            },
+            "type": "array",
+            "title": "Context"
+          },
+          "forwardedProps": {
+            "title": "Forwardedprops"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ResumeEntry"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "threadId",
+          "runId",
+          "messages",
+          "tools",
+          "context",
+          "forwardedProps"
+        ],
+        "title": "RunAgentInput",
+        "description": "Input for running an agent."
       },
       "RunComparison": {
         "properties": {
@@ -21562,6 +22816,77 @@
         "title": "SystemFoldersPayload",
         "description": "System folder paths."
       },
+      "SystemMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "system",
+            "title": "Role",
+            "default": "system"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "SystemMessage",
+        "description": "A system message."
+      },
       "TargetKind": {
         "type": "string",
         "enum": [
@@ -21679,6 +23004,27 @@
         ],
         "title": "TestDifferenceRequest"
       },
+      "TextInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type",
+            "default": "text"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TextInputContent",
+        "description": "A text fragment in a multimodal user message."
+      },
       "ThreadPayload": {
         "properties": {
           "comment": {
@@ -21723,6 +23069,159 @@
         ],
         "title": "ThreadSizeBreakdown",
         "description": "One comment thread (root plus its descendant replies)."
+      },
+      "Tool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "parameters": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "Tool",
+        "description": "A tool definition."
+      },
+      "ToolCall": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "type": {
+            "type": "string",
+            "const": "function",
+            "title": "Type",
+            "default": "function"
+          },
+          "function": {
+            "$ref": "#/components/schemas/FunctionCall"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "function"
+        ],
+        "title": "ToolCall",
+        "description": "A tool call, modelled after OpenAI tool calls.\n\nCarries its own metadata rather than folding into the assistant message that\nowns it: several tool calls can share one parent, so merging them all into it\nwould make the result depend on their relative order."
+      },
+      "ToolMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "tool",
+            "title": "Role",
+            "default": "tool"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "toolCallId": {
+            "type": "string",
+            "title": "Toolcallid"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "toolCallId"
+        ],
+        "title": "ToolMessage",
+        "description": "A tool result message."
       },
       "TopSharedCommenter": {
         "properties": {
@@ -22118,6 +23617,117 @@
         "type": "object",
         "title": "UpdateWorkspaceRequest",
         "description": "PATCH body for ``PATCH .../workspaces/{workspace_id}``.\n\n``model_fields_set`` semantics like the session patch: absent fields stay\nunchanged. ``is_legacy`` is immutable by construction (not patchable)."
+      },
+      "UserMessage": {
+        "properties": {
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "const": "user",
+            "title": "Role",
+            "default": "user"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextInputContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageInputContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AudioInputContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/VideoInputContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DocumentInputContent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BinaryInputContent"
+                    }
+                  ],
+                  "discriminator": {
+                    "propertyName": "type",
+                    "mapping": {
+                      "audio": "#/components/schemas/AudioInputContent",
+                      "binary": "#/components/schemas/BinaryInputContent",
+                      "document": "#/components/schemas/DocumentInputContent",
+                      "image": "#/components/schemas/ImageInputContent",
+                      "text": "#/components/schemas/TextInputContent",
+                      "video": "#/components/schemas/VideoInputContent"
+                    }
+                  }
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "encryptedValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Encryptedvalue"
+          },
+          "subagentRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subagentrunid"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "content"
+        ],
+        "title": "UserMessage",
+        "description": "A user message supporting text or multimodal content."
       },
       "ValidationError": {
         "properties": {
@@ -22818,6 +24428,50 @@
         ],
         "title": "VideoHistoryPoint",
         "description": "One video observation with per-step growth vs the previous one."
+      },
+      "VideoInputContent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "video",
+            "title": "Type",
+            "default": "video"
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InputContentDataSource"
+              },
+              {
+                "$ref": "#/components/schemas/InputContentUrlSource"
+              }
+            ],
+            "title": "Source",
+            "discriminator": {
+              "propertyName": "type",
+              "mapping": {
+                "data": "#/components/schemas/InputContentDataSource",
+                "url": "#/components/schemas/InputContentUrlSource"
+              }
+            }
+          },
+          "metadata": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "VideoInputContent",
+        "description": "A video input content fragment."
       },
       "VideoNetworkContextPayload": {
         "properties": {

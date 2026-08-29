@@ -240,10 +240,10 @@ def centrality_battery(
         eigenvector = {n: 0.0 for n in graph.nodes}
     try:
         betweenness = nx.betweenness_centrality(
-            graph, weight=None, k=500 if approximate else None, seed=42
+            graph, weight=w, k=500 if approximate else None, seed=42
         )
     except (nx.NetworkXError, nx.PowerIterationFailedConvergence):
-        betweenness = nx.betweenness_centrality(graph, weight=None)
+        betweenness = nx.betweenness_centrality(graph, weight=w)
     try:
         pagerank = nx.pagerank(graph, weight=w, max_iter=1000)
     except (nx.PowerIterationFailedConvergence, nx.NetworkXError):
