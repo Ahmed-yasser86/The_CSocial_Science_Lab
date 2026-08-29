@@ -16,10 +16,20 @@ const nextConfig: NextConfig = {
   // deployment so the browser never needs to talk cross-origin.
   // Start the backend with: uvicorn SocialScienceResearch.api:create_app --factory
   async rewrites() {
+    const agentBackend = process.env.AGENT_BACKEND_URL ?? "http://127.0.0.1:8001";
     return [
       {
         source: "/api/v1/social-science/:path*",
         destination: `${process.env.BACKEND_URL ?? "http://127.0.0.1:8000"}/api/v1/social-science/:path*`,
+      },
+      // Research agent server (CopilotKit runtime + log stream + direct run).
+      {
+        source: "/copilotkit/:path*",
+        destination: `${agentBackend}/copilotkit/:path*`,
+      },
+      {
+        source: "/api/agent/:path*",
+        destination: `${agentBackend}/api/agent/:path*`,
       },
     ];
   },

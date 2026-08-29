@@ -8,6 +8,7 @@ import {
   Boxes,
   ChevronDown,
   Compass,
+  Cpu,
   Database,
   FolderKanban,
   FolderOpen,
@@ -18,6 +19,7 @@ import {
   LayoutDashboard,
   ListOrdered,
   Menu,
+  MessageSquare,
   Microscope,
   Network,
   Radio,
@@ -74,6 +76,17 @@ const PROXY_ENTRY: NavEntry = {
   label: "Proxy IP",
   icon: Globe,
 };
+const AGENT_ENTRY: NavEntry = {
+  href: "/agent",
+  label: "Agent",
+  icon: MessageSquare,
+};
+
+const AI_CONFIG_ENTRY: NavEntry = {
+  href: "/ai-config",
+  label: "AI Config",
+  icon: Cpu,
+};
 
 const ANALYZE_ENTRIES: NavEntry[] = [
   { href: "/network", label: "Overview", icon: Network },
@@ -98,6 +111,8 @@ const TOP_LEVEL_ENTRIES: NavEntry[] = [
   COLLECT_ENTRY,
   DOCS_ENTRY,
   PROXY_ENTRY,
+  AGENT_ENTRY,
+  AI_CONFIG_ENTRY,
 ];
 
 function routeIsActive(pathname: string, href: string): boolean {
@@ -253,7 +268,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // server reconciliation so a fresh browser (empty localStorage, pointer
   // only on the server) is never bounced before the pointer is restored.
   useEffect(() => {
-    if (hydrated && reconciled && !workspaceId && pathname !== "/") {
+    if (
+      hydrated &&
+      reconciled &&
+      !workspaceId &&
+      pathname !== "/" &&
+      pathname !== "/agent" &&
+      pathname !== "/ai-config"
+    ) {
       router.replace("/");
     }
   }, [hydrated, reconciled, workspaceId, pathname, router]);
@@ -309,12 +331,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   active={routeIsActive(pathname, PROXY_ENTRY.href)}
                   context={context}
                 />
+                <NavLink
+                  entry={AI_CONFIG_ENTRY}
+                  active={routeIsActive(pathname, AI_CONFIG_ENTRY.href)}
+                  context={context}
+                />
               </div>
               <div className="lg:hidden">
                 <CompactNavMenu pathname={pathname} context={context} />
               </div>
             </nav>
           ) : null}
+
+          {workspaceId ? null : (
+            <nav aria-label="Primary" className="flex items-center gap-1">
+              <NavLink
+                entry={AGENT_ENTRY}
+                active={routeIsActive(pathname, AGENT_ENTRY.href)}
+                context={context}
+              />
+              <NavLink
+                entry={AI_CONFIG_ENTRY}
+                active={routeIsActive(pathname, AI_CONFIG_ENTRY.href)}
+                context={context}
+              />
+            </nav>
+          )}
 
           <div className="ml-auto flex items-center gap-3">
             <ThemeToggle />
