@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Scale } from "lucide-react";
+import { Scale } from "@/components/ui/icon";
 import { ComparisonWorkspace } from "@/components/features/comparison/comparison-workspace";
 
 export const metadata: Metadata = {
@@ -24,3 +24,4 @@ export default function ComparePage() {
     </div>
   );
 }
+

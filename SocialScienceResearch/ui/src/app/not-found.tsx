@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Compass } from "lucide-react";
+import { Compass } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 
 export default function NotFound() {
@@ -20,3 +20,4 @@ export default function NotFound() {
     </div>
   );
 }
+

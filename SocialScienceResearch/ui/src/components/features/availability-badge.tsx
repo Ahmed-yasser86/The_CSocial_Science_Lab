@@ -1,4 +1,4 @@
-import { CircleCheck, CircleMinus, CircleOff } from "lucide-react";
+import { CircleCheck, CircleMinus, CircleOff } from "@/components/ui/icon";
 import type { Availability } from "@/lib/types";
 import { availabilityDescription, availabilityLabel } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -46,3 +46,4 @@ export function AvailabilityBadge({
     </Tooltip>
   );
 }
+

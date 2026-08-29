@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icon";
 import { CommenterProfileView } from "@/components/features/commenters/commenter-profile-view";
 
 export const metadata: Metadata = {
@@ -36,3 +36,4 @@ export default async function NetworkCommenterProfilePage({
     </div>
   );
 }
+

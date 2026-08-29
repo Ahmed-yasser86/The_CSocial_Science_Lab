@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { GitFork } from "lucide-react";
+import { GitFork } from "@/components/ui/icon";
 import { FullNetworkView } from "@/components/features/network-full/full-network-view";
 
 export const metadata: Metadata = {
@@ -25,3 +25,4 @@ export default function NetworkFullPage() {
     </div>
   );
 }
+

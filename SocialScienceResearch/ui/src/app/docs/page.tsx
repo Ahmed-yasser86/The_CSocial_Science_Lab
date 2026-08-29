@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen } from "lucide-react";
+import { BookOpen } from "@/components/ui/icon";
 
 const SECTION = "scroll-mt-20";
 
@@ -181,3 +181,4 @@ export default function DocsPage() {
     </article>
   );
 }
+

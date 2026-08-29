@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icon";
 import { ProjectDetail } from "@/components/features/datasets/project-detail";
 import { getProjectMeta } from "@/services/server-data";
 

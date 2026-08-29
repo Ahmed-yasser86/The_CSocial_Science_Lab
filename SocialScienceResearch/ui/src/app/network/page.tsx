@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Share2 } from "lucide-react";
+import { Share2 } from "@/components/ui/icon";
 import { NetworkSummaryView } from "@/components/features/network-summary-view";
 
 export const metadata: Metadata = {
@@ -24,3 +24,4 @@ export default function NetworkPage() {
     </div>
   );
 }
+

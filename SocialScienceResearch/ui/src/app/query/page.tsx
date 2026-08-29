@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "@/components/ui/icon";
 import type { QueryGroup } from "@/lib/types";
 import { QueryWorkspace } from "@/components/features/query-workspace";
 import { buttonVariants } from "@/components/ui/button";

@@ -1,4 +1,4 @@
-import { CircleAlert, RefreshCw } from "lucide-react";
+import { CircleAlert, RefreshCw } from "@/components/ui/icon";
 import type { CollectionError } from "@/lib/types";
 import { formatDateTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -59,3 +59,4 @@ export function ErrorList({ errors }: { errors: CollectionError[] }) {
     </ul>
   );
 }
+

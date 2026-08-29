@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icon";
 import { ChannelWorkspace } from "@/components/features/channel-workspace";
 import { getChannelMeta } from "@/services/server-data";
 
@@ -35,3 +35,4 @@ export default async function ChannelPage({
     </div>
   );
 }
+

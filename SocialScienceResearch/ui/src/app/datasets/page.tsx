@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen } from "@/components/ui/icon";
 import { DatasetLibrary } from "@/components/features/datasets/dataset-library";
 
 export const metadata: Metadata = {
@@ -23,3 +23,4 @@ export default function DatasetsPage() {
     </div>
   );
 }
+

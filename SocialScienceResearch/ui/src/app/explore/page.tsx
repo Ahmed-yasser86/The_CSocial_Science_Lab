@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Compass } from "lucide-react";
+import { Compass } from "@/components/ui/icon";
 import { RecordExplorer } from "@/components/features/explorer/record-explorer";
 
 export const metadata: Metadata = {
@@ -33,3 +33,4 @@ export default async function ExplorePage({
     </div>
   );
 }
+

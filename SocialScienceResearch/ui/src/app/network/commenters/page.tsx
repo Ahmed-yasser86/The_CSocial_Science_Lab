@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { MessageSquareShare } from "lucide-react";
+import { MessageSquareShare } from "@/components/ui/icon";
 import { CommenterOverlapView } from "@/components/features/commenters/commenter-overlap-view";
 
 export const metadata: Metadata = {
@@ -24,3 +24,4 @@ export default function NetworkCommentersPage() {
     </div>
   );
 }
+

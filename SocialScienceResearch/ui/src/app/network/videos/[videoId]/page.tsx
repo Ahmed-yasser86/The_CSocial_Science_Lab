@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icon";
 import { EgoNetworkView } from "@/components/features/ego-network-view";
 import { getVideoMeta } from "@/services/server-data";
 
@@ -23,3 +23,4 @@ export default async function NetworkVideoPage({
     </div>
   );
 }
+

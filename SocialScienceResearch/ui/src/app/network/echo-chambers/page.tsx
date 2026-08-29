@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Radio } from "lucide-react";
+import { Radio } from "@/components/ui/icon";
 import { EchoChamberView } from "@/components/features/echo-chamber/echo-chamber-view";
 
 export const metadata: Metadata = {
@@ -25,3 +25,4 @@ export default function NetworkEchoChambersPage() {
     </div>
   );
 }
+
