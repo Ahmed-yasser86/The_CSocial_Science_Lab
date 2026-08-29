@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check, FileText, Loader2, Play, RotateCcw, Terminal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, FileText, Loader2, Play, RotateCcw, Square, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,11 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ReportViewer } from "./components/ReportViewer";
-import { useAgentLogs } from "./hooks/useAgentLogs";
+import { useAgentLogs, STAGE_LABELS, type StageStatus } from "./hooks/useAgentLogs";
 import {
   runResearch,
   listRuns,
   getRun,
+  cancelRun,
   type RunSession,
   type RunReportMeta,
 } from "./lib/agentApi";
@@ -52,6 +53,8 @@ function eventText(e: Record<string, any>): string {
   switch (e.type) {
     case "error":
       return e.message ?? "error";
+    case "log":
+      return e.message ?? "";
     case "stage_start":
       return `stage started: ${e.stage ?? ""}`;
     case "stage_done":
@@ -76,15 +79,77 @@ function eventText(e: Record<string, any>): string {
 }
 
 function eventLevel(e: Record<string, any>): string {
+  if (e.type === "log") return (e.level ?? "INFO").toUpperCase();
   return e.type === "error" ? "ERROR" : "INFO";
 }
 
 function eventTag(e: Record<string, any>): string {
+  if (e.type === "log") return (e.logger ?? "log").split(".").pop();
   return e.stage ?? e.tool ?? e.type ?? "log";
 }
 
+function StageStepper({
+  stages,
+  running,
+}: {
+  stages: { key: string; label: string; status: StageStatus }[];
+  running: boolean;
+}) {
+  return (
+    <ol className="relative space-y-1">
+      {stages.map((s, i) => {
+        const isLast = i === stages.length - 1;
+        return (
+          <li key={s.key} className="flex items-start gap-3">
+            <div className="flex flex-col items-center">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-background">
+                {s.status === "done" ? (
+                  <Check className="size-3.5 text-emerald-500" />
+                ) : s.status === "active" ? (
+                  <Loader2 className="size-3.5 animate-spin text-primary" />
+                ) : s.status === "error" ? (
+                  <span className="flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-destructive-foreground">
+                    !
+                  </span>
+                ) : (
+                  <span className="size-2 rounded-full bg-muted-foreground/40" />
+                )}
+              </span>
+              {!isLast ? (
+                <span
+                  className={
+                    "my-0.5 w-px flex-1 " +
+                    (s.status === "done" ? "bg-emerald-500/50" : "bg-border")
+                  }
+                />
+              ) : null}
+            </div>
+            <div className="min-w-0 flex-1 pb-2">
+              <div
+                className={
+                  "text-sm " +
+                  (s.status === "pending"
+                    ? "text-muted-foreground"
+                    : "text-foreground") +
+                  (s.status === "active" ? " font-medium" : "") +
+                  (s.status === "error" ? " text-destructive" : "")
+                }
+              >
+                {s.label}
+              </div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {running && s.status === "active" ? "in progress" : s.status}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export function ResearchConsole() {
-  const { events, counts, currentStage } = useAgentLogs();
+  const { events, counts, currentStage, stages: pipelineStages, running, lastError, cancelled } = useAgentLogs();
 
   const [query, setQuery] = useState("");
   const [stages, setStages] = useState<string[]>([]);
@@ -104,6 +169,16 @@ export function ResearchConsole() {
       .then(setRuns)
       .catch(() => setRuns([]));
   }, []);
+
+  // When a run finishes (or is cancelled), refresh the reports panel + run list.
+  const prevRunning = useRef(false);
+  useEffect(() => {
+    if (prevRunning.current && !running && activeRunId) {
+      refreshRunReports(activeRunId);
+      listRuns().then(setRuns).catch(() => setRuns([]));
+    }
+    prevRunning.current = running;
+  }, [running, activeRunId]);
 
   function toggleStage(s: string) {
     setStages((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
@@ -147,9 +222,18 @@ export function ResearchConsole() {
       } else if (res.run_id) {
         setActiveRunId(res.run_id);
         setResumeRun("");
-        await refreshRunReports(res.run_id);
-        setRuns(await listRuns());
       }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function stopRun() {
+    if (!activeRunId) return;
+    setBusy(true);
+    try {
+      const res = await cancelRun(activeRunId);
+      if (res.error) setRunError(res.error);
     } finally {
       setBusy(false);
     }
@@ -173,7 +257,7 @@ export function ResearchConsole() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {busy ? (
+          {running || busy ? (
             <Badge variant="secondary" className="gap-1">
               <Loader2 className="size-3 animate-spin" /> Running
             </Badge>
@@ -184,7 +268,7 @@ export function ResearchConsole() {
           )}
           {currentStage ? (
             <Badge variant="secondary" className="capitalize">
-              {currentStage}
+              {STAGE_LABELS[currentStage] ?? currentStage}
             </Badge>
           ) : null}
         </div>
@@ -253,14 +337,26 @@ export function ResearchConsole() {
             </div>
           </div>
 
-          <Button onClick={runDirect} disabled={busy || (!query.trim() && !resumeRun)} className="w-full">
-            {busy ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
-            {resumeRun ? "Resume run" : "Run pipeline"}
-          </Button>
+          {running && activeRunId ? (
+            <Button onClick={stopRun} disabled={busy} variant="destructive" className="w-full">
+              <Square className="size-4" /> Stop run
+            </Button>
+          ) : (
+            <Button onClick={runDirect} disabled={busy || (!query.trim() && !resumeRun)} className="w-full">
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
+              {resumeRun ? "Resume run" : "Run pipeline"}
+            </Button>
+          )}
 
           {runError ? (
             <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-[11px] text-destructive">
               {runError}
+            </div>
+          ) : null}
+
+          {cancelled ? (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-[11px] text-amber-600">
+              Run stopped. Partial results (if any) are kept in the active run.
             </div>
           ) : null}
 
@@ -352,28 +448,65 @@ export function ResearchConsole() {
             </TabsContent>
 
             <TabsContent value="activity" className="min-h-0 flex-1 overflow-y-auto p-4">
-              <Card className="h-full overflow-hidden">
-                <CardContent className="h-full overflow-y-auto p-3 font-mono text-[12px] leading-relaxed">
-                  {events.length === 0 ? (
-                    <p className="text-muted-foreground">Waiting for activity…</p>
-                  ) : (
-                    events.map((e, i) => {
-                      const ev = e as Record<string, any>;
-                      return (
-                        <div key={i} className="border-b border-border/50 py-1">
-                          <span className="text-muted-foreground/70">
-                            {ev.ts ? String(ev.ts).slice(11, 19) : ""}
-                          </span>{" "}
-                          <span className={levelColor(eventLevel(ev))}>
-                            [{String(eventTag(ev)).toUpperCase()}]
-                          </span>{" "}
-                          <span className="text-foreground/90">{eventText(ev)}</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </CardContent>
-              </Card>
+              <div className="space-y-4">
+                {/* Primary view: pipeline stage stepper (observability) */}
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                    <CardTitle className="text-sm">Pipeline progress</CardTitle>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <RotateCcw className="size-3.5" /> {counts.tokens} tokens
+                      {counts.error > 0 ? (
+                        <Badge variant="destructive" className="ml-1">{counts.error} error{counts.error > 1 ? "s" : ""}</Badge>
+                      ) : null}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {events.length === 0 ? (
+                      <p className="text-[12px] text-muted-foreground">
+                        No activity yet. Configure a subject and run the pipeline to see live progress.
+                      </p>
+                    ) : (
+                      <StageStepper stages={pipelineStages} running={running || busy} />
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Never hide failures: surface the latest error prominently. */}
+                {lastError ? (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-[11px] text-destructive">
+                    <span className="font-semibold">Run failed:</span> {lastError}
+                  </div>
+                ) : null}
+
+                {/* Details: full execution log (progressive disclosure) */}
+                <Card className="overflow-hidden">
+                  <CardHeader className="pb-2">
+                   <CardTitle className="text-[11px] font-medium text-muted-foreground">
+                       Backend console {events.length > 0 ? `(${events.length})` : ""}
+                     </CardTitle>
+                  </CardHeader>
+                  <CardContent className="max-h-72 overflow-y-auto p-3 font-mono text-[12px] leading-relaxed">
+                    {events.length === 0 ? (
+                      <p className="text-muted-foreground">Waiting for activity…</p>
+                    ) : (
+                      events.map((e, i) => {
+                        const ev = e as Record<string, any>;
+                        return (
+                           <div key={i} className="border-b border-border/50 py-1">
+                             <span className="text-muted-foreground/70">
+                               {ev.ts ? String(ev.ts).slice(11, 19) : ""}
+                             </span>{" "}
+                             <span className={levelColor(eventLevel(ev))}>
+                               [{String(eventTag(ev)).toUpperCase()}]
+                             </span>{" "}
+                             <span className={ev.type === "log" ? levelColor(eventLevel(ev)) : "text-foreground/90"}>{eventText(ev)}</span>
+                           </div>
+                        );
+                      })
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
           </Tabs>
         </div>
