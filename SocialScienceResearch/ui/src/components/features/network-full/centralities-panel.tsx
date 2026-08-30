@@ -23,6 +23,7 @@ import { useNetworkCentralities } from "@/services/networkFull";
 
 const DEFAULT_VISIBLE: (keyof NodeCentrality)[] = [
   "degree",
+  "closeness",
   "eigenvector",
   "betweenness",
   "pagerank",

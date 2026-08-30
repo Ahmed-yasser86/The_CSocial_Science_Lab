@@ -24,13 +24,13 @@ test.describe("Unified journey connectors", () => {
   for (const [hub, item, path] of connectors) {
     test(`top-nav ${hub} ▾ "${item}" opens ${path} without a 404`, async ({ page }) => {
       await page.goto(`${BASE_URL}/network/full`);
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
 
       await page.getByRole("button", { name: hub, exact: true }).click();
       const menuItem = page.getByRole("menuitem", { name: item });
       await menuItem.waitFor({ state: "visible", timeout: 30_000 });
       await menuItem.click();
-      await page.waitForLoadState("networkidle");
+      await page.waitForLoadState("load");
 
       await expect(page).toHaveURL(new RegExp(`${path.replace(/\//g, "\\/")}(\\/|$)`));
       await expect(page.getByText("This page could not be found")).toHaveCount(0);
@@ -55,7 +55,7 @@ test.describe("Unified journey connectors", () => {
     }
 
     await page.goto(`${BASE_URL}/projects/${projectId}`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     const exportButton = page.getByRole("button", { name: /Export project to Excel/i });
     await exportButton.waitFor({ state: "visible", timeout: 30000 });
@@ -73,3 +73,4 @@ test.describe("Unified journey connectors", () => {
     expect(buf.slice(0, 2).toString("latin1")).toBe("PK");
   });
 });
+

@@ -64,7 +64,7 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
 
   async function openRunLayers(page: import('@playwright/test').Page, display: string) {
     await page.goto(`${BASE_URL}/network/full`);
-    // Never wait for networkidle here: the Lab keeps polling jobs/queries in
+    // Never wait for load here: the Lab keeps polling jobs/queries in
     // the background, so network idle may never occur within the timeout.
     await page.getByLabel('Select network slice run').waitFor({ timeout: 45000 });
     await page.getByLabel('Select network slice run').click();
@@ -134,3 +134,4 @@ test.describe('Lab Layers tab is run-aware across many runs', () => {
     expect(aContext).not.toEqual(bContext);
   });
 });
+

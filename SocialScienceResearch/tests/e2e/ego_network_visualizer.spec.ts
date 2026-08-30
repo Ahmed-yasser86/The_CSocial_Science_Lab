@@ -1,4 +1,4 @@
-﻿import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3000';
 const API = process.env.API_URL ?? 'http://localhost:8000/api/v1/social-science';
@@ -41,7 +41,7 @@ test.describe('Ego-Network Visualizer', () => {
   }) => {
     const errors = collectBaseUIButtonErrors(page);
     await page.goto(`${BASE_URL}/network/videos/${videoId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     const canvas = page.locator('canvas').first();
     await canvas.waitFor({ state: 'visible', timeout: 60000 });
     await expect(page.getByText('In-degree')).toBeVisible();
@@ -56,7 +56,7 @@ test.describe('Ego-Network Visualizer', () => {
   }) => {
     const errors = collectBaseUIButtonErrors(page);
     await page.goto(`${BASE_URL}/network/videos/${videoId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     const canvas = page.locator('canvas').first();
     await canvas.waitFor({ state: 'visible', timeout: 60000 });
     await page.waitForTimeout(4000);
@@ -79,7 +79,7 @@ test.describe('Ego-Network Visualizer', () => {
     const currentUrl = page.url();
     await openVideo.click();
     await page.waitForURL((url) => url.pathname.startsWith('/network/videos/'));
-    // Clicking the button in ego view navigates (router.push) â€” but if the
+    // Clicking the button in ego view navigates (router.push) — but if the
     // inspected node IS the focus video the URL stays the same.
     expect(page.url() !== currentUrl || page.url().includes(videoId)).toBe(true);
     expect(
@@ -90,7 +90,7 @@ test.describe('Ego-Network Visualizer', () => {
   test('ego graph renders and layout settles without errors', async ({ page }) => {
     const errors = collectBaseUIButtonErrors(page);
     await page.goto(`${BASE_URL}/network/videos/${videoId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     const canvas = page.locator('canvas').first();
     await canvas.waitFor({ state: 'visible', timeout: 60000 });
     // Let the wider force layout settle; then confirm the canvas still renders.
@@ -103,7 +103,7 @@ test.describe('Ego-Network Visualizer', () => {
     page,
   }) => {
     await page.goto(`${BASE_URL}/network/videos/${videoId}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     const canvas = page.locator('canvas').first();
     await canvas.waitFor({ state: 'visible', timeout: 60000 });
 
@@ -144,3 +144,4 @@ test.describe('Ego-Network Visualizer', () => {
     await expect(scrapeDialog.getByRole('button', { name: 'Start scrape' })).toBeVisible();
   });
 });
+

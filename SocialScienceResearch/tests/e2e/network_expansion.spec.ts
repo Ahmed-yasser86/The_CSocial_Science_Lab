@@ -38,7 +38,7 @@ test.describe('Network Expansion', () => {
 
   test('Expansion tab renders an action list or empty state', async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Expansion' }).click();
 
     const selector = page.getByRole('combobox', {
@@ -54,7 +54,7 @@ test.describe('Network Expansion', () => {
     page,
   }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Graph' }).click();
 
     const scrapeAll = page.getByRole('button', {
@@ -87,7 +87,7 @@ test.describe('Network Expansion', () => {
     test.skip(!sliceRunId, 'No slice run available in the environment');
     test.setTimeout(180000);
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     // Select a slice run so the scrape-all has a scope (the top-bar RunPicker
     // feeds the expansion slice). Without a run/video scope the API rejects.
@@ -203,3 +203,4 @@ test.describe('Network Expansion', () => {
     expect(body.job_id).toBeTruthy();
   });
 });
+

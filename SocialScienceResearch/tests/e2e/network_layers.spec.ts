@@ -57,7 +57,7 @@ test.describe('Network Layers', () => {
 
   test('Layers tab renders the stepper', async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Layers' }).click();
 
     // Either the bootstrap card or the existing layer chips render.
@@ -71,7 +71,7 @@ test.describe('Network Layers', () => {
   test('bootstraps layer 0 from a seed run', async ({ page }) => {
     test.skip(!seedRunId, 'No seed runs available in the environment');
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Layers' }).click();
 
     // If layers already exist, nothing to bootstrap; assert the seed chip.
@@ -98,7 +98,7 @@ test.describe('Network Layers', () => {
     test.setTimeout(180000);
     test.skip(!seedRunId, 'No seed runs available in the environment');
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Layers' }).click();
 
     // Ensure at least layer 0 exists before crawling.
@@ -179,3 +179,4 @@ test.describe('Network Layers', () => {
     expect(await frontier.json()).toHaveProperty('video_ids');
   });
 });
+

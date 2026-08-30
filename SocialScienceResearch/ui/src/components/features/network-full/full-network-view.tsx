@@ -254,6 +254,33 @@ export function FullNetworkView() {
     setHydrated(true);
   }, []);
 
+  // Default-run selection (B'): when no Lab run is explicitly chosen (a fresh
+  // session with no restored resumable state) pick the most recent *successful*
+  // run so the Lab tabs (centralities, layers, matrices, roles, …) have a scope
+  // to compute against instead of the whole corpus — computing over all runs is
+  // too slow to render. We skip `failed`/`partial`/empty runs (e.g. the most
+  // recent run is often a failed scrape with no graph). Gated on `hydrated` so
+  // it never overrides a restored resumable session.
+  useEffect(() => {
+    if (!hydrated || runId || !runsQuery.data) return;
+    const candidates = (
+      runsQuery.data as Array<{
+        run_id: string;
+        status?: string;
+        entities_succeeded?: number;
+        started_at?: string;
+      }>
+    )
+      .filter(
+        (r) =>
+          r.status === "success" ||
+          (r.entities_succeeded ?? 0) > 0,
+      )
+      .sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""));
+    if (candidates.length === 0) return;
+    setRunId(candidates[0].run_id);
+  }, [hydrated, runId, runsQuery.data]);
+
   // Persist Lab session state so the workspace is resumable (US-73-78). Gated on
   // `hydrated` so we don't overwrite the stored session with defaults before
   // the restore effect has run.

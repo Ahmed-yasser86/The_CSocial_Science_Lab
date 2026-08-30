@@ -4,7 +4,7 @@ const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3000';
 
 test('run selector stays enabled but drops "All runs" on the Layers tab', async ({ page }) => {
   await page.goto(`${BASE_URL}/network/full`);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('load');
 
   const picker = page.getByLabel('Select network slice run');
   const allRunsOption = page.getByRole('option', { name: 'All runs', exact: true });
@@ -28,3 +28,4 @@ test('run selector stays enabled but drops "All runs" on the Layers tab', async 
   await picker.click();
   await expect(allRunsOption).toBeVisible();
 });
+

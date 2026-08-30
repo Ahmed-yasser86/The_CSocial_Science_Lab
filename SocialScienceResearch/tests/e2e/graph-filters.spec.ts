@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 async function readyLab(page: Page) {
-  await page.goto("http://127.0.0.1:3000/network/full", { waitUntil: "networkidle" });
+  await page.goto("http://127.0.0.1:3000/network/full", { waitUntil: "load" });
   await page.getByText("NETWORK SLICE").waitFor({ timeout: 30000 });
 }
 
@@ -63,3 +63,4 @@ test.describe("Lab Graph tab — multi-select channels/videos + never lose contr
     await expect(page.getByText(/No expansion actions yet/)).toHaveCount(0);
   });
 });
+

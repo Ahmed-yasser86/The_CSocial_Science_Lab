@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 async function openLab(page: Page) {
-  await page.goto("http://127.0.0.1:3000/network/full", { waitUntil: "networkidle" });
+  await page.goto("http://127.0.0.1:3000/network/full", { waitUntil: "load" });
   await page.getByText("NETWORK SLICE").waitFor({ timeout: 30000 });
 }
 
@@ -124,3 +124,4 @@ test.describe("Lab consistency scenarios", () => {
     await expect(pairsDialog).toHaveCount(0, { timeout: 20000 });
   });
 });
+

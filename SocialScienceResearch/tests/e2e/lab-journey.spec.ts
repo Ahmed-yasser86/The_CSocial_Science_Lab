@@ -15,7 +15,7 @@ test.describe("Network Analysis Lab - researcher journey", () => {
     await page.goto(`${BASE_URL}/network/full`);
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
   }
 
   async function clickTab(page: Page, name: string) {
@@ -83,7 +83,7 @@ test.describe("Network Analysis Lab - researcher journey", () => {
       );
     });
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     // The invalid run must be dropped and the full graph shown instead.
     await expect(
@@ -105,7 +105,7 @@ test.describe("Network Analysis Lab - researcher journey", () => {
       .getByRole("combobox", { name: "Select graph projection" })
       .click();
     await page.getByRole("option", { name: "Channel graph" }).click();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     await expect(
       page.getByText(/Showing .+ of .+ nodes/),
     ).toBeVisible({ timeout: 30000 });
@@ -127,3 +127,4 @@ test.describe("Network Analysis Lab - researcher journey", () => {
     ).toEqual([]);
   });
 });
+

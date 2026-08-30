@@ -198,6 +198,42 @@ ChannelScope = str  # "source" | "target" | "either"
 _APPROX_NODE_THRESHOLD = 5000
 
 
+def _finite(x: object) -> object:
+    """Map non-finite floats (NaN/inf) to 0.0 so responses are JSON-safe.
+
+    networkx centrality measures (constraint / effective_size / clustering /
+    eigenvector / assortativity) return NaN or inf for nodes with no ties or for
+    undefined graph-level coefficients. JSON cannot represent those values, so the
+    API would otherwise 400 ("Out of range float values are not JSON compliant").
+    ``None`` is preserved (serialises to null).
+    """
+    if x is None:
+        return None
+    try:
+        xf = float(x)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if xf != xf or xf in (float("inf"), float("-inf")):  # NaN / inf
+        return 0.0
+    return xf
+
+
+def _clean_response(o: object) -> object:
+    """Recursively replace non-finite floats with 0.0 so JSON encodes cleanly.
+
+    Backstops every centrality response field, including ``community_id`` which is
+    built from raw graph payloads and may carry NaN for unclustered nodes.
+    """
+    if isinstance(o, dict):
+        return {k: _clean_response(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_clean_response(v) for v in o]
+    if isinstance(o, float):
+        if o != o or o in (float("inf"), float("-inf")):  # NaN / inf
+            return 0.0
+    return o
+
+
 def centrality_battery(
     graph: "nx.Graph",
     *,
@@ -267,7 +303,7 @@ def centrality_battery(
         n: (betweenness.get(n, 0.0) / max_bt if max_bt else 0.0)
         for n in graph.nodes
     }
-    return {
+    raw = {
         nid: {
             "degree": degree.get(nid, 0.0),
             "closeness": closeness.get(nid, 0.0),
@@ -282,6 +318,7 @@ def centrality_battery(
         }
         for nid in graph.nodes
     }
+    return {nid: {k: _finite(v) for k, v in node.items()} for nid, node in raw.items()}
 
 
 def global_network_coefficients(
@@ -296,7 +333,7 @@ def global_network_coefficients(
         assortativity = nx.degree_assortativity_coefficient(graph, weight=w)
     except (nx.NetworkXError, nx.PowerIterationFailedConvergence, ValueError):
         assortativity = None
-    return {"assortativity": assortativity}
+    return {"assortativity": _finite(assortativity)}
 
 
 def _percentile_threshold(
@@ -1404,15 +1441,15 @@ class NetworkAnalyticsService:
                 "effective_size": vals.get("effective_size", 0.0),
                 "bridging": vals.get("bridging", 0.0),
                 "clustering": vals.get("clustering", 0.0),
-                "community_id": float(node.community_id if node.community_id is not None else -1),
+                "community_id": _finite(float(node.community_id) if node.community_id is not None else -1.0),
             }
-        return {
+        return _clean_response({
             "nodes": result,
             "global": global_coeffs,
             "approximate": approximate,
             "algorithm": "networkx",
             "computed_at": utcnow().isoformat(),
-        }
+        })
 
     def _slice_graph(
         self,

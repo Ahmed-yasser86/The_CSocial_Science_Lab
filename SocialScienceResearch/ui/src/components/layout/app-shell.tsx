@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useActiveWorkspace } from "@/lib/session";
+import { useWorkspaces } from "@/services/queries";
 import {
   useResearchContext,
   withContext,
@@ -261,24 +262,46 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { context } = useResearchContext();
-  const { hydrated, reconciled, workspaceId } = useActiveWorkspace();
+  const { hydrated, reconciled, workspaceId, setActiveWorkspace } =
+    useActiveWorkspace();
+  const workspacesQuery = useWorkspaces();
 
   // Route guard: content routes live INSIDE a workspace. Without an active
-  // workspace the only valid destination is the chooser at `/`. Waits for the
-  // server reconciliation so a fresh browser (empty localStorage, pointer
-  // only on the server) is never bounced before the pointer is restored.
+  // workspace the only valid destination is the chooser at `/`. If at least one
+  // workspace exists we auto-select the most recently opened (or explicitly
+  // active) one so a fresh session lands directly on its data instead of being
+  // bounced to the chooser. We wait for the server reconciliation so a fresh
+  // browser (empty localStorage, pointer only on the server) is never bounced
+  // before the pointer is restored.
   useEffect(() => {
-    if (
-      hydrated &&
-      reconciled &&
-      !workspaceId &&
-      pathname !== "/" &&
-      pathname !== "/agent" &&
-      pathname !== "/ai-config"
-    ) {
-      router.replace("/");
+    if (!hydrated || !reconciled || workspaceId) return;
+
+    const workspaces = workspacesQuery.data ?? [];
+    if (workspaces.length === 0) {
+      if (
+        pathname !== "/" &&
+        pathname !== "/agent" &&
+        pathname !== "/ai-config"
+      ) {
+        router.replace("/");
+      }
+      return;
     }
-  }, [hydrated, reconciled, workspaceId, pathname, router]);
+
+    const sorted = [...workspaces].sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return (b.last_opened_at ?? "").localeCompare(a.last_opened_at ?? "");
+    });
+    setActiveWorkspace(sorted[0].workspace_id);
+  }, [
+    hydrated,
+    reconciled,
+    workspaceId,
+    workspacesQuery.data,
+    setActiveWorkspace,
+    pathname,
+    router,
+  ]);
 
   return (
     <div className="flex min-h-screen flex-col">

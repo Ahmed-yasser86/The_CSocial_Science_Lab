@@ -19,7 +19,7 @@ test.describe('Network Visualizer', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Graph' }).click();
   });
 
@@ -186,3 +186,4 @@ test.describe('Network Visualizer', () => {
     await expect(canvas).toBeVisible();
   });
 });
+

@@ -11,7 +11,7 @@ test.describe("Network Analysis Lab shell", () => {
 
   test("layout presets switch the active analysis", async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     // "Matrices" preset drives the tab to the matrices view. The matrices
     // query is heavy on the production corpus; allow a generous wait.
@@ -29,7 +29,7 @@ test.describe("Network Analysis Lab shell", () => {
 
   test("researcher identity + notes panel toggles", async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     await page.getByRole("button", { name: /Notes & identity/i }).click();
     const researcher = page.getByPlaceholder(/Your name \/ handle/i);
@@ -40,7 +40,7 @@ test.describe("Network Analysis Lab shell", () => {
 
   test("lab session persists the chosen tab across reload", async ({ page }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
 
     await page.getByRole("button", { name: "Matrices", exact: true }).click();
     await expect(
@@ -48,10 +48,11 @@ test.describe("Network Analysis Lab shell", () => {
     ).toBeVisible({ timeout: 60000 });
 
     await page.reload();
-    await page.waitForLoadState("networkidle");
+    await page.waitForLoadState("load");
     // localStorage session restored -> still on the Matrices view.
     await expect(
       page.getByText("Community matrix (shared commenters)").first(),
     ).toBeVisible({ timeout: 60000 });
   });
 });
+

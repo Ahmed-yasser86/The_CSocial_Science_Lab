@@ -39,7 +39,7 @@ test.describe('Channels tab', () => {
     page,
   }) => {
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     await expect(
@@ -59,7 +59,7 @@ test.describe('Channels tab', () => {
   test('Channel search filters by name', async ({ page }) => {
     test.skip(!seededChannelTitle, 'No seeded channel title available');
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     const search = page.getByRole('textbox', { name: 'Search channels' });
@@ -76,7 +76,7 @@ test.describe('Channels tab', () => {
   }) => {
     test.skip(!seededChannelId, 'No seeded channel available');
     await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     const row = page
@@ -94,3 +94,4 @@ test.describe('Channels tab', () => {
       .toBeGreaterThan(0);
   });
 });
+

@@ -93,7 +93,7 @@ test.describe('Commenter Overlap', () => {
       'No overlapping commenters in the corpus for the selected videos',
     );
     await page.goto(`${BASE_URL}/network/commenters`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await page.getByLabel('Video IDs').fill(videoIds.slice(0, 2).join(', '));
     await page.getByRole('button', { name: 'Analyze' }).click();
@@ -116,7 +116,7 @@ test.describe('Commenter Overlap', () => {
     await page.goto(
       `${BASE_URL}/network/commenters?video_ids=${videoIds.slice(0, 2).join(',')}`,
     );
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await expect(page.getByTestId('commenter-overlap-results')).toBeVisible({
       timeout: 20000,
@@ -128,7 +128,7 @@ test.describe('Commenter Overlap', () => {
   }) => {
     test.skip(!commenterKey, 'No bridge commenter in the overlap result');
     await page.goto(`${BASE_URL}/network/commenters/${encodeURIComponent(commenterKey!)}`);
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('load');
 
     await expect(page.getByTestId('commenter-profile')).toBeVisible({
       timeout: 20000,
