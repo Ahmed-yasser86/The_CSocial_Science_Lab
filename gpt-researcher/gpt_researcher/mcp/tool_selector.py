@@ -9,6 +9,8 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 
+from .normalization import preprocess_mcp_tool_input
+
 logger = logging.getLogger(__name__)
 
 
@@ -339,58 +341,16 @@ class MCPToolSelector:
     def preprocess_tool_input(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """
         Preprocess tool inputs to ensure they match the expected schema.
-        Handles common issues like:
-        - Missing required fields (e.g., `query`, `category`).
-        - Malformed inputs (e.g., `raw_args` instead of `query`).
-        - Invalid enum values (e.g., `Political Conflict` instead of `POLITICAL`).
-        
+
+        Delegates to :func:`preprocess_mcp_tool_input`, the shared
+        normalization used by every MCP invocation path (direct tool calls,
+        catalog-wrapped calls, and this validation path).
+
         Args:
             tool_name: Name of the tool being invoked.
             tool_input: Raw input dictionary provided to the tool.
-            
+
         Returns:
             Processed input dictionary that matches the tool's schema.
         """
-        processed_input = tool_input.copy()
-        
-        # Handle SEARCH_WEB: Ensure `query` is present
-        if tool_name == "SEARCH_WEB":
-            if "query" not in processed_input and "raw_args" in processed_input:
-                processed_input["query"] = processed_input.pop("raw_args")
-            elif "query" not in processed_input:
-                raise ValueError("Missing required field: 'query' for SEARCH_WEB tool")
-        
-        # Handle SEARCH_STORIES: Validate and transform `category`
-        elif tool_name == "SEARCH_STORIES":
-            if "category" not in processed_input:
-                raise ValueError("Missing required field: 'category' for SEARCH_STORIES tool")
-            
-            # Map common category aliases to valid enum values
-            category_mapping = {
-                "political conflict": "POLITICAL",
-                "political": "POLITICAL",
-                "conflict": "POLITICAL",
-                "crime": "CRIME",
-                "economic": "ECONOMIC",
-                "corporate": "CORPORATE",
-                "technology": "TECHNOLOGY",
-                "infrastructure": "INFRASTRUCTURE",
-                "environment": "ENVIRONMENT",
-                "health": "HEALTH",
-                "demographic": "DEMOGRAPHIC",
-                "information": "INFORMATION",
-            }
-            
-            category = processed_input["category"].lower()
-            if category in category_mapping:
-                processed_input["category"] = category_mapping[category]
-            elif category not in {
-                "battles", "protests", "riots", "explosions/remote violence", 
-                "violence against civilians", "strategic developments", 
-                "political", "crime", "economic", "corporate", 
-                "technology", "infrastructure", "environment", 
-                "health", "demographic", "information"
-            }:
-                raise ValueError(f"Invalid category: '{category}'. Must be one of: {list(category_mapping.keys())}")
-        
-        return processed_input
+        return preprocess_mcp_tool_input(tool_name, tool_input)

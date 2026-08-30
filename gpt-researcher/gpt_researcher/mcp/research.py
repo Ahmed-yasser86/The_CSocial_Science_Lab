@@ -10,6 +10,8 @@ from typing import List, Dict, Any
 
 from langchain_core.tools import Tool
 
+from .normalization import preprocess_mcp_tool_input
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +144,15 @@ class MCPResearchSkill:
                         tool, tool_name, tool_args = resolved_tool
                         
                         logger.info("After SocialCrawl resolution: tool_name=%s, tool_args=%s", tool_name, tool_args)
+
+                        # Fix schema-level issues (e.g. `raw_args` -> `query` for
+                        # SEARCH_WEB, `category` aliases for SEARCH_STORIES) BEFORE any
+                        # numeric coercion, otherwise the MCP server returns a
+                        # validation error inside the tool response body.
+                        normalized_tool_args = preprocess_mcp_tool_input(tool_name, tool_args)
+                        if normalized_tool_args != tool_args:
+                            logger.info("Preprocessed MCP arguments for %s before execution: %s", tool_name, normalized_tool_args)
+                        tool_args = normalized_tool_args
 
                         normalized_tool_args = self._normalize_tool_arguments(tool_name, tool_args)
                         if normalized_tool_args != tool_args:
@@ -314,7 +325,12 @@ class MCPResearchSkill:
                             tool_arguments = json.loads(tool_arguments)
                         except (json.JSONDecodeError, TypeError):
                             tool_arguments = {"raw_args": tool_arguments}
-                    
+
+                    # Normalize schema issues (e.g. `raw_args` -> `query`) before
+                    # forwarding to the catalog wrapper so the underlying tool
+                    # receives the field it actually expects.
+                    tool_arguments = preprocess_mcp_tool_input(actual_tool_name, tool_arguments or {})
+
                     payload = {
                         "tool_name": actual_tool_name,
                         "tool_arguments": tool_arguments or {},
