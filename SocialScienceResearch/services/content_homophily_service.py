@@ -56,19 +56,12 @@ from SocialScienceResearch.config.settings import (
     CONTENT_HOMOPHILY_EMBED_MAX_RETRIES,
 )
 
-# Project-specific embedding TOKEN gate (SocialScienceResearch only). Request
+# Project-specific embedding TOKEN budget (SocialScienceResearch only). Request
 # pacing is handled globally on the shared Gemini embedder (see
 # Ingestion_Pipline.infra.embeddings) because the free-tier request quota is
 # shared across the whole project; a per-caller limiter cannot prevent the
-# shared 429. Ingestion keeps its own (separate, higher) TokenRateLimiter.
-_css_embed_token_limiter = None
-if CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE and CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE > 0:
-    from Ingestion_Pipline.infra.rate_limiter import TokenRateLimiter
-
-    _css_embed_token_limiter = TokenRateLimiter(
-        max_tokens_per_minute=CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE
-    )
-
+# shared 429. The token budget here is applied through the SAME shared
+# RateLimitedEmbedder pattern every embedding caller uses.
 logger = get_logger(__name__)
 
 #: Computational sampling policy defaults (spec §7). These bound COST; they do
@@ -499,26 +492,31 @@ class VideoEmbeddingAdapter:
             return cached
         try:
             if self._embedder is None:
-                self._embedder = _default_embedder()
+                embedder = _default_embedder()
+                # Apply this module's per-caller TOKEN budget through the shared
+                # RateLimitedEmbedder pattern (request pacing is already handled
+                # globally on the embedder returned by _default_embedder).
+                tpm = CONTENT_HOMOPHILY_EMBED_MAX_TOKENS_PER_MINUTE
+                if tpm and tpm > 0:
+                    from Ingestion_Pipline.infra.embeddings import (
+                        EmbeddingRateLimitConfig,
+                        RateLimitedEmbedder,
+                    )
+
+                    embedder = RateLimitedEmbedder(
+                        embedder, EmbeddingRateLimitConfig(max_tokens_per_minute=tpm)
+                    )
+                self._embedder = embedder
             chunks = _ingestion_chunker(text, source=f"youtube:{video_id}")
             if not chunks:
                 self.embedding_failures += 1
                 logger.warning("content-homophily no chunks to embed: %s", video_id)
                 return None
-            n_tokens = (
-                _css_embed_token_limiter.count_tokens_text(chunks)
-                if _css_embed_token_limiter is not None else 0
-            )
+            n_tokens = self._embedder._tpm.count_tokens_text(chunks) if getattr(self._embedder, "_tpm", None) is not None else 0
             logger.info(
                 "content-homophily embedding START %s: %d chunk(s), %d token(s)",
                 video_id, len(chunks), n_tokens,
             )
-            # Request pacing is handled globally on the shared Gemini embedder
-            # (Ingestion_Pipline.infra.embeddings) because the free-tier request
-            # quota is project-wide; nothing to do here.
-            # Token gate (CSS-only politeness budget; ingestion is unaffected).
-            if _css_embed_token_limiter is not None:
-                _css_embed_token_limiter.throttle(n_tokens)
             # Queue + retry on transient failures (e.g. Gemini 429) so a chunk is
             # never dropped: it is waited out and retried, not lost.
             vectors = None

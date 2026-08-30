@@ -35,6 +35,10 @@ from gpt_researcher.utils.enum import Tone
 from chat.chat import ChatAgentWithMemory
 
 from server.report_store import ReportStore
+from server.embedding_rate_limit import (
+    load_embedding_rate_limits,
+    save_embedding_rate_limits,
+)
 
 # MongoDB services removed - no database persistence needed
 
@@ -66,6 +70,26 @@ class ChatRequest(BaseModel):
     
     report: str
     messages: List[Dict[str, Any]]
+
+
+class EmbeddingRateLimitModule(BaseModel):
+    tpm: int | None = None
+    rpm: int | None = None
+    encoding: str | None = None
+
+
+class EmbeddingRateLimitRequest(BaseModel):
+    """Per-module embedding rate-limit settings from the UI.
+
+    Only the fields the user actually changes need to be provided; omitted fields
+    keep their current value. ``ingestion`` only exposes ``rpm`` (the shared
+    Gemini request budget) and ``content_homophily`` only ``tpm`` (its token
+    budget); ``gpt_researcher`` exposes all three.
+    """
+
+    gpt_researcher: EmbeddingRateLimitModule | None = None
+    content_homophily: EmbeddingRateLimitModule | None = None
+    ingestion: EmbeddingRateLimitModule | None = None
 
 
 @asynccontextmanager
@@ -357,6 +381,24 @@ async def upload_file(file: UploadFile = File(...)):
 @app.delete("/files/{filename}")
 async def delete_file(filename: str):
     return await handle_file_deletion(filename, DOC_PATH)
+
+
+@app.get("/api/settings/embedding-rate-limit")
+async def get_embedding_rate_limit():
+    """Return the currently configured embedding rate limits (per module)."""
+    return load_embedding_rate_limits()
+
+
+@app.post("/api/settings/embedding-rate-limit")
+async def post_embedding_rate_limit(request: EmbeddingRateLimitRequest):
+    """Persist embedding rate-limit settings from the UI.
+
+    Values are written to the project ``.env`` and pushed into ``os.environ`` so
+    all modules (gpt-researcher, content-homophily, ingestion) pick them up.
+    """
+    payload = request.model_dump(exclude_none=True)
+    saved = save_embedding_rate_limits(payload)
+    return {"status": "ok", "settings": saved}
 
 
 @app.websocket("/ws")

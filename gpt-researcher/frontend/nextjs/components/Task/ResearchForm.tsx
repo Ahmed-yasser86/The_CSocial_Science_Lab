@@ -3,6 +3,7 @@ import FileUpload from "../Settings/FileUpload";
 import ToneSelector from "../Settings/ToneSelector";
 import MCPSelector from "../Settings/MCPSelector";
 import LayoutSelector from "../Settings/LayoutSelector";
+import EmbeddingRateLimitSettings from "../Settings/EmbeddingRateLimitSettings";
 import DomainFilter from "./DomainFilter";
 import { useAnalytics } from "../../hooks/useAnalytics";
 import { ChatBoxSettings, Domain, MCPConfig } from '@/types/data';
@@ -162,6 +163,8 @@ export default function ResearchForm({
       />
       
       <LayoutSelector layoutType={layoutType || 'copilot'} onLayoutChange={onLayoutChange} />
+
+      <EmbeddingRateLimitSettings />
 
       {/** TODO: move the below to its own component */}
       {(chatBoxSettings.report_source === "web" || chatBoxSettings.report_source === "hybrid") && (

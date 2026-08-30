@@ -22,8 +22,11 @@ Supported providers:
     - custom: Custom OpenAI-compatible API
 """
 
+import logging
 import os
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 OPENAI_EMBEDDING_MODEL = os.environ.get(
     "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
@@ -225,6 +228,34 @@ class Memory:
                 )
             case _:
                 raise Exception("Embedding not found.")
+
+        # Optional, per-module embedding rate limiting (UI-configurable). Wraps
+        # the embedder with the shared RateLimitedEmbedder pattern so gpt-researcher
+        # paces its embedding calls exactly like the ingestion and content-homophily
+        # pipelines. Both knobs default to OFF (0) to preserve prior behavior.
+        tpm = int(os.environ.get("GPT_RESEARCHER_EMBED_TPM", "0") or 0)
+        rpm = int(os.environ.get("GPT_RESEARCHER_EMBED_RPM", "0") or 0)
+        if tpm > 0 or rpm > 0:
+            try:
+                from Ingestion_Pipline.infra.embeddings import (
+                    EmbeddingRateLimitConfig,
+                    RateLimitedEmbedder,
+                )
+
+                _embeddings = RateLimitedEmbedder(
+                    _embeddings,
+                    EmbeddingRateLimitConfig(
+                        max_tokens_per_minute=tpm,
+                        encoding_name=os.environ.get(
+                            "GPT_RESEARCHER_EMBED_ENCODING", "cl100k_base"
+                        ),
+                        enable_shared_rpm=rpm > 0,
+                    ),
+                )
+            except Exception as _exc:  # pragma: no cover - optional hardening
+                # If the shared limiter package is unavailable, run unthrottled
+                # rather than breaking embedding entirely.
+                logger.warning("gpt-researcher embedding rate limiting disabled: %s", _exc)
 
         self._embeddings = _embeddings
 

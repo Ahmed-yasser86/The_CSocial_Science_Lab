@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -29,23 +30,79 @@ def _global_embed_rpm() -> int:
         return _DEFAULT_GLOBAL_EMBED_RPM
 
 
-class _RequestRateLimitedEmbedder:
-    """Wrap any embedder so every ``embed_documents``/``embed_query`` call is
-    paced by a single, process-wide request limiter (the real Gemini 429 guard).
+@dataclass
+class EmbeddingRateLimitConfig:
+    """User-configurable rate-limit budget for one embedding caller.
 
-    Never drops a request: it queues (sleeps) until a request slot is free.
+    * ``max_tokens_per_minute`` — token budget (TPM), enforced per-caller. Set 0
+      to disable token pacing. This is the per-module knob the UI exposes.
+    * ``encoding_name`` — tiktoken encoding used to count tokens for the TPM budget.
+    * ``enable_shared_rpm`` — when True, this caller also participates in the
+      single, project-wide request limiter (the only correct guard against the
+      shared Gemini free-tier 429). Disabled by default because the Gemini
+      embedder is usually already wrapped with the global RPM limiter upstream
+      (see ``build_embeddings``). Enable it only on raw embedders.
     """
 
-    def __init__(self, embedder: Any, limiter: Any) -> None:
+    max_tokens_per_minute: int = 0
+    encoding_name: str = "cl100k_base"
+    tpm_window_seconds: int = 70
+    enable_shared_rpm: bool = False
+
+    @property
+    def tpm_enabled(self) -> bool:
+        return self.max_tokens_per_minute and self.max_tokens_per_minute > 0
+
+
+class RateLimitedEmbedder:
+    """Unified rate-limiting wrapper shared by EVERY embedding caller.
+
+    This is the single pattern used by ingestion, gpt-researcher and
+    content-homophily so their rate limiting cannot drift apart. It paces
+    ``embed_documents``/``embed_query`` by:
+
+    * an optional per-caller **token** budget (TPM), and
+    * the optional project-wide **request** budget (RPM, shared singleton).
+
+    Nothing is ever dropped: requests queue (sleep) until budget is available.
+
+    The wrapper is a transparent proxy: any attribute not defined here (e.g.
+    ``model_name``, ``batch_size``) is delegated to the wrapped embedder.
+    """
+
+    def __init__(self, embedder: Any, config: EmbeddingRateLimitConfig | None = None) -> None:
         self._embedder = embedder
-        self._limiter = limiter
+        cfg = config or EmbeddingRateLimitConfig()
+
+        self._tpm: Any = None
+        if cfg.tpm_enabled:
+            from Ingestion_Pipline.infra.rate_limiter import TokenRateLimiter
+
+            self._tpm = TokenRateLimiter(
+                max_tokens_per_minute=cfg.max_tokens_per_minute,
+                encoding_name=cfg.encoding_name,
+                window_seconds=cfg.tpm_window_seconds,
+            )
+
+        self._rpm: Any = None
+        if cfg.enable_shared_rpm:
+            self._rpm = _get_global_embed_request_limiter()
+
+    def _throttle_tokens(self, texts) -> None:
+        if self._tpm is None:
+            return
+        self._tpm.throttle(self._tpm.count_tokens_text(list(texts)))
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        self._limiter.acquire()
+        if self._rpm is not None:
+            self._rpm.acquire()
+        self._throttle_tokens(texts)
         return self._embedder.embed_documents(texts)
 
     def embed_query(self, text: str) -> list[float]:
-        self._limiter.acquire()
+        if self._rpm is not None:
+            self._rpm.acquire()
+        self._throttle_tokens([text])
         return self._embedder.embed_query(text)
 
     def __getattr__(self, name: str) -> Any:
@@ -53,6 +110,9 @@ class _RequestRateLimitedEmbedder:
         # wrapped embedder so callers see a transparent proxy.
         return getattr(self._embedder, name)
 
+
+#: Backwards-compatible alias for the old RPM-only wrapper.
+_RequestRateLimitedEmbedder = RateLimitedEmbedder
 
 _global_limiter: Any = None
 _global_limiter_lock = threading.Lock()
@@ -81,7 +141,8 @@ def build_embeddings(
     ``EMBEDDING`` is ``provider:model`` — e.g. ``cohere:embed-multilingual-v3.0``,
     ``openai:text-embedding-3-large`` or ``google_genai:gemini-embedding-2-preview``.
     When unset or unrecognized, Google Generative AI embeddings are used (the
-    historical default).
+    historical default). The returned embedder is wrapped with the project-wide
+    request limiter so every caller shares the single Gemini 429 guard.
     """
     settings = settings or EmbeddingSettings()
     spec = (os.environ.get("EMBEDDING") or "").strip()
@@ -117,8 +178,6 @@ def build_embeddings(
     if embedder is None:
         embedder = GoogleGenerativeAIEmbeddings(model=model or settings.model or DEFAULT_EMBEDDING_MODEL)
 
-    limiter = _get_global_embed_request_limiter()
-    if limiter is not None:
-        embedder = _RequestRateLimitedEmbedder(embedder, limiter)
+    if _get_global_embed_request_limiter() is not None:
+        embedder = RateLimitedEmbedder(embedder, EmbeddingRateLimitConfig(enable_shared_rpm=True))
     return embedder
-
