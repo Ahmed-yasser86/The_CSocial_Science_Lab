@@ -1280,7 +1280,7 @@ The_CSocial_Science_Lab/
 │   ├── infra/                      # Rate limiter, vector store, embeddings
 │   └── config/                     # Settings
 ├── gpt-researcher/                 # Vendored research engine
-├── tests/                          # 75+ test modules
+├── tests_pipeline/                 # Pipeline integration tests (8 modules)
 ├── docs/                           # MkDocs documentation
 ├── docker-compose.yml              # PostgreSQL
 ├── pyproject.toml                  # Dependencies and build config
