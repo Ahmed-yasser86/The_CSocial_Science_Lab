@@ -6,11 +6,12 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
-      - "SocialScienceResearch/api/openapi.json"
+      - "SocialScienceResearch/api/**"
   pull_request:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "SocialScienceResearch/api/**"
   workflow_dispatch:
 
 permissions:
