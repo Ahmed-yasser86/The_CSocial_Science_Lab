@@ -71,14 +71,14 @@ Python 3.11, FastAPI, NetworkX, LangGraph, PostgreSQL, Qdrant, Next.js, yt-dlp, 
 
 ## Scale
 
-- **160+ API endpoints** across 21 routers
-- **38 analytical services**
-- **17 database tables**
+- **160+ API endpoints** across 18 routers
+- **36 analytical services**
+- **18 database tables**
 - **17 sampling strategies**
 - **5 echo-chamber signals**
 - **10 centrality measures**
 - **6 graph export formats**
-- **80+ test modules**
+- **75+ test modules**
 
 ---
 

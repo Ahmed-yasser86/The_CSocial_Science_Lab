@@ -87,7 +87,7 @@ graph LR
 
 | System | Purpose | Key Metrics |
 |---|---|---|
-| **CSS Research Workbench** | YouTube data collection, network analysis, echo-chamber detection | 160+ API endpoints, 38 services |
+| **CSS Research Workbench** | YouTube data collection, network analysis, echo-chamber detection | 160+ API endpoints, 36 services |
 | **Graph-RAG Intelligence Agent** | Multi-stage intelligence analysis via LangGraph | 5-node pipeline, session persistence |
 | **Ingestion Pipeline** | Document processing and vector storage | Tavily crawl, Qdrant embeddings |
 

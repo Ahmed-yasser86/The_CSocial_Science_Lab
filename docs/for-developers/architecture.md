@@ -76,7 +76,7 @@ graph TB
 | **Acquisition** | `acquisition/` | YouTube data extraction (yt-dlp, fallbacks, retry, normalization) |
 | **Domain** | `domain/` | Entities, observations, enums, query system — no infrastructure dependencies |
 | **Persistence** | `persistence/` | Dual backend: PostgreSQL repositories + Excel repositories |
-| **Services** | `services/` | 38 analytical services (network, sampling, echo-chamber, etc.) |
+| **Services** | `services/` | 36 analytical services (network, sampling, echo-chamber, etc.) |
 | **API** | `api/` | FastAPI application, routers, schemas |
 | **Concurrency** | `concurrency/` | Budget controller, circuit breaker, priority queue |
 | **Config** | `config/` | Frozen dataclasses with environment variable loading |
@@ -117,7 +117,7 @@ Each workspace gets:
 
 `create_app()` builds one FastAPI application with:
 
-- **21 CSS routers** under `/api/v1/social-science/*`
+- **18 CSS routers** under `/api/v1/social-science/*`
 - **Direct app routes** for collection, jobs, runs, channels, videos, sampling, analytics, export
 - **The agent router** (conditional, mounted if graph imports)
 - **160+ API paths** in `api/openapi.json`
@@ -206,13 +206,16 @@ URL → Tavily Extract → Chunk (RecursiveCharacterTextSplitter) → Embed (Gem
 
 ## Data Layer
 
-### PostgreSQL Schema (17 tables)
+### PostgreSQL Schema (18 tables)
 
 | Table | Purpose |
 |---|---|
 | `channels` | Channel metadata |
+| `channel_observations` | Time-varying channel stats |
 | `videos` | Video metadata |
+| `video_observations` | Time-varying video stats |
 | `comments` | Comment data |
+| `comment_observations` | Time-varying comment stats |
 | `recommendations` | Directed recommendation edges |
 | `transcripts` | Video transcripts |
 | `collection_runs` | Run metadata with provenance |
@@ -220,13 +223,11 @@ URL → Tavily Extract → Chunk (RecursiveCharacterTextSplitter) → Embed (Gem
 | `datasets` | Dataset definitions |
 | `dataset_members` | Dataset video/comment associations |
 | `samples` | Persisted samples with recipes |
-| `sample_members` | Sample video/comment associations |
 | `projects` | Research projects |
 | `project_items` | Project artifacts |
 | `layer_runs` | Layer crawl anchors |
 | `echo_detections` | Echo-chamber detection results |
 | `collection_jobs` | Job definitions |
-| `author_profiles` | Aggregated author profiles |
 
 ### Excel Backend (Legacy)
 
@@ -275,7 +276,7 @@ graph LR
 
 ## Testing
 
-- **80+ test modules** across the repository
+- **75+ test modules** across the repository
 - **API contract tests** — OpenAPI snapshot guard
 - **Centrality benchmark** — validated against Zachary's Karate Club
 - **Service unit tests** — network, sampling, echo-chamber, comparison

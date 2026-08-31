@@ -16,10 +16,10 @@ The system distinguishes four observation types:
 
 | Type | Description | Example |
 |---|---|---|
-| **Channel metadata** | Name, subscriber count, description | Collected via yt-dlp |
-| **Video metadata** | Title, views, likes, upload date, duration | Collected via yt-dlp |
-| **Comment** | Author, text, likes, timestamp, reply structure | Collected via yt-dlp |
-| **Recommendation** | Directed edge between videos with rank | Collected via three-layer fallback |
+| **Channel metadata** | Title, description, handle, subscriber count, video count, view count | Collected via yt-dlp |
+| **Video metadata** | Title, description, duration, upload date, views, likes, comment count, favorite count | Collected via yt-dlp |
+| **Comment** | Author name/ID, text, likes, timestamp, reply structure, is_author flag | Collected via yt-dlp |
+| **Recommendation** | Directed edge with position, target metadata (channel, title), layer index | Collected via three-layer fallback |
 | **Transcript** | Video caption text | Collected via captions (opt-in) |
 
 Every observation carries a `collection_run_id` linking it to its collection event, ensuring full provenance.

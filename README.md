@@ -480,7 +480,7 @@ graph LR
 
 ### A. CSS Research Workbench (`SocialScienceResearch/`)
 
-The primary system. A full-featured research platform for YouTube data acquisition, observation, sampling, network analysis, echo-chamber detection, and export. It provides 160+ API endpoints across 21 routers, with workspace isolation, job management, and dual persistence backends (PostgreSQL and Excel).
+The primary system. A full-featured research platform for YouTube data acquisition, observation, sampling, network analysis, echo-chamber detection, and export. It provides 160+ API endpoints across 18 routers, with workspace isolation, job management, and dual persistence backends (PostgreSQL and Excel).
 
 ### B. Graph-RAG Intelligence Agent (`RetrievalPipeline/`)
 
@@ -835,7 +835,7 @@ The BFS layered crawling system operationalizes the concept of network expansion
 
 ### Dual Persistence
 
-PostgreSQL (17 tables with JSONB columns) provides production-grade storage with relational integrity. Excel provides research-friendly export for manual analysis. The dual-backend architecture ensures that data is accessible in both programmatic and spreadsheet-based workflows.
+PostgreSQL (18 tables with JSONB columns) provides production-grade storage with relational integrity. Excel provides research-friendly export for manual analysis. The dual-backend architecture ensures that data is accessible in both programmatic and spreadsheet-based workflows.
 
 ### Workspace Isolation
 
@@ -847,7 +847,7 @@ The sampling service implements 17 deterministic strategies with `seed=42`, ensu
 
 ### Modular Architecture
 
-The service-layer architecture (38 services) separates concerns cleanly: collection, sampling, analytics, network analysis, echo-chamber detection, content homophily, commenter overlap, comparison, and export. Each service has defined inputs, outputs, and dependencies, enabling independent testing and extension.
+The service-layer architecture (36 services) separates concerns cleanly: collection, sampling, analytics, network analysis, echo-chamber detection, content homophily, commenter overlap, comparison, and export. Each service has defined inputs, outputs, and dependencies, enabling independent testing and extension.
 
 ---
 
@@ -912,7 +912,7 @@ Every significant engineering decision has a corresponding methodological ration
 
 7. **Implemented reproducible sampling** with 17 deterministic strategies, seed=42, immutable sample persistence with generation recipes, and sample comparison (overlap, Jaccard, union).
 
-8. **Designed a dual-persistence architecture** with PostgreSQL (17 tables) for production use and Excel for research-friendly export, with complete repository abstraction enabling backend switching.
+8. **Designed a dual-persistence architecture** with PostgreSQL (18 tables) for production use and Excel for research-friendly export, with complete repository abstraction enabling backend switching.
 
 9. **Built a LangGraph intelligence pipeline** implementing 5-stage analysis (Identity → Subject → Audience → Ecosystem → Compression) with session persistence and structured intelligence output.
 
@@ -931,7 +931,7 @@ A computational social-science research platform that jointly analyzes three net
 - **Recommendation network** — directed edges from observable YouTube recommendations, expanded through BFS layered crawling with three-layer fallback extraction
 - **Context-aware acquisition** — configurable cookies (none/browser/file), proxy positioning with sticky sessions, browser impersonation, and runtime-adjustable scraping profiles for comparative recommendation analysis
 
-**Scale:** 160+ API endpoints, 38 services, 17 database tables, 17 sampling strategies, 5 echo-chamber signals, 10 centrality measures, 6 graph export formats.
+**Scale:** 160+ API endpoints, 36 services, 18 database tables, 17 sampling strategies, 5 echo-chamber signals, 10 centrality measures, 6 graph export formats.
 
 **Technologies:** Python 3.11, FastAPI, NetworkX, LangGraph, PostgreSQL, Qdrant, Next.js, yt-dlp, Pydantic, NumPy, SciPy.
 
@@ -1260,7 +1260,7 @@ graph TB
 The_CSocial_Science_Lab/
 ├── SocialScienceResearch/          # A. CSS Research Workbench
 │   ├── acquisition/                # YouTube data acquisition (yt-dlp, fallbacks)
-│   ├── api/                        # FastAPI application (160+ endpoints, 21 routers)
+│   ├── api/                        # FastAPI application (160+ endpoints, 18 routers)
 │   │   ├── app.py                  # Application factory
 │   │   ├── schemas.py              # Pydantic response models
 │   │   └── routers/                # Endpoint modules
@@ -1268,7 +1268,7 @@ The_CSocial_Science_Lab/
 │   ├── concurrency/                # Budget controller, circuit breaker, priority queue
 │   ├── domain/                     # Domain models, enums, query system
 │   ├── persistence/                # Dual backend (PostgreSQL + Excel)
-│   ├── services/                   # 38 analytical services
+│   ├── services/                   # 36 analytical services
 │   └── ui/                         # Next.js frontend
 ├── RetrievalPipeline/              # B. Graph-RAG Intelligence Agent
 │   └── Graph/
@@ -1280,7 +1280,7 @@ The_CSocial_Science_Lab/
 │   ├── infra/                      # Rate limiter, vector store, embeddings
 │   └── config/                     # Settings
 ├── gpt-researcher/                 # Vendored research engine
-├── tests/                          # 80+ test modules
+├── tests/                          # 75+ test modules
 ├── docs/                           # MkDocs documentation
 ├── docker-compose.yml              # PostgreSQL
 ├── pyproject.toml                  # Dependencies and build config
