@@ -1,4 +1,4 @@
-# Graph RAG Agent — Computational Social Science Research Platform
+# The CSocial Science Lab — Computational Social Science Research Platform
 
 > A research-engineering artifact for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube.
 
@@ -1259,7 +1259,7 @@ graph TB
 ## Project Structure
 
 ```
-graph-rag-agent/
+The_CSocial_Science_Lab/
 ├── SocialScienceResearch/          # A. CSS Research Workbench
 │   ├── acquisition/                # YouTube data acquisition (yt-dlp, fallbacks)
 │   ├── api/                        # FastAPI application (160+ endpoints, 21 routers)
@@ -1305,8 +1305,8 @@ graph-rag-agent/
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/anomalyco/graph-rag-agent.git
-cd graph-rag-agent
+git clone https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab.git
+cd The_CSocial_Science_Lab
 pip install -e .
 
 # 2. Start PostgreSQL

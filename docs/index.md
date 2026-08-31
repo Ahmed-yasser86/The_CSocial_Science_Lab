@@ -1,4 +1,4 @@
-# Graph RAG Agent — Computational Social Science Research Platform
+# The CSocial Science Lab — Computational Social Science Research Platform
 
 > A research-engineering artifact for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube.
 

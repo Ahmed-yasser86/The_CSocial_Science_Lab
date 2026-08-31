@@ -7,22 +7,22 @@
 `CITATION.cff`:
 
 ```text
-title: Graph RAG Agent — Computational Social Science Research Workbench
+title: The CSocial Science Lab — Computational Social Science Research Workbench
 type: software
 version: 0.1.0
 license: MIT
-repository-code: https://github.com/anomalyco/graph-rag-agent
+repository-code: https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab
 ```
 
 Suggested BibTeX:
 
 ```bibtex
-@software{graphragagent2026,
-  author  = {{Graph RAG Agent Contributors}},
-  title   = {Graph RAG Agent --- Computational Social Science Research Workbench},
+@software{csocialsciencelab2026,
+  author  = {{The CSocial Science Lab Contributors}},
+  title   = {The CSocial Science Lab --- Computational Social Science Research Workbench},
   year    = {2026},
   version = {0.1.0},
-  url     = {https://github.com/anomalyco/graph-rag-agent},
+  url     = {https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab},
   note    = {YouTube recommendation \& audience network analysis with full provenance},
   license = {MIT}
 }

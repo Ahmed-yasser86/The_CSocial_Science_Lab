@@ -1,8 +1,8 @@
-site_name: Graph RAG Agent
+site_name: The CSocial Science Lab
 site_description: Computational Social Science research platform for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube.
-site_author: Graph RAG Agent
-repo_name: graph-rag-agent
-repo_url: https://github.com/anomalyco/graph-rag-agent
+site_author: The CSocial Science Lab
+repo_name: The_CSocial_Science_Lab
+repo_url: https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab
 edit_uri: edit/main/docs/
 
 theme:

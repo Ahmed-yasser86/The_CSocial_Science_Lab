@@ -1,11 +1,11 @@
 cff-version: 1.2.0
-title: "Graph RAG Agent — Computational Social Science Research Workbench"
+title: "The CSocial Science Lab — Computational Social Science Research Workbench"
 message: "If you use this software, please cite it as below."
 type: software
 authors:
-  - family-names: "Graph RAG Agent"
+  - family-names: "The CSocial Science Lab"
     given-names: "Contributors"
-repository-code: "https://github.com/anomalyco/graph-rag-agent"
+repository-code: "https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab"
 abstract: "YouTube recommendation & audience network analysis with full provenance (observed, never estimated), two network families, weight-spec provenance, and a resumable Graph-RAG intelligence agent."
 license: MIT
 version: 0.1.0
