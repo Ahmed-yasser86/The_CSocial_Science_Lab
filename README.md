@@ -201,11 +201,11 @@ The cross-layer analysis compares the different network representations to ident
 ```mermaid
 graph TB
     subgraph "Conceptual Framework"
-        S[Social Layer<br/>Who interacts with whom?]
-        C[Content/Semantic Layer<br/>What content is related?]
-        R[Recommendation Layer<br/>Which content does the platform connect?]
-        CM[Community Layer<br/>Which users/content belong together?]
-        X[Cross-Layer Analysis<br/>How do layers correspond?]
+        S[Social Layer - Who interacts with whom?]
+        C[Content/Semantic Layer - What content is related?]
+        R[Recommendation Layer - Which content does the platform connect?]
+        CM[Community Layer - Which users/content belong together?]
+        X[Cross-Layer Analysis - How do layers correspond?]
     end
     S --> X
     C --> X
@@ -454,11 +454,11 @@ The repository contains three cooperating systems within a single codebase:
 ```mermaid
 graph LR
     subgraph "A. CSS Research Workbench"
-        A1[YouTube Acquisition<br/>yt-dlp + fallbacks]
-        A2[Data Collection<br/>channels, videos, comments]
-        A3[Network Analysis<br/>SNA, communities, roles]
-        A4[Echo Chamber Detection<br/>S1-S5 signals]
-        A5[Sampling<br/>17 strategies, seed=42]
+        A1[YouTube Acquisition - yt-dlp + fallbacks]
+        A2[Data Collection - channels, videos, comments]
+        A3[Network Analysis - SNA, communities, roles]
+        A4[Echo Chamber Detection - S1-S5 signals]
+        A5[Sampling - 17 strategies, seed=42]
     end
     subgraph "B. Graph-RAG Intelligence Agent"
         B1[Identity Research]
@@ -496,18 +496,16 @@ A document processing pipeline that extracts content from URLs via Tavily, chunk
 
 ```mermaid
 graph TB
-    RP[Research Problem<br/>Platform-mediated information environments]
-    DC[Data Collection<br/>YouTube acquisition via yt-dlp]
-    DCP[Data Cleaning / Processing<br/>Normalization, enrichment, observation]
-    SR[Semantic Representation<br/>Transcript embedding]
-    GC[Graph Construction<br/>Social, semantic, recommendation networks]
-    CA[Community Analysis<br/>Louvain detection, structural metrics]
-    RA[Recommendation Analysis<br/>Layered crawl, expansion, PageRank]
-    CNA[Cross-Network Analysis<br/>Compare social vs semantic vs recommendation]
-    SCA[Statistical / Computational Analysis<br/>Permutation tests, null models]
-    RE[Research Evidence<br/>Observable structural patterns]
-    
-    RP --> DC --> DCP --> SR --> GC --> CA --> RA --> CNA --> SCA --> RE
+    RP[Research Problem] --> DC[Data Collection]
+    DC --> DCP[Data Cleaning / Processing]
+    DCP --> SR[Semantic Representation]
+    SR --> GC[Graph Construction]
+    GC --> CA[Community Analysis]
+    GC --> RA[Recommendation Analysis]
+    CA --> CNA[Cross-Network Analysis]
+    RA --> CNA
+    CNA --> SCA[Statistical Analysis]
+    SCA --> RE[Research Evidence]
 ```
 
 The pipeline connects the research question directly to the software implementation. Each stage corresponds to implemented services and API endpoints, ensuring that the research workflow is fully reproducible.
@@ -1173,11 +1171,11 @@ These are future research directions, not completed work. The system provides th
 ```mermaid
 graph TB
     subgraph "Frontend"
-        UI[Next.js 16 UI<br/>Lab, Network Viz, Agent Console]
+        UI[Next.js 16 UI - Lab, Network Viz, Agent Console]
     end
     subgraph "API Layer"
-        FA[FastAPI<br/>160+ Endpoints]
-        WS[Workspace Runtime<br/>Service Container]
+        FA[FastAPI - 160+ Endpoints]
+        WS[Workspace Runtime - Service Container]
     end
     subgraph "Service Layer"
         CS[Collection Service]
@@ -1421,11 +1419,11 @@ The README is the high-level entry point. Detailed documentation lives in the do
 ```mermaid
 graph TB
     subgraph "Conceptual Framework"
-        S[Social Layer<br/>Who interacts with whom?]
-        C[Content/Semantic Layer<br/>What content is related?]
-        R[Recommendation Layer<br/>Which content does the platform connect?]
-        CM[Community Layer<br/>Which users/content belong together?]
-        X[Cross-Layer Analysis<br/>How do layers correspond?]
+        S[Social Layer - Who interacts with whom?]
+        C[Content/Semantic Layer - What content is related?]
+        R[Recommendation Layer - Which content does the platform connect?]
+        CM[Community Layer - Which users/content belong together?]
+        X[Cross-Layer Analysis - How do layers correspond?]
     end
     S --> X
     C --> X
@@ -1443,7 +1441,7 @@ graph TB
         UI[Next.js 16 UI]
     end
     subgraph "API Layer"
-        FA[FastAPI<br/>160+ Endpoints]
+        FA[FastAPI - 160+ Endpoints]
     end
     subgraph "Service Layer"
         CS[Collection] --> NS[Network Analytics]
@@ -1467,7 +1465,7 @@ graph TB
 
 ```mermaid
 graph LR
-    RP[Research Problem] --> DC[Data Collection<br/>Context-Aware]
+    RP[Research Problem] --> DC[Data Collection - Context-Aware]
     DC --> SR[Semantic Representation]
     SR --> GC[Graph Construction]
     GC --> CA[Community Analysis]
