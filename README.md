@@ -16,6 +16,8 @@ Contemporary platforms simultaneously function as social environments, content-d
 
 This project implements such infrastructure. It provides a computational social-science research workbench that constructs and jointly examines three network representations of YouTube data: a social interaction network derived from commenter co-participation, a semantic content network derived from transcript embeddings, and a platform-mediated recommendation network derived from observable recommendation pathways. The system integrates these representations within a single computational environment, enabling cross-network comparison, community interaction analysis, and echo-chamber detection through five observable signals.
 
+Critically, the collection infrastructure supports **context-aware data acquisition**: researchers can collect recommendations using controlled account/session cookies, browser impersonation, proxy-based network positioning, and configurable scraping contexts. This means the same content can be observed under different user or geographic contexts—enabling comparative analysis of recommendation environments rather than relying on blind, context-free scraping. A recommendation network collected from an anonymous session differs from one collected through a logged-in account; the system makes both observable and comparable.
+
 The project consists of three cooperating systems: a CSS Research Workbench (`SocialScienceResearch/`) providing YouTube data collection, network analysis, echo-chamber detection, and export across 160 API endpoints; a Graph-RAG Intelligence Agent (`RetrievalPipeline/`) implementing a LangGraph state machine for multi-layer identity, audience, and ecosystem analysis; and an Ingestion Pipeline (`Ingestion_Pipline/`) for document processing, embedding, and vector-store operations. Together these systems operationalize theoretical concepts from computational social science into reproducible computational procedures, while maintaining clear distinctions between observed structure, interpretation, and causal inference.
 
 ---
@@ -514,6 +516,26 @@ The pipeline connects the research question directly to the software implementat
 
 ## Data Collection
 
+### Context-Aware Acquisition
+
+The collection infrastructure is designed for **comparative research**, not just data harvesting. Researchers can configure the scraping context to observe how YouTube's recommendation system responds to different user profiles, network positions, and authentication states:
+
+| Context Dimension | Options | Research Value |
+|---|---|---|
+| **Authentication** | Anonymous (no cookies), browser cookies, cookies.txt file | Compare recommendations for logged-in vs anonymous sessions |
+| **Network position** | Direct, proxy (Decodo rotating residential), sticky session | Compare recommendations across geographic locations |
+| **Browser identity** | Chrome, Firefox, Safari (via yt-dlp impersonation) | Control for browser fingerprint effects |
+| **Scraping profile** | Fast / Balanced / Careful presets | Balance speed vs rate-limit risk per experiment |
+
+**Why this matters:** YouTube's recommendation system is personalized and context-dependent. A blind, context-free scrape captures only one slice of the recommendation environment. By controlling cookies, proxy, and impersonation, researchers can:
+
+- Compare recommendation networks across **geographic regions** (via proxy positioning)
+- Compare **anonymous vs authenticated** recommendation pathways
+- Observe how recommendations differ across **user profiles** (via cookie sessions)
+- Reproduce collection under **controlled conditions** for longitudinal studies
+
+All context configuration is persisted to disk (`proxy_config.json`), survives server restarts, and is configurable at runtime via the `/scraper/proxy` API endpoint or the Proxy Setup UI—no server restart required.
+
 ### YouTube Acquisition
 
 The acquisition layer uses `yt-dlp` as the primary extraction provider, with a three-layer fallback strategy for recommendation collection:
@@ -801,6 +823,10 @@ The project involves substantial engineering work that is directly connected to 
 
 The acquisition layer integrates multiple extraction providers (yt-dlp, yt-search-python, page-dump parser) with automatic fallback. This is not merely a performance optimization—it ensures maximum coverage of observable recommendation edges, which is essential for constructing complete recommendation networks.
 
+### Context-Aware Scraping Infrastructure
+
+The runtime-configurable scraping context (cookies, proxy, impersonation) is not just an operational convenience—it is a research capability. By enabling researchers to control the user identity, network position, and browser fingerprint under which data is collected, the system supports comparative analysis of how platform mechanisms respond to different contexts. The same seed video can yield different recommendation networks depending on whether the collection is anonymous, authenticated, or routed through a specific geographic proxy. This makes the system a tool for studying the context-dependence of platform-mediated information environments, not just a data harvester.
+
 ### Research-Grade Scraping with Resilience
 
 The concurrency infrastructure (AIMD budget controller, circuit breaker, priority queue) makes large-scale YouTube data collection operationally tractable while preserving data provenance. Each request is budgeted, circuit-broken, and prioritized, ensuring that collection can continue even when individual requests fail.
@@ -894,6 +920,8 @@ Every significant engineering decision has a corresponding methodological ration
 
 10. **Created workspace-isolated multi-tenancy** with per-workspace databases, service container rebuilding, and registry-based workspace management.
 
+11. **Built context-aware data acquisition** with runtime-configurable cookies (none/browser/file modes), proxy-based network positioning with sticky sessions, browser impersonation, and live configuration via API—enabling comparative analysis of recommendation environments across different user and geographic contexts.
+
 ---
 
 ## What I Actually Built
@@ -903,6 +931,7 @@ A computational social-science research platform that jointly analyzes three net
 - **Social interaction network** — who comments where, with Jaccard similarity, bridge detection, and co-commenter graph construction
 - **Semantic content network** — transcript embeddings with within/between-community similarity analysis and permutation null testing
 - **Recommendation network** — directed edges from observable YouTube recommendations, expanded through BFS layered crawling with three-layer fallback extraction
+- **Context-aware acquisition** — configurable cookies (none/browser/file), proxy positioning with sticky sessions, browser impersonation, and runtime-adjustable scraping profiles for comparative recommendation analysis
 
 **Scale:** 160+ API endpoints, 38 services, 17 database tables, 17 sampling strategies, 5 echo-chamber signals, 10 centrality measures, 6 graph export formats.
 
@@ -912,6 +941,7 @@ A computational social-science research platform that jointly analyzes three net
 
 - Multi-source data collection with automatic fallback and rate limiting
 - Research-grade scraping with resilience (circuit breakers, budget control, priority queues)
+- Context-aware acquisition with cookies, proxy, and impersonation for comparative research
 - Layered recommendation crawling with frontier management and classification
 - Reproducible deterministic analysis (seed=42 across sampling, community detection, permutation testing)
 - Dual persistence (PostgreSQL + Excel) with repository abstraction
@@ -942,6 +972,8 @@ The following results have been experimentally verified:
 The implementation can:
 
 - Collect YouTube channel, video, comment, recommendation, and transcript data with full provenance
+- Configure collection context at runtime: cookies (anonymous/browser/file), proxy (with sticky sessions), browser impersonation
+- Compare recommendation environments across different user authentication states and network positions
 - Construct social interaction networks from commenter co-participation with multiple similarity metrics
 - Perform full social network analysis (density, reciprocity, clustering, 10 centrality measures, community detection)
 - Build directed recommendation networks with PageRank and ego-network analysis
@@ -1350,6 +1382,100 @@ pytest
 This project represents both a substantial engineering achievement and a computational research instrument. It provides infrastructure for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, and recommendation structures. The system operationalizes abstract research concepts into reproducible computational procedures while maintaining honest distinctions between observed structure, interpretation, and causal inference.
 
 The project is not a published scientific discovery. It is research infrastructure—tools, methods, and workflows that enable empirical investigation of questions about polarization, echo chambers, information fragmentation, and community dynamics in platform-mediated environments. The findings that emerge from using this infrastructure will depend on the data collected and the analysis performed.
+
+---
+
+## Documentation
+
+The README is the high-level entry point. Detailed documentation lives in the docs site, organized by audience:
+
+| Audience | What You'll Find | Link |
+|---|---|---|
+| **Recruiters** | What was built, technical complexity, achievements, architecture | [for-recruiters/](docs/for-recruiters/index.md) |
+| **Researchers** | Methodology, reproducibility, network science, echo chambers, ethics, citation | [for-researchers/](docs/for-researchers/index.md) |
+| **Developers** | Quickstart, architecture, API reference, workspaces, configuration | [for-developers/](docs/for-developers/quickstart.md) |
+| **Technical Reference** | Invariants, scraper architecture, data model, migration notes | [technical/](docs/technical/invariants.md) |
+| **Research Reference** | Variable catalogue, network metrics, sampling methods | [research/](docs/research/variable-catalogue.md) |
+
+### Key Research Docs
+
+- [Research Methodology](docs/for-researchers/methodology.md) — how concepts are operationalized into computation
+- [Network Science](docs/for-researchers/network.md) — two network families, centrality, communities, comparative analysis
+- [Echo-Chamber Detection](docs/for-researchers/echo-chamber.md) — S1-S5 signals, structural metrics, honest reporting
+- [Reproducibility Protocol](docs/for-researchers/reproducibility.md) — seeds, provenance, weight specs, figure contract
+- [Sampling](docs/for-researchers/sampling.md) — 17 strategies, determinism, advanced filtering
+- [Ethics & Data Minimization](docs/for-researchers/ethics.md) — collection scope, identity minimization, retention
+
+### Key Developer Docs
+
+- [Quickstart](docs/for-developers/quickstart.md) — 5-minute setup
+- [Architecture](docs/for-developers/architecture.md) — full system design, service container, data layer
+- [API Reference](docs/for-developers/api-reference.md) — 160+ endpoints
+- [Workspaces & Jobs](docs/for-developers/workspaces-and-jobs.md) — multi-tenancy and job management
+- [Configuration](docs/for-developers/configuration.md) — environment variables and settings
+
+---
+
+## Conceptual Framework (Quick Reference)
+
+```mermaid
+graph TB
+    subgraph "Conceptual Framework"
+        S[Social Layer<br/>Who interacts with whom?]
+        C[Content/Semantic Layer<br/>What content is related?]
+        R[Recommendation Layer<br/>Which content does the platform connect?]
+        CM[Community Layer<br/>Which users/content belong together?]
+        X[Cross-Layer Analysis<br/>How do layers correspond?]
+    end
+    S --> X
+    C --> X
+    R --> X
+    CM --> X
+```
+
+---
+
+## System Architecture (Quick Reference)
+
+```mermaid
+graph TB
+    subgraph "Frontend"
+        UI[Next.js 16 UI]
+    end
+    subgraph "API Layer"
+        FA[FastAPI<br/>160+ Endpoints]
+    end
+    subgraph "Service Layer"
+        CS[Collection] --> NS[Network Analytics]
+        CS --> ES[Echo Chamber]
+        CS --> SS[Sampling]
+        NS --> CHS[Content Homophily]
+        NS --> COS[Commenter Overlap]
+    end
+    subgraph "Data Layer"
+        PG[(PostgreSQL)]
+        QD[(Qdrant)]
+    end
+    UI --> FA --> CS
+    NS --> PG
+    CHS --> QD
+```
+
+---
+
+## End-to-End Research Pipeline (Quick Reference)
+
+```mermaid
+graph LR
+    RP[Research Problem] --> DC[Data Collection<br/>Context-Aware]
+    DC --> SR[Semantic Representation]
+    SR --> GC[Graph Construction]
+    GC --> CA[Community Analysis]
+    GC --> RA[Recommendation Analysis]
+    CA --> CNA[Cross-Network Analysis]
+    RA --> CNA
+    CNA --> RE[Research Evidence]
+```
 
 ---
 

@@ -25,6 +25,7 @@ Contemporary platforms simultaneously function as social environments, content-d
 | **Social network analysis** | Who interacts with whom (co-comment patterns, Jaccard similarity, bridge detection) |
 | **Semantic content analysis** | What content is related (transcript embeddings, within/between community similarity) |
 | **Recommendation network analysis** | What YouTube connects (directed edges, layered crawling, PageRank) |
+| **Context-aware collection** | Same content observed under different user/geo contexts (cookies, proxy, impersonation) |
 | **Echo-chamber detection** | Five observable signals with composite scoring |
 | **Cross-network comparison** | How social, semantic, and recommendation structures correspond |
 | **Reproducible sampling** | 17 deterministic strategies with seed=42 |
@@ -42,6 +43,8 @@ Contemporary platforms simultaneously function as social environments, content-d
 4. **Integrated social, semantic, and recommendation network perspectives** within a single computational environment for cross-network comparison.
 
 5. **Engineered multi-source data acquisition** with three-layer fallback extraction, AIMD rate control, circuit breakers, and priority scheduling.
+
+6. **Built context-aware data acquisition** with runtime-configurable cookies, proxy positioning with sticky sessions, and browser impersonation—enabling comparative analysis of recommendation environments across different user and geographic contexts.
 
 6. **Constructed a full SNA battery** with 10 centrality measures, Louvain community detection (seed=42), structural role classification, and 6 export formats.
 

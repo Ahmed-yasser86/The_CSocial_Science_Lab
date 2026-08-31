@@ -64,7 +64,7 @@ Transcripts → embeddings → cosine similarity → within/between-community co
 
 ### Recommendation Network Collection
 
-Three-layer fallback extraction (yt-dlp → yt-search-python → page-dump parser) creates directed edges. BFS layered crawling expands the network across successive recommendation layers.
+Three-layer fallback extraction (yt-dlp → yt-search-python → page-dump parser) creates directed edges. BFS layered crawling expands the network across successive recommendation layers. **Context-aware collection** (cookies, proxy, impersonation) enables comparative analysis across different user and geographic contexts.
 
 ### Echo-Chamber Detection
 
