@@ -201,11 +201,11 @@ The cross-layer analysis compares the different network representations to ident
 ```mermaid
 graph TB
     subgraph "Conceptual Framework"
-        S[Social Layer - Who interacts with whom?]
-        C[Content/Semantic Layer - What content is related?]
-        R[Recommendation Layer - Which content does the platform connect?]
-        CM[Community Layer - Which users/content belong together?]
-        X[Cross-Layer Analysis - How do layers correspond?]
+        S[Social Layer]
+        C[Content/Semantic Layer]
+        R[Recommendation Layer]
+        CM[Community Layer]
+        X[Cross-Layer Analysis]
     end
     S --> X
     C --> X
@@ -454,11 +454,11 @@ The repository contains three cooperating systems within a single codebase:
 ```mermaid
 graph LR
     subgraph "A. CSS Research Workbench"
-        A1[YouTube Acquisition - yt-dlp + fallbacks]
-        A2[Data Collection - channels, videos, comments]
-        A3[Network Analysis - SNA, communities, roles]
-        A4[Echo Chamber Detection - S1-S5 signals]
-        A5[Sampling - 17 strategies, seed=42]
+        A1[YouTube Acquisition]
+        A2[Data Collection]
+        A3[Network Analysis]
+        A4[Echo Chamber Detection]
+        A5[Sampling]
     end
     subgraph "B. Graph-RAG Intelligence Agent"
         B1[Identity Research]
@@ -1171,11 +1171,11 @@ These are future research directions, not completed work. The system provides th
 ```mermaid
 graph TB
     subgraph "Frontend"
-        UI[Next.js 16 UI - Lab, Network Viz, Agent Console]
+        UI[Next.js 16 UI]
     end
     subgraph "API Layer"
-        FA[FastAPI - 160+ Endpoints]
-        WS[Workspace Runtime - Service Container]
+        FA[FastAPI]
+        WS[Workspace Runtime]
     end
     subgraph "Service Layer"
         CS[Collection Service]
@@ -1419,11 +1419,11 @@ The README is the high-level entry point. Detailed documentation lives in the do
 ```mermaid
 graph TB
     subgraph "Conceptual Framework"
-        S[Social Layer - Who interacts with whom?]
-        C[Content/Semantic Layer - What content is related?]
-        R[Recommendation Layer - Which content does the platform connect?]
-        CM[Community Layer - Which users/content belong together?]
-        X[Cross-Layer Analysis - How do layers correspond?]
+        S[Social Layer]
+        C[Content/Semantic Layer]
+        R[Recommendation Layer]
+        CM[Community Layer]
+        X[Cross-Layer Analysis]
     end
     S --> X
     C --> X
@@ -1441,7 +1441,7 @@ graph TB
         UI[Next.js 16 UI]
     end
     subgraph "API Layer"
-        FA[FastAPI - 160+ Endpoints]
+        FA[FastAPI]
     end
     subgraph "Service Layer"
         CS[Collection] --> NS[Network Analytics]
@@ -1465,7 +1465,7 @@ graph TB
 
 ```mermaid
 graph LR
-    RP[Research Problem] --> DC[Data Collection - Context-Aware]
+    RP[Research Problem] --> DC[Data Collection]
     DC --> SR[Semantic Representation]
     SR --> GC[Graph Construction]
     GC --> CA[Community Analysis]
