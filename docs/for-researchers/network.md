@@ -1,108 +1,180 @@
 # Network Science
 
-> Two network families, one explicit weight grammar, a validated measure battery, deterministic communities, and structural roles — all implemented in `SocialScienceResearch/services/network_analytics_service.py` and `commenter_network_service.py`.
-
-## The two families
-
-| Family | What nodes are | What edges mean | Service |
-|---|---|---|---|
-| **Recommendation** | videos (or channels via `projection=channel`) | video A recommends B | `network_analytics_service.py` |
-| **Audience / commenter** | commenters | two commenters co-comment on the same video | `commenter_network_service.py` |
-
-Change the lens with the `family` parameter on `/network/*` and `/network/test-difference`.
-
-## Weight grammar
-
-`SocialScienceResearch/services/weight_spec.py` defines the canonical form:
-
-```
-edge_type:weight_mode[:param=value,...][:norm=<none|min_max|log1p>]
-```
-
-| Family | `edge_type` | `weight_mode` |
-|---|---|---|
-| Recommendation | `recommendation` | `observation_count`, `reciprocal_position` |
-| Audience | `co_comment` | `jaccard`, `overlap_coefficient`, `intersection`, counts |
-
-- Normalizations: `none`, `min_max`, `log1p`.
-- Parameters: `min_shared` (int), `top_n` (int), `position_decay` (float).
-- Parser `parse_weight_spec()` accepts strings, dicts, or `WeightSpec` objects.
-
-Example: `GET /network/graph?weight=recommendation:observation_count:norm=min_max`.
-
-Network weights are also expressed as: `co_comment:jaccard:min_shared=2:norm=min_max`.
-
-## Centrality battery — 10 measures
-
-`network_analytics_service.py` `centrality_battery` computes (per node):
-
-`degree`, `closeness`, `eigenvector`, `betweenness`, `pagerank`, `harmonic`, `constraint` (Burt), `effective_size` (Burt), `bridging` (normalized betweenness), `clustering`.
-
-Exposed at:
-
-```
-GET /api/v1/social-science/network/centralities
-```
-
-## Community detection — deterministic
-
-Louvain with a fixed `seed=42` produces a reproducible partition. The `/network/communities` endpoint returns communities with their member `node_ids`, `size`, and `label`, and the partition is exhaustive (every node in exactly one community — verified in `tests/test_centrality_benchmark.py:217`).
-
-```
-GET /api/v1/social-science/network/communities
-GET /api/v1/social-science/network/community-insights   # composition per community
-GET /api/v1/social-science/network/commenters/communities
-```
-
-## Structural roles
-
-`network_analytics_service.py` `roles()` assigns each node one of four structural roles by percentile thresholds (`role_model="core_broker_periphery_bridge"`):
-
-| Role | Rule |
-|---|---|
-| `core` | eigenvector ≥ 75th percentile |
-| `broker` | betweenness ≥ 90th percentile |
-| `periphery` | degree ≤ 25th percentile |
-| `bridge` | otherwise |
-
-```
-GET /api/v1/social-science/network/roles
-GET /api/v1/social-science/network/commenters/roles
-```
-
-## Overlap & audience metrics (Jaccard & friends)
-
-`commenter_overlap_service.py`:
-
-- **Jaccard** = |A ∩ B| / |A ∪ B|
-- **Overlap coefficient** = |A ∩ B| / min(|A|, |B|)
-- **Reach overlap** = |A ∩ B| / max(|A|, |B|)
-- Empty-set pairs → `None` (**never `0`** — no fabricated overlap).
-
-```
-GET /api/v1/social-science/network/commenters/overlap?metric=jaccard
-GET /api/v1/social-science/network/commenters/graph
-```
-
-## Temporal & matrices
-
-```
-GET /api/v1/social-science/network/temporal?runs=a,b   # per-run snapshots + Δ growth
-GET /api/v1/social-science/network/matrices            # community & layer matrices
-```
-
-## Statistical comparison
-
-```
-POST /api/v1/social-science/network/test-difference
-```
-
-Seeded permutation / bootstrap (see [Reproducibility](reproducibility.md#4-deterministic-statistical-testing)) returning `observed_delta`, `p_value`, `ci95` — or an explicit `p_value=None` for global-only metrics.
-
-## Validation
-
-`tests/test_centrality_benchmark.py` validates the whole battery + endpoints on **Zachary's Karate Club** against `networkx` reference values. See the [researchers overview](index.md#a-benchmark-we-satisfy-from-the-code).
+> Two network families, weight specifications, centrality battery, community detection, and cross-network comparison.
 
 ---
 
-Previous: [Reproducibility](reproducibility.md) · Next: [Echo Chamber](echo-chamber.md)
+## Two Network Families
+
+The project constructs two primary network types from YouTube data:
+
+### Recommendation Network
+
+| Property | Description |
+|---|---|
+| **Nodes** | Videos |
+| **Edges** | Directed, source → recommended-video |
+| **Edge weight** | Rank position, observation count, or binary |
+| **Construction** | Three-layer fallback extraction + BFS layered crawling |
+| **Core question** | What does YouTube connect? |
+
+### Audience/Commenter Network
+
+| Property | Description |
+|---|---|
+| **Nodes** | Commenters (or videos/channels in projection) |
+| **Edges** | Undirected, co-comment participation |
+| **Edge weight** | Jaccard similarity, overlap coefficient, or co-comment frequency |
+| **Construction** | Group comments by video, create co-comment edges |
+| **Core question** | Who interacts with whom? |
+
+**Important:** The social network represents social/interaction relationships, not semantic relationships or recommendation relationships.
+
+---
+
+## Weight Grammar
+
+Edge weights are encoded using a formal grammar:
+
+```
+edge_type:weight_mode[:param=value,...][:norm=...]
+```
+
+Examples:
+
+- `recommendation:rank` — weight based on recommendation rank position
+- `commenter:jaccard` — weight based on Jaccard similarity
+- `commenter:overlap_coefficient` — weight based on Szymkiewicz-Simpson coefficient
+
+This grammar makes weight computation explicit and reproducible.
+
+---
+
+## Centrality Battery
+
+The system computes 10 centrality measures:
+
+| Measure | What It Captures |
+|---|---|
+| **Degree** | Number of connections |
+| **Closeness** | Average distance to all other nodes |
+| **Eigenvector** | Connection to well-connected nodes |
+| **Betweenness** | Role as intermediary on shortest paths |
+| **PageRank** | Importance in directed networks |
+| **Harmonic** | Average inverse distance to all other nodes |
+| **Constraint** | Degree of enclosure in local neighborhood |
+| **Effective size** | Non-redundant connections |
+| **Bridging** | Tendency to connect different groups |
+| **Clustering** | Density of local neighborhood |
+
+All measures are validated against NetworkX on Zachary's Karate Club (tolerance 1e-6).
+
+---
+
+## Structural Roles
+
+Nodes are classified into structural roles based on centrality rankings:
+
+| Role | Definition |
+|---|---|
+| **Core** | Eigenvector centrality in top quartile |
+| **Broker** | Betweenness centrality in top decile |
+| **Bridge** | Between core and periphery |
+| **Periphery** | Degree centrality in bottom quartile |
+
+---
+
+## Community Detection
+
+### Louvain Algorithm
+
+- **Implementation:** NetworkX `louvain_communities`
+- **Determinism:** `seed=42` ensures reproducible community assignments
+- **Modularity:** Computed as the quality metric for community detection
+
+### Community Metrics
+
+| Metric | Description |
+|---|---|
+| **Modularity** | Strength of community division |
+| **Within-community rate (WCR)** | Proportion of edges within communities |
+| **Conductance** | Ratio of external to total edges per community |
+| **Internal/external ratio** | Edge density within vs. between communities |
+
+### Null Model
+
+The `null_model_wcr()` function implements degree-preserving double-edge swaps to establish statistical baselines for within-community rate comparisons.
+
+---
+
+## Comparative Network Analysis
+
+The system enables direct comparison of network types:
+
+| Network | Represents | Core Question |
+|---|---|---|
+| Social Network | User interaction | Who interacts with whom? |
+| Semantic Network | Content relationships | What content is related? |
+| Recommendation Network | Platform-mediated connections | What does YouTube connect? |
+
+### What Becomes Possible
+
+When these networks are compared:
+
+- **Overlap** — communities aligned across social, semantic, and recommendation structures
+- **Divergence** — structures that differ, revealing information-environment asymmetries
+- **Bridges** — nodes connecting separate communities across layers
+- **Isolated communities** — communities separated in one layer but connected in another
+- **Cross-community edges** — edges crossing boundaries in one layer but not another
+
+### Network Merge
+
+The `merge_networks()` operation combines two network scopes into a unified view, computing:
+
+- Overlap statistics (shared nodes and edges)
+- Combined SNA metrics
+- Cross-network community comparison
+
+### Community Matrices
+
+The network matrix service computes:
+
+- **Channel-channel matrix** — shared-commenter counts between channels (audience duplication)
+- **Layer matrix** — recommendation-edge structure per crawl layer
+
+---
+
+## Graph Export
+
+Networks can be exported in 6 formats:
+
+| Format | Extension | Use Case |
+|---|---|---|
+| GraphML | `.graphml` | Gephi, NetworkX |
+| Edge List | `.edgelist` | Simple text format |
+| GEXF | `.gexf` | Gephi |
+| CSV | `.csv` | Spreadsheet analysis |
+| JSON | `.json` | Web visualization |
+| XLSX | `.xlsx` | Excel analysis |
+
+---
+
+## Temporal Analysis
+
+The longitudinal service tracks:
+
+- **Channel/video histories** — per-run observations with growth percentages
+- **Run deltas** — diff two runs: new, changed, disappeared entities
+- **Observation gaps** — detect gaps longer than a threshold between observations
+
+---
+
+## Validation
+
+The centrality battery is validated against Zachary's Karate Club:
+
+- All 10 centrality measures match NetworkX ground truth to tolerance 1e-6
+- Community detection produces expected community structure
+- Structural role classification matches expected patterns
+
+This validation is implemented in `tests/test_centrality_benchmark.py`.

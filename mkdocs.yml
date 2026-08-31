@@ -1,5 +1,5 @@
 site_name: Graph RAG Agent
-site_description: Computational Social Science research workbench for YouTube recommendation & audience networks, with a Graph-RAG intelligence agent and a resilient ingestion pipeline. Graf-RAG Agent combines three systems in one repository, documented from committed code.
+site_description: Computational Social Science research platform for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube.
 site_author: Graph RAG Agent
 repo_name: graph-rag-agent
 repo_url: https://github.com/anomalyco/graph-rag-agent

@@ -1,88 +1,142 @@
-# Architecture
+# Architecture — Conceptual Framework & System Design
 
-> One diagram, one page. The whole system is **three cooperating codebases in one repository**, serving 160 API paths through a single FastAPI process.
+---
 
-## The big picture
+## Conceptual Framework
 
-```mermaid
-flowchart TB
-    subgraph UI["Frontend — SocialScienceResearch/ui/ (Next.js 16)"]
-        LAB["Lab: collect · explore · network · echo-chamber"]
-        AGENT["Agent console (CopilotKit)"]
-    end
-
-    subgraph API["Single FastAPI process — SocialScienceResearch/api/app.py:1299 create_app()"]
-        CSS["A. CSS routers — /api/v1/social-science/* (~148 paths)"]
-        BOT["B. Agent router — /api/agent/* + /copilotkit/* (agent_server.py:461)"]
-    end
-
-    subgraph SVC["A. Services — SocialScienceResearch/services/"]
-        NET["network_analytics_service.py"]
-        SAMP["sampling_service.py"]
-        ECHO["echo_chamber_service.py"]
-        OVER["commenter_overlap_service.py"]
-    end
-
-    subgraph PERSIST["Persistence"]
-        PG[("Postgres (default)")]
-        XL[("Excel repositories")]
-    end
-
-    subgraph ING["C. Ingestion — Ingestion_Pipline/"]
-        TAV["Tavily map/crawl/extract"]
-        EMB["ResilientEmbeddingPipeline"]
-        QDR[("Qdrant")]
-    end
-
-    AGENT --> BOT
-    LAB --> CSS
-    CSS --> SVC
-    SVC --> PERSIST
-    BOT -->|"research graph"| G1["RetrievalPipeline/Graph/intelligence_graph.py:506 (LangGraph)"]
-    G1 --> ING
-```
-
-## How the three systems connect
-
-1. **A (CSS Workbench)** is the primary producer. `yt-dlp` acquisition writes observations to Postgres/Excel; services (`network_analytics_service.py`, `sampling_service.py`, `echo_chamber_service.py`, ...) analyze them; routers expose them as **~148** endpoints under `/api/v1/social-science/*`.
-
-2. **B (Graph-RAG Agent)** reuses the same FastAPI process. `RetrievalPipeline/agent_server.py:461` defines an `agent_router` that is conditionally mounted inside `create_app()` (guarded try/except at `app.py:1819`). It exposes:
-   - `POST /copilotkit/agent/research_agent/connect` (agentic web UI),
-   - `/api/agent/run`, `/api/agent/runs/{id}`, `/api/agent/logs` (SSE), `/api/agent/env`, `/api/agent/ai-config`,
-   - `GET /health` (liveness).
-
-3. **C (Ingestion Pipeline)** is a library (no HTTP): Tavily → chunk → `ResilientEmbeddingPipeline` → Qdrant, used by the agent research nodes.
-
-## The Graph-RAG state machine (B)
-
-Compiled from a LangGraph `StateGraph` in `RetrievalPipeline/Graph/intelligence_graph.py:506`:
+The project operates through multiple interacting analytical layers, each capturing a different dimension of the YouTube information environment:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> identity_research
-    identity_research --> profile_summarization
-    profile_summarization --> report_router
-    state report_router {
-        subject_intelligence --> report_router
-        audience_intelligence --> report_router
-        ecosystem_intelligence --> report_router
-    }
-    report_router --> [*]
+graph TB
+    subgraph "Conceptual Framework"
+        S[Social Layer<br/>Who interacts with whom?]
+        C[Content/Semantic Layer<br/>What content is related?]
+        R[Recommendation Layer<br/>Which content does the platform connect?]
+        CM[Community Layer<br/>Which users/content belong together?]
+        X[Cross-Layer Analysis<br/>How do layers correspond?]
+    end
+    S --> X
+    C --> X
+    R --> X
+    CM --> X
 ```
 
-- **5 nodes** added via `workflow.add_node` (`intelligence_graph.py:561-565`).
-- A conditional edge (`report_router`, `:92`) routes to whichever report (subject/audience/ecosystem) is still missing, or `END` when done.
-- Each node runs on `profile_summarization` output and produces a report persisted to state and disk.
+### Social Layer
 
-## Data model in one glance
+**Question:** Who interacts with whom?
 
-- **Entities** (`domain/models.py`): `Channel`, `Video`, `Comment`, `CollectionRun`, `Sample`.
-- **Observations** carry time-varying stats with `raw_json` and cross-reference a `collection_run_id` — analytics never mutate source rows.
-- **Availability** is explicit: `available | missing | unsupported` (`domain/enums.py:137`).
-- **Identity**: commenters resolved `author_id`-first with `author_name` fallback (`services/commenter_overlap_service.py`).
+User interaction is represented through co-commenting patterns. When multiple users comment on the same video, they form an indirect interaction tie. This creates a commenter co-comment network where edges represent shared participation in comment sections.
 
-## Where to learn more
+**Metrics:** Jaccard similarity, overlap coefficient, bridge-commenter detection, co-commenter network projections.
 
-- [Case study](case-study.md) — end-to-end story.
-- [Developers → Architecture](../for-developers/architecture.md) — the full layer breakdown and services table.
-- [Developers → Ingestion & Agent](../for-developers/ingestion-and-agent.md) — how B and C actually run.
+### Content/Semantic Layer
+
+**Question:** What content is related to what?
+
+Content relationships are derived from transcript embeddings. Video transcripts are converted to vector representations, and semantic similarity between videos is computed through cosine similarity. This reveals content communities independent of social or recommendation structure.
+
+**Metrics:** Cosine similarity, within/between-community pair sampling, permutation null testing, z-score and p-value.
+
+### Recommendation Layer
+
+**Question:** Which content does the platform connect?
+
+Recommendation relationships are observed through systematic collection of "Up Next" and related video recommendations. These create directed edges between videos, forming a recommendation network with explicit direction and rank.
+
+**Metrics:** PageRank, ego-networks, frontier collapse, cross-layer repetition, component analysis.
+
+### Community Layer
+
+**Question:** Which users/content belong to coherent communities?
+
+Communities are detected through Louvain algorithm (seed=42) on each network type. Community structure is analyzed through modularity, conductance, within-community rate, and community persistence across layers.
+
+### Cross-Layer Analysis
+
+**Question:** How do social, semantic, and recommendation structures correspond or diverge?
+
+Cross-layer analysis compares communities and structures across the three network types, identifying overlap, divergence, bridges, and isolated communities.
+
+---
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph "Frontend"
+        UI[Next.js 16 UI<br/>Lab · Network Viz · Agent Console]
+    end
+    subgraph "API Layer"
+        FA[FastAPI<br/>160+ Endpoints · 21 Routers]
+        WS[Workspace Runtime<br/>Service Container]
+    end
+    subgraph "Service Layer (38 Services)"
+        CS[Collection Service]
+        NS[Network Analytics]
+        ES[Echo Chamber]
+        SS[Sampling]
+        CHS[Content Homophily]
+        COS[Commenter Overlap]
+        LRS[Layer Scrape]
+        RGS[Recommendation Graph]
+    end
+    subgraph "Acquisition Layer"
+        YD[yt-dlp + Fallbacks]
+        BC[Budget Controller]
+        CB[Circuit Breaker]
+    end
+    subgraph "Data Layer"
+        PG[PostgreSQL 17 Tables]
+        QD[Qdrant Vector Store]
+    end
+    UI --> FA
+    FA --> WS
+    WS --> CS & NS & ES & SS & CHS & COS & LRS & RGS
+    CS --> YD
+    YD --> BC & CB
+    NS --> PG
+    CHS --> QD
+```
+
+### Three Cooperating Systems
+
+| System | Entry Point | Purpose |
+|---|---|---|
+| **CSS Research Workbench** | `SocialScienceResearch/api/app.py` | YouTube data collection, network analysis, echo-chamber detection |
+| **Graph-RAG Intelligence Agent** | `RetrievalPipeline/Graph/intelligence_graph.py` | Multi-stage intelligence analysis via LangGraph |
+| **Ingestion Pipeline** | `Ingestion_Pipline/ingestion_service.py` | Document processing, embedding, vector storage |
+
+### Data Flow
+
+```mermaid
+graph LR
+    YT[YouTube] -->|yt-dlp| ACQ[Acquisition]
+    ACQ --> DB[(PostgreSQL)]
+    ACQ --> COMMENTS[Comments]
+    ACQ --> RECS[Recommendations]
+    COMMENTS --> SOCIAL[Social Network]
+    RECS --> RECNET[Recommendation Network]
+    DB --> EMBED[Embeddings]
+    EMBED --> SEMNET[Semantic Network]
+    SOCIAL --> ANALYSIS[Cross-Network Analysis]
+    RECNET --> ANALYSIS
+    SEMNET --> ANALYSIS
+    ANALYSIS --> EXPORT[Export<br/>GraphML/CSV/JSON/XLSX]
+```
+
+---
+
+## Resilience Architecture
+
+```mermaid
+graph LR
+    REQ[Request] --> PQ[Priority Queue<br/>DISCOVERY > ENRICHMENT > RECS > COMMENTS]
+    PQ --> BC[Budget Controller<br/>AIMD Rate Control]
+    BC --> CB[Circuit Breaker<br/>CLOSED/OPEN/HALF_OPEN]
+    CB --> YT[yt-dlp]
+    YT -->|Success| OK[Response]
+    YT -->|Failure| RETRY[Retry with Backoff]
+    RETRY --> CB
+```
+
+The resilience infrastructure ensures that large-scale data collection is operationally tractable while preserving data provenance and quality.

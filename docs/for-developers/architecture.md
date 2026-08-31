@@ -1,57 +1,286 @@
 # Architecture
 
-> The full layer breakdown of the CSS workbench (`SocialScienceResearch/`), plus how the agent (`RetrievalPipeline/`) and ingestion (`Ingestion_Pipline/`) plug in.
+> Full system design, layered architecture, service container, and how the three systems connect.
 
-## Layered architecture
+---
 
-`SocialScienceResearch/` is structured `acquisition → domain → persistence → services → api → ui`:
+## Three Systems, One Repository
+
+| System | Entry Point | Purpose |
+|---|---|---|
+| **CSS Research Workbench** | `SocialScienceResearch/api/app.py` | YouTube data collection, network analysis, echo-chamber detection |
+| **Graph-RAG Intelligence Agent** | `RetrievalPipeline/Graph/intelligence_graph.py` | Multi-stage intelligence analysis via LangGraph |
+| **Ingestion Pipeline** | `Ingestion_Pipline/ingestion_service.py` | Document processing, embedding, vector storage |
+
+---
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph "Frontend"
+        UI[Next.js 16 UI<br/>Lab · Network Viz · Agent Console]
+    end
+    subgraph "API Layer"
+        FA[FastAPI<br/>160+ Endpoints · 21 Routers]
+        WS[Workspace Runtime<br/>Service Container]
+    end
+    subgraph "Service Layer (38 Services)"
+        CS[Collection Service]
+        NS[Network Analytics]
+        ES[Echo Chamber]
+        SS[Sampling]
+        CHS[Content Homophily]
+        COS[Commenter Overlap]
+        LRS[Layer Scrape]
+        RGS[Recommendation Graph]
+        AS[Analytics Service]
+        CS2[Comparison Service]
+        QS[Query Service]
+        DJ[Dataset/Job Service]
+    end
+    subgraph "Acquisition Layer"
+        YD[yt-dlp + Fallbacks]
+        BC[Budget Controller]
+        CB[Circuit Breaker]
+        PQ[Priority Queue]
+    end
+    subgraph "Data Layer"
+        PG[PostgreSQL 17 Tables]
+        EX[Excel Legacy]
+        QD[Qdrant Vector Store]
+        SL[SQLite Session Store]
+    end
+    UI --> FA
+    FA --> WS
+    WS --> CS & NS & ES & SS & CHS & COS & LRS & RGS & AS & CS2 & QS & DJ
+    CS --> YD
+    YD --> BC & CB & PQ
+    NS --> PG
+    ES --> PG
+    SS --> PG
+    CHS --> QD
+    DJ --> PG
+```
+
+---
+
+## CSS Research Workbench (`SocialScienceResearch/`)
+
+### Layered Architecture
+
+`SocialScienceResearch/` follows a clean layered architecture:
 
 | Layer | Location | Responsibility |
 |---|---|---|
-| **acquisition/** | `SocialScienceResearch/acquisition/` | `yt-dlp` adapters; scraper retries, proxy config, rate limiting (`scraper/`) |
-| **domain/** | `SocialScienceResearch/domain/` | entities, observations, enums (`models.py`, `enums.py`) — no infrastructure |
-| **persistence/** | `SocialScienceResearch/persistence/` | Postgres repositories + Excel repositories |
-| **services/** | `SocialScienceResearch/services/` | 30+ services: `network_analytics_service`, `sampling_service`, `echo_chamber_service`, `commenter_overlap_service`, `dataset_service`, ... |
-| **api/** | `SocialScienceResearch/api/` | FastAPI `create_app()`, routers, schemas |
-| **ui/** | `SocialScienceResearch/ui/` | Next.js 16 frontend |
+| **Acquisition** | `acquisition/` | YouTube data extraction (yt-dlp, fallbacks, retry, normalization) |
+| **Domain** | `domain/` | Entities, observations, enums, query system — no infrastructure dependencies |
+| **Persistence** | `persistence/` | Dual backend: PostgreSQL repositories + Excel repositories |
+| **Services** | `services/` | 38 analytical services (network, sampling, echo-chamber, etc.) |
+| **API** | `api/` | FastAPI application, routers, schemas |
+| **Concurrency** | `concurrency/` | Budget controller, circuit breaker, priority queue |
+| **Config** | `config/` | Frozen dataclasses with environment variable loading |
+| **UI** | `ui/` | Next.js 16 frontend |
 
-## The single FastAPI app
+### Service Container
 
-`SocialScienceResearch/api/app.py:1299` `create_app()` builds one FastAPI app that includes:
+`build_services()` at `app.py` constructs the service container and shares repositories across all services:
 
-- **18 CSS routers** under `/api/v1/social-science/*` (channels, commenters, comments, comparison, content_homophily, datasets, echo_chamber, explorer, expansion, layer_network, network_ext, project_items, samples, scraper_config, budget, search, session, workspaces) — registered at `app.py:1747-1781`.
-- **Direct app routes** (`app.py:1853+`): `/collect*`, `/jobs*`, `/runs*`, `/channels*`, `/videos*`, `/sampling/advanced`, `/research/*`, `/export`, `/coverage`, `/dataset/summary`.
-- **The agent router** (conditional, guarded): `RetrievalPipeline/agent_server.py:461` mounted if the graph imports (`app.py:1819-1833`). Serves `/api/agent/*`, `/copilotkit/*`, `/health`.
+| Service | Responsibility |
+|---|---|
+| `collection_service` | Channel/video acquisition orchestration |
+| `recommendations_service` | Recommendation observation workflow |
+| `network_analytics_service` | Full NetworkX SNA, graph construction, export |
+| `echo_chamber_service` | Echo-chamber detection with multi-layer crawl |
+| `content_homophily_service` | Semantic similarity with permutation testing |
+| `commenter_overlap_service` | Jaccard, overlap coefficient, bridge detection |
+| `commenter_network_service` | Co-commenter network construction |
+| `sampling_service` | 17 deterministic strategies with seed=42 |
+| `layer_scrape_service` | BFS layered crawling with frontier management |
+| `recommendation_graph_service` | Recommendation DiGraph with PageRank |
+| `analytics_service` | Channel/video engagement analytics |
+| `query_service` | Filtered corpus selection |
+| `quality_service` | Dataset coverage reporting |
+| `comparison_service` | Period/cohort/entity comparison |
+| `longitudinal_service` | Longitudinal history tracking |
 
-The result: **160 paths** in `api/openapi.json`.
+### Workspace Isolation
 
-## Services (container)
+Each workspace gets:
 
-`build_services()` at `app.py:295` constructs the service container (`collection`, `recommendations`, `analytics`, `query`, `sampling`, `network`, `quality`, `jobs`, `layer_scrape`, `echo`) and shares a single `Repositories` object plus `JobsManager` / `BudgetController`.
+- Its own PostgreSQL database (or Excel data directory)
+- Independent service container
+- Isolated collection runs, samples, and analyses
+- Registry-based workspace management (`workspaces/registry.json`)
 
-## Middleware & cross-cutting
+### API Layer
 
-- **HTTP middleware** `route_to_active_workspace` (`app.py:1565`) syncs the active workspace per request (DB-per-workspace isolation).
-- **CORS** (`app.py:1589`), **exception handlers** (`app.py:1611`), circuit breaker + priority task queue.
+`create_app()` builds one FastAPI application with:
 
-## The Graph-RAG agent (B)
+- **21 CSS routers** under `/api/v1/social-science/*`
+- **Direct app routes** for collection, jobs, runs, channels, videos, sampling, analytics, export
+- **The agent router** (conditional, mounted if graph imports)
+- **160+ API paths** in `api/openapi.json`
 
-`RetrievalPipeline/Graph/intelligence_graph.py:506` compiles a LangGraph `StateGraph` with **5 nodes** (`:561-565`):
+### Middleware
 
-- `identity_research` → `profile_summarization` → (`report_router`) → `subject_intelligence` / `audience_intelligence` / `ecosystem_intelligence`.
+- **Workspace routing** — syncs active workspace per request
+- **CORS** — configurable origins
+- **Exception handlers** — HTTPException, SamplingError, CursorError, ValueError, KeyError
+- **Circuit breaker + priority queue** — resilience infrastructure
 
-The `report_router` (`:92`) is a conditional edge that runs whichever report is missing, or returns `END`. Compiled with a `MemorySaver` checkpointer (`:588`) for resumable runs. Served over HTTP by `agent_server.py:461`.
+---
 
-See [Ingestion & Agent](ingestion-and-agent.md).
+## Graph-RAG Intelligence Agent (`RetrievalPipeline/`)
 
-## Ingestion pipeline (C)
+### LangGraph State Machine
 
-`Ingestion_Pipline/` is a **library**, not a service:
+`intelligence_graph.py` compiles a LangGraph `StateGraph` with 5 nodes:
 
-- Tavily map/crawl/extract → `ingestion/chunking.py` → `ingestion/embedding_pipeline.py` (`ResilientEmbeddingPipeline`) → Qdrant (`infra/vector_store.py`).
-- Rate limiting (`infra/rate_limiter.py`), retry policies (`infra/retry_policies.py`), provider-agnostic embeddings (`infra/embeddings.py`).
+```
+Identity Research → Profile Summarization → Subject Intelligence → Audience Intelligence → Ecosystem Intelligence → Compression
+```
 
-See [Ingestion & Agent](ingestion-and-agent.md).
+The `report_router` is a conditional edge that runs whichever report is missing, or returns `END`.
+
+### Pipeline Nodes
+
+| Node | Responsibility |
+|---|---|
+| Identity Research | Web search for identity anchors |
+| Subject Intelligence | 6-layer analysis (entity, values, ideology, worldview, communications, synthesis) |
+| Audience Intelligence | 9-layer analysis (profile, motivation, community, behavioral impact, etc.) |
+| Ecosystem Intelligence | 6-layer analysis (macro-environment, institutional power, systemic risk, etc.) |
+| Compression | Structured output (CompressedIntelligence model) |
+
+### Persistence
+
+- SQLite session store for resumable runs
+- MemorySaver checkpointer for LangGraph state
+- File-based report persistence
+
+### Serving
+
+Served over HTTP by `agent_server.py` with CopilotKit integration and SSE streaming.
+
+---
+
+## Ingestion Pipeline (`Ingestion_Pipline/`)
+
+### Pipeline Stages
+
+```
+URL → Tavily Extract → Chunk (RecursiveCharacterTextSplitter) → Embed (Gemini) → Store (Qdrant)
+```
+
+### Components
+
+| Component | Responsibility |
+|---|---|
+| `ingestion_service.py` | Facade orchestrating the pipeline |
+| `ingestion/chunking.py` | Text splitting with tiktoken token counting |
+| `ingestion/embedding_pipeline.py` | ResilientEmbeddingPipeline with batch processing |
+| `ingestion/tavily_client.py` | Tavily crawl/extract/map builders |
+| `infra/rate_limiter.py` | Token and request rate limiters |
+| `infra/vector_store.py` | Qdrant collection and document operations |
+| `config/settings.py` | Frozen dataclasses for all configuration |
+
+### Rate Limiting
+
+- **Token rate limiter** — async + sync throttle for worker threads
+- **Request rate limiter** — RPM cap for API calls
+- **Retry logic** — exponential backoff on failures
+
+---
+
+## Concurrency Infrastructure
+
+| Component | File | Purpose |
+|---|---|---|
+| **Budget Controller** | `concurrency/budget_controller.py` | AIMD rate control for YouTube requests |
+| **Circuit Breaker** | `concurrency/circuit_breaker.py` | Three-state health tracking per session/proxy |
+| **Priority Queue** | `concurrency/priority_queue.py` | Priority-weighted task scheduling |
+| **Semaphore** | `concurrency/ytdlp_semaphore.py` | Process-global YouTubeDL semaphore |
+
+---
+
+## Data Layer
+
+### PostgreSQL Schema (17 tables)
+
+| Table | Purpose |
+|---|---|
+| `channels` | Channel metadata |
+| `videos` | Video metadata |
+| `comments` | Comment data |
+| `recommendations` | Directed recommendation edges |
+| `transcripts` | Video transcripts |
+| `collection_runs` | Run metadata with provenance |
+| `collection_errors` | Failed collection attempts |
+| `datasets` | Dataset definitions |
+| `dataset_members` | Dataset video/comment associations |
+| `samples` | Persisted samples with recipes |
+| `sample_members` | Sample video/comment associations |
+| `projects` | Research projects |
+| `project_items` | Project artifacts |
+| `layer_runs` | Layer crawl anchors |
+| `echo_detections` | Echo-chamber detection results |
+| `collection_jobs` | Job definitions |
+| `author_profiles` | Aggregated author profiles |
+
+### Excel Backend (Legacy)
+
+Excel-based persistence with overflow sidecar files for research-friendly export. Same repository interface as PostgreSQL.
+
+### Qdrant Vector Store
+
+Embeddings for semantic search and content homophily analysis.
+
+---
+
+## Data Flow
+
+```mermaid
+graph LR
+    YT[YouTube] -->|yt-dlp| ACQ[Acquisition]
+    ACQ --> DB[(PostgreSQL)]
+    ACQ --> COMMENTS[Comments]
+    ACQ --> RECS[Recommendations]
+    COMMENTS --> SOCIAL[Social Network]
+    RECS --> RECNET[Recommendation Network]
+    DB --> EMBED[Embeddings via Qdrant]
+    EMBED --> SEMNET[Semantic Network]
+    SOCIAL --> ANALYSIS[Cross-Network Analysis]
+    RECNET --> ANALYSIS
+    SEMNET --> ANALYSIS
+    ANALYSIS --> EXPORT[Export 6 Formats]
+```
+
+---
+
+## Resilience Architecture
+
+```mermaid
+graph LR
+    REQ[Request] --> PQ[Priority Queue]
+    PQ --> BC[Budget Controller AIMD]
+    BC --> CB[Circuit Breaker]
+    CB --> YT[yt-dlp]
+    YT -->|Success| OK[Response]
+    YT -->|Failure| RETRY[Retry with Backoff]
+    RETRY --> CB
+```
+
+---
+
+## Testing
+
+- **80+ test modules** across the repository
+- **API contract tests** — OpenAPI snapshot guard
+- **Centrality benchmark** — validated against Zachary's Karate Club
+- **Service unit tests** — network, sampling, echo-chamber, comparison
+- **Integration tests** — workspace, expansion, echo-chamber APIs
+- **Playwright e2e** — frontend integration tests
 
 ---
 

@@ -1,80 +1,131 @@
-# Reproducibility
+# Reproducibility Protocol
 
-> A figure is reproducible when the exact recipe — algorithm, seed, data, and parameters — is recorded and re-runnable. This platform records all four.
-
-## 1. Deterministic seeds
-
-| Concern | Seed / default | Env var | Source |
-|---|---|---|---|
-| Sampling | `42` | `SOCIAL_SAMPLING_SEED` | `config/settings.py:129,399` |
-| Community detection (Louvain) | `42` | — | `services/network_analytics_service.py` |
-| Permutation / bootstrap tests | `42` (default) | — | `services/network_analytics_service.py` `run_resampling_test` |
-
-The same inputs + the same seed produce the same sample, the same community partition, and the same test statistic and `p_value`.
-
-## 2. Provenance per run
-
-Every collection is a **run** with a UUID `collection_run_id` (`SocialScienceResearch/domain/models.py`). Observations reference their run; runs reference their config. The API exposes:
-
-```
-GET  /api/v1/social-science/runs                 # list runs
-GET  /api/v1/social-science/runs/{run_id}        # run + config snapshot
-GET  /api/v1/social-science/runs/{run_id}/errors # what failed & why
-GET  /api/v1/social-science/runs/{run_id}/sub-runs
-```
-
-This lets a reviewer trace any measurement back to the exact collection that produced it.
-
-## 3. Weight specifications are encoded, not implicit
-
-Network weights are selected with an explicit **weight-spec** token rather than hidden defaults (`SocialScienceResearch/services/weight_spec.py`):
-
-```
-edge_type:weight_mode[:param=value,...][:norm=<none|min_max|log1p>]
-```
-
-Example: `recommendation:observation_count:norm=min_max`.
-
-Two families + modes:
-
-| Family | Weight modes |
-|---|---|
-| `recommendation` | `observation_count`, `reciprocal_position` |
-| `co_comment` | `jaccard`, `overlap_coefficient`, `intersection`, counts |
-
-Parameters: `min_shared`, `top_n`, `position_decay`. Full grammar + parser in `SocialScienceResearch/services/weight_spec.py`.
-
-## 4. Deterministic statistical testing
-
-`run_resampling_test()` performs a **seeded permutation/bootstrap** with a `+1` correction, `n_iter` capped at 1000, and default `seed=42`. Node-decomposable metrics return a `p_value`; global-only metrics (e.g. modularity) return the observed delta with `p_value=None` and an explanatory note — **no fabricated p-value** (see `tests/test_centrality_benchmark.py:270`).
-
-```
-POST /api/v1/social-science/network/test-difference
-# body: metric, method (permutation|bootstrap), n_iter, seed
-# returns: observed_delta, p_value, ci95
-```
-
-## 5. Sample identity
-
-Samples are persisted immutably and carry their recipe: `strategy`, `seed`, `population_size`, `criteria_json`, plus a hash (`services/sample_service.py:47`). `compare_samples()` diffs two samples' criteria (`:86`).
-
-```
-GET  /api/v1/social-science/samples
-POST /api/v1/social-science/sampling/advanced
-POST /api/v1/social-science/samples/compare
-```
-
-## 6. The figure-reproducibility contract
-
-To reproduce any network figure:
-
-1. Note the `collection_run_id`s (provenance).
-2. Note the weight-spec token (encoding).
-3. Note the seed (`42` by default).
-4. Re-run with the same three inputs — the `networkx`-level results are deterministic.
-
-See the network measures validated against Zachary's Karate Club in [Network Science](network.md#validation) and `tests/test_centrality_benchmark.py`.
+> Deterministic seeds, provenance tracking, weight specifications, and the figure-reproducibility contract.
 
 ---
 
-Previous: [Methodology](methodology.md) · Next: [Network Science](network.md)
+## Deterministic Seeds
+
+All stochastic operations in the system use fixed seeds to ensure reproducibility:
+
+| Operation | Seed | Configuration |
+|---|---|---|
+| Sampling | `seed=42` | `SOCIAL_SAMPLING_SEED` environment variable |
+| Louvain community detection | `seed=42` | Hardcoded in `network_analytics_service.py` |
+| Permutation null tests | `seed=42` | Seeded RNG in `content_homophily_service.py` |
+| Structural metrics null model | `COMMUNITY_SEED = 42` | `DEFAULT_N_RANDOMIZATIONS = 10` |
+| Pair sampling | `seed=42` | Inherited from sampling service |
+
+**To reproduce any analysis:** same seed + same parameters + same data = same results.
+
+---
+
+## Provenance
+
+Every observation carries its collection context:
+
+- **`collection_run_id`** — links every video, comment, recommendation, and transcript to the run that collected it
+- **Layer index** — recommendation edges record which crawl layer they were observed in
+- **Extraction provider** — recommendation edges record which extraction method captured them (yt-dlp, yt-search-python, page-dump)
+- **Timestamp** — collection timestamp for temporal reasoning
+
+This provenance chain ensures that every data point can be traced back to its collection event.
+
+---
+
+## Weight Specifications
+
+Edge weights are encoded using a formal grammar:
+
+```
+edge_type:weight_mode[:param=value,...][:norm=...]
+```
+
+This makes weight computation explicit and reproducible. Two researchers using the same weight specification on the same data will produce identical results.
+
+Examples:
+
+- `recommendation:rank` — weight based on recommendation rank position
+- `commenter:jaccard` — weight based on Jaccard similarity
+- `commenter:overlap_coefficient` — Szymkiewicz-Simpson coefficient
+
+---
+
+## Data Availability
+
+Every observation carries an explicit data-availability status:
+
+| Status | Meaning |
+|---|---|
+| `available` | Data was successfully collected |
+| `missing` | Data was requested but not available from the source |
+| `unsupported` | Data type is not supported by the current collection method |
+
+This prevents conflating unavailable observations with zero values — a critical methodological safeguard.
+
+---
+
+## Figure-Reproducibility Contract
+
+Any network figure can be reproduced from 4 inputs:
+
+1. **Scope** — which videos/channels/comments are included
+2. **Weight specification** — how edge weights are computed
+3. **Community detection parameters** — algorithm and seed
+4. **Layout parameters** — if applicable
+
+Given these 4 inputs, the same network visualization will be produced.
+
+---
+
+## Reproducibility Checklist
+
+To reproduce an analysis:
+
+1. ✅ **Clone the repository** at the same commit
+2. ✅ **Install dependencies** via `pyproject.toml`
+3. ✅ **Configure environment** — same `.env` settings (especially `SOCIAL_SAMPLING_SEED`)
+4. ✅ **Start PostgreSQL** — `docker compose up -d`
+5. ✅ **Collect data** — use the same collection endpoints with the same parameters
+6. ✅ **Build networks** — use the same network construction endpoints
+7. ✅ **Run analysis** — use the same analytics endpoints with the same parameters
+8. ✅ **Compare results** — all metrics should match to floating-point precision
+
+---
+
+## Model and Version Tracking
+
+| Component | Tracking |
+|---|---|
+| Embedding model | Recorded per content homophily analysis |
+| LLM providers | Configured via environment, persisted per run |
+| Python version | 3.11 (specified in `pyproject.toml`) |
+| Key dependencies | Locked in `uv.lock` |
+
+---
+
+## Configuration Persistence
+
+All analytical parameters are configurable via environment variables and persisted with each run:
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `SOCIAL_SAMPLING_SEED` | `42` | Deterministic sampling |
+| `SOCIAL_COLLECT_COMMENTS` | `True` | Comment collection toggle |
+| `SOCIAL_COLLECT_TRANSCRIPTS` | `False` | Transcript collection toggle |
+| `SOCIAL_MAX_COMMENTS_PER_VIDEO` | `500` | Comment ceiling |
+| `SOCIAL_SCRAPER_RETRIES` | `3` | Acquisition retry count |
+| `SOCIAL_SCRAPER_REQUEST_DELAY` | `1.0` | Seconds between requests |
+| `SOCIAL_NETWORK_EXPORT_FORMATS` | graphml,edgelist,gexf,csv,json,xlsx | Export formats |
+
+---
+
+## API Contract
+
+The OpenAPI specification is:
+
+1. **Generated** from code via `scripts/dump_openapi.py`
+2. **CI-guarded** via `tests/test_openapi_snapshot.py`
+3. **Never invented** — documented endpoints match implemented functionality
+
+This ensures that the API surface is reproducible and that documentation never diverges from implementation.
