@@ -18,7 +18,7 @@ The system distinguishes four observation types:
 |---|---|---|
 | **Channel metadata** | Name, subscriber count, description | Collected via yt-dlp |
 | **Video metadata** | Title, views, likes, upload date, duration | Collected via yt-dlp |
-| **Comment** | Author, text, likes, timestamp, reply structure | Collected via YouTube Data API |
+| **Comment** | Author, text, likes, timestamp, reply structure | Collected via yt-dlp |
 | **Recommendation** | Directed edge between videos with rank | Collected via three-layer fallback |
 | **Transcript** | Video caption text | Collected via captions (opt-in) |
 
