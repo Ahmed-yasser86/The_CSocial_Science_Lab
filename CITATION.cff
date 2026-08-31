@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "Graph RAG Agent — Computational Social Science Research Workbench"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: "Graph RAG Agent"
+    given-names: "Contributors"
+repository-code: "https://github.com/anomalyco/graph-rag-agent"
+abstract: "YouTube recommendation & audience network analysis with full provenance (observed, never estimated), two network families, weight-spec provenance, and a resumable Graph-RAG intelligence agent."
+license: MIT
+version: 0.1.0
+date-released: 2026-08-31
+keywords:
+  - computational social science
+  - network analysis
+  - YouTube
+  - provenance
+  - reproducibility
+  - langgraph
+  - graph-rag

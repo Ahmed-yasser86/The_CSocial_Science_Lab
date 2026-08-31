@@ -1,0 +1,100 @@
+site_name: Graph RAG Agent
+site_description: Computational Social Science research workbench for YouTube recommendation & audience networks, with a Graph-RAG intelligence agent and a resilient ingestion pipeline. Graf-RAG Agent combines three systems in one repository, documented from committed code.
+site_author: Graph RAG Agent
+repo_name: graph-rag-agent
+repo_url: https://github.com/anomalyco/graph-rag-agent
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji
+  - toc:
+      permalink: true
+  - attr_list
+  - def_list
+  - tables
+
+plugins:
+  - search
+
+validation:
+  nav:
+    not_found: ignore
+  links:
+    not_found: warn
+
+nav:
+  - Home: index.md
+  - Recruiters:
+    - Overview: for-recruiters/index.md
+    - Architecture: for-recruiters/architecture.md
+    - Case Study: for-recruiters/case-study.md
+  - Researchers:
+    - Overview: for-researchers/index.md
+    - Methodology: for-researchers/methodology.md
+    - Reproducibility: for-researchers/reproducibility.md
+    - Network Science: for-researchers/network.md
+    - Echo Chamber: for-researchers/echo-chamber.md
+    - Sampling: for-researchers/sampling.md
+    - Ethics & Data Minimization: for-researchers/ethics.md
+    - Data Model: for-researchers/data-model.md
+    - Citation: for-researchers/citation.md
+  - Developers:
+    - Overview: for-developers/index.md
+    - Quickstart: for-developers/quickstart.md
+    - Architecture: for-developers/architecture.md
+    - API Reference: for-developers/api-reference.md
+    - Ingestion & Agent: for-developers/ingestion-and-agent.md
+    - Workspaces & Jobs: for-developers/workspaces-and-jobs.md
+    - Configuration: for-developers/configuration.md
+    - Troubleshooting: for-developers/troubleshooting.md
+  - Technical Reference:
+    - Invariants: technical/invariants.md
+    - Scraper Architecture: technical/scraper-architecture.md
+    - Data Model: technical/data-model.md
+    - Configuration: technical/configuration.md
+    - Migration Notes: technical/migration-notes.md
+    - API Reference (legacy): technical/api-reference.md
+    - Excel to Postgres: excel_to_postgres_migration.md
+    - Samples Guide: samples-user-guide.md
+  - Research Reference:
+    - Variable Catalogue: research/variable-catalogue.md
+    - Network Metrics: research/network-metrics.md
+    - Sampling Methods: research/sampling-methods.md
+    - Ethics: research/ethics.md
