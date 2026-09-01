@@ -18,19 +18,35 @@ def dump() -> None:
     import json
     import os
     import sys
-    from unittest.mock import MagicMock, patch
+    from types import ModuleType
+    from unittest.mock import MagicMock
 
     # Mock database modules so the app can start without PostgreSQL
     os.environ.setdefault("SOCIAL_DATABASE_URL", "postgresql://localhost:5432/dummy")
-    
-    # Patch psycopg_pool before importing the app
-    sys.modules["psycopg_pool"] = MagicMock()
-    sys.modules["psycopg_pool.pool"] = MagicMock()
-    
-    # Also patch psycopg
-    sys.modules["psycopg"] = MagicMock()
-    sys.modules["psycopg.rows"] = MagicMock()
-    sys.modules["psycopg_pool._cmodule"] = MagicMock()
+
+    # Create a mock module that returns MagicMock for any attribute access
+    class MockModule(MagicMock):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.__path__ = []
+            self.__file__ = ""
+
+        def __getattr__(self, name):
+            if name.startswith("_"):
+                return super().__getattribute__(name)
+            return MagicMock()
+
+    # Mock all psycopg and psycopg_pool modules
+    for mod_name in [
+        "psycopg",
+        "psycopg.rows",
+        "psycopg.types",
+        "psycopg.types.json",
+        "psycopg_pool",
+        "psycopg_pool.pool",
+        "psycopg_pool._cmodule",
+    ]:
+        sys.modules[mod_name] = MockModule()
 
     from SocialScienceResearch.api.app import app
 
