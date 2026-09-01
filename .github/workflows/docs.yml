@@ -64,4 +64,4 @@ jobs:
       - name: Install backend
         run: uv sync --frozen 2>&1 | tail -n 20
       - name: Check OpenAPI drift
-        run: python SocialScienceResearch/scripts/dump_openapi.py && git diff --exit-code SocialScienceResearch/api/openapi.json
+        run: uv run python SocialScienceResearch/scripts/dump_openapi.py && git diff --exit-code SocialScienceResearch/api/openapi.json
