@@ -83,6 +83,8 @@ nav:
     - Ingestion & Agent: for-developers/ingestion-and-agent.md
     - Workspaces & Jobs: for-developers/workspaces-and-jobs.md
     - Configuration: for-developers/configuration.md
+    - Performance Optimizations: for-developers/performance-optimizations.md
+    - GPT-Researcher Customization: for-developers/gpt-researcher-customization.md
     - Troubleshooting: for-developers/troubleshooting.md
   - Technical Reference:
     - Invariants: technical/invariants.md

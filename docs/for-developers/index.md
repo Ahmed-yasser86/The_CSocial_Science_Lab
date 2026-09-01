@@ -12,6 +12,8 @@
 | [Ingestion & Agent](ingestion-and-agent.md) | The Tavily→Qdrant pipeline and the LangGraph agent |
 | [Workspaces & Jobs](workspaces-and-jobs.md) | Multi-tenant isolation + long-running work |
 | [Configuration](configuration.md) | Every env var, defaults, providers |
+| [Performance Optimizations](performance-optimizations.md) | Rate limiting, fast extraction, pause/resume, all optimizations |
+| [GPT-Researcher Customization](gpt-researcher-customization.md) | Customized fork, system prompts, embedding rate limiting |
 | [Troubleshooting](troubleshooting.md) | 10 real fixes |
 
 ## What you can do in 5 minutes

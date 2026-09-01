@@ -4,6 +4,28 @@
 
 ---
 
+## Key Achievements
+
+### Performance
+- **Video enrichment: 33s → 2.8s (~12x faster)** — YouTube `/next` API bypass
+- **collect/recommendations endpoint: 90s+ timeout → 38s** — stub-based enrichment
+- **Multi-layer crawling**: 2+ layers, 6,500+ videos, 0 failures, 0 rate-limit blocks in 1 hour
+- **Advanced rate limiting**: AIMD BudgetController (self-tuning throttle), CircuitBreaker, YtdlContextLimiter, PriorityTaskQueue, speed presets
+
+### Transcript Retrieval
+- **Configured transcript service**: Routes transcript fetching to FreeTranscriptAPI (when configured) instead of yt-dlp — **10x faster** transcript retrieval, no PO Token required
+
+### Reliability
+- **939/939 unit tests passing** + 71/71 E2E tests
+- **Auto-reconcile stuck runs** at boot
+- **Job pause/resume**: stop long crawls, wait for rate limits, resume later
+
+### GPT-Researcher Integration
+- **Customized fork** with rewritten system prompts for domain-specific use cases
+- **Embedding rate limiting**, MCP tool selection improvements, context compression hardening
+
+---
+
 ## Why This Project Exists
 
 Contemporary platforms simultaneously function as social environments, content-distribution systems, recommendation engines, and information landscapes. Studying how these layered mechanisms shape user experience, community formation, and information access requires computational infrastructure capable of representing and comparing multiple analytical perspectives on the same information ecosystem.
