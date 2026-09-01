@@ -48,6 +48,11 @@ def dump() -> None:
     ]:
         sys.modules[mod_name] = MockModule()
 
+    # Mock agent_server so CopilotKit endpoints are always registered
+    sys.modules["agent_server"] = MockModule()
+    sys.modules["agent_server.loghub"] = MockModule()
+    sys.modules["agent_server.research_graph"] = MockModule()
+
     from SocialScienceResearch.api.app import app
 
     OUTPUT.write_text(json.dumps(app.openapi(), indent=2), encoding="utf-8")
