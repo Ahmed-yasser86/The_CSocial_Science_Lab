@@ -639,7 +639,9 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         if not video_id:
             raise InvalidURLError(f"Cannot extract video ID from URL: {video_url}")
 
-        api_key = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        api_key = os.environ.get("YOUTUBE_API_KEY", "")
+        if not api_key:
+            raise AcquisitionError("YOUTUBE_API_KEY environment variable is required for fast /next extraction")
         next_url = f"https://www.youtube.com/youtubei/v1/next?key={api_key}&prettyPrint=false"
         payload = json.dumps({
             "videoId": video_id,
