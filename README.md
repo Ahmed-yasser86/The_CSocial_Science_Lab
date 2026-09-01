@@ -35,6 +35,7 @@
 
 ### GPT-Researcher Integration
 - **Customized fork** of [assafelovic/gpt-researcher](https://github.com/assafelovic/gpt-researcher) — tailored for this project's needs
+- **Customized system prompts**: every agent prompt rewritten for domain-specific use cases (audience intelligence, subject analysis, ecosystem mapping)
 - **Key customizations**: embedding rate limiting, MCP tool selection improvements, context compression hardening, `.env` bootstrapping
 - **Not a divergent rewrite** — surgical additions to upstream codebase (15 files, 1028 insertions)
 
@@ -1461,6 +1462,7 @@ This project includes a **customized fork** of [assafelovic/gpt-researcher](http
 |---|---|---|
 | Embedding rate limiting | `gpt_researcher/memory/embeddings.py` | `RateLimitedEmbedder` via `GPT_RESEARCHER_EMBED_TPM`/`_RPM` env vars |
 | MCP tool selection | `gpt_researcher/prompts.py` | Domain-aware taxonomy (`web_research_*`, `socialcrawl_*`, `gdelt_cloud_*`) |
+| **Customized system prompts** | `gpt_researcher/prompts.py` | Every agent prompt rewritten for audience intelligence, subject analysis, ecosystem mapping |
 | Context compression | `gpt_researcher/context/compression.py` | `ValidContentFilter` + `SafeEmbeddingsFilter` (no empty results) |
 | Config bootstrapping | `gpt_researcher/config/config.py` | `_load_root_env()` ensures `.env` vars available regardless of CWD |
 | Tool input normalization | `gpt_researcher/mcp/normalization.py` | Prevents server rejections from malformed tool args |
