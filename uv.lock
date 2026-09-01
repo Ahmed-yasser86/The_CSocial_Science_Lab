@@ -1265,6 +1265,7 @@ dependencies = [
     { name = "xlsxwriter" },
     { name = "xxhash" },
     { name = "yarl" },
+    { name = "yt-dlp" },
     { name = "zstandard" },
 ]
 
@@ -1526,6 +1527,7 @@ requires-dist = [
     { name = "xlsxwriter", marker = "python_full_version >= '3.8'", specifier = "==3.2.9" },
     { name = "xxhash", marker = "python_full_version >= '3.8'", specifier = "==3.8.1" },
     { name = "yarl", marker = "python_full_version >= '3.10'", specifier = "==1.24.2" },
+    { name = "yt-dlp", specifier = ">=2026.1.1" },
     { name = "zstandard", marker = "python_full_version >= '3.9'", specifier = "==0.25.0" },
 ]
 
@@ -4793,6 +4795,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/21/3c/f960d7a65ef97d8ba9b424fb5128796a4bc710fc6df2ddbbd7dfdc3bbd20/yarl-1.24.2-cp311-cp311-win_amd64.whl", hash = "sha256:f8fdbcff8b2c7c9284e60c196f693588598ddcee31e11c18e14949ce44519d45", size = 92808, upload-time = "2026-05-19T21:28:48.465Z" },
     { url = "https://files.pythonhosted.org/packages/03/1a/49fb03750e4de4d2284cd5b885a383133c34eef45bd59631b2bb8b7e81e8/yarl-1.24.2-cp311-cp311-win_arm64.whl", hash = "sha256:b32c37a7a337e90822c45797bf3d79d60875cfcccd3ecc80e9f453d87026c122", size = 87610, upload-time = "2026-05-19T21:28:50.07Z" },
     { url = "https://files.pythonhosted.org/packages/fd/4d/4b880086bd0d3e034d25647be1d830afc3e3f610e98c4ab3490af6b1b6d5/yarl-1.24.2-py3-none-any.whl", hash = "sha256:2783d9226db8797636cd6896e4de81feed252d1db72265686c9558d97a4d94b9", size = 53576, upload-time = "2026-05-19T21:31:03.909Z" },
+]
+
+[[package]]
+name = "yt-dlp"
+version = "2026.8.19"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/e0/832fa4ca334b766a06933a196066edc3dba37cdb6f14cd98d59bcc69a4b4/yt_dlp-2026.8.19.tar.gz", hash = "sha256:9e213e48cea35c66b378e4447903f118f6392a5fa380a2b6d7070ec86f4e0af1", size = 3052025, upload-time = "2026-08-19T23:48:59.291Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/b2/8cd1613f56eed7ceb64fbd4df3f1c01246bfb098e6f398228bafda22b80b/yt_dlp-2026.8.19-py3-none-any.whl", hash = "sha256:1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf", size = 3185533, upload-time = "2026-08-19T23:48:56.925Z" },
 ]
 
 [[package]]
