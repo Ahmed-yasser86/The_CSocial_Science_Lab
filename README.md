@@ -4,9 +4,44 @@
 
 ![Docs](https://img.shields.io/badge/docs-MkDocs%20Material-blue)
 ![OpenAPI](https://img.shields.io/badge/OpenAPI-160%20paths-blue)
-![Tests](https://img.shields.io/badge/tests-80%2B-green)
+![Tests](https://img.shields.io/badge/tests-939-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
+
+---
+
+## Key Achievements
+
+### Performance
+- **Video enrichment: 33s → 2.8s (~12x faster)** — YouTube `/next` API bypass
+- **collect/recommendations endpoint: 90s+ timeout → 38s** — stub-based enrichment
+- **Multi-layer crawling**: 2+ layers, 6,500+ videos, 0 failures, 0 rate-limit blocks in 1 hour
+- **Advanced rate limiting**: AIMD BudgetController (self-tuning throttle), CircuitBreaker, YtdlContextLimiter, PriorityTaskQueue, speed presets (fast/balanced/careful)
+
+### Transcript Retrieval
+- **Configured transcript service**: Routes transcript fetching to FreeTranscriptAPI (when configured) instead of yt-dlp — **10x faster** transcript retrieval, no PO Token required
+- **Routing provider**: `RoutingAcquisitionProvider` selects the optimal transcript backend based on runtime config
+
+### Reliability
+- **939/939 unit tests passing** + 71/71 E2E tests
+- **Auto-reconcile stuck runs** at boot (SQL `reconcile_stale_running`)
+- **Job pause/resume**: stop long crawls, wait for rate limits, resume later
+- **UTF-8 / cp1252 crash fix**: non-Latin titles no longer crash the pipeline
+
+### Echo Chamber Analysis
+- **Configurable top-N recommendations**: save resources by scraping only top 5-10 per video (was hardcoded ~20)
+- **Channel network projection**: 100% weakly connected components, 9.3% reciprocity, 11.8% global clustering
+- **Unattributed edge reduction**: 95% of edges survive channel projection (up from 54%)
+
+### GPT-Researcher Integration
+- **Customized fork** of [assafelovic/gpt-researcher](https://github.com/assafelovic/gpt-researcher) — tailored for this project's needs
+- **Key customizations**: embedding rate limiting, MCP tool selection improvements, context compression hardening, `.env` bootstrapping
+- **Not a divergent rewrite** — surgical additions to upstream codebase (15 files, 1028 insertions)
+
+### Research Capabilities
+- **Reproducible sampling**: every sample records strategy, seed, strata, date range
+- **Read-only analytics**: no fabrications, every metric carries explicit availability flag
+- **Full provenance**: provider, version, config snapshot, per-entity errors per run
 
 ---
 
@@ -1305,19 +1340,24 @@ The_CSocial_Science_Lab/
 # 1. Clone and install
 git clone https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab.git
 cd The_CSocial_Science_Lab
-pip install -e .
+uv sync
 
 # 2. Start PostgreSQL
 docker compose up -d
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env with your API keys
+# Edit .env with your API keys (at minimum: OPENAI_API_KEY, TAVILY_API_KEY)
 
-# 4. Start backend
+# 4. (Optional) Configure transcript service for faster retrieval
+# Set SOCIAL_TRANSCRIPT_PROVIDER=freetranscriptapi in .env
+# Set SOCIAL_FREETRANSCRIPTAPI_KEY=<your_key> in .env
+# Without this, transcripts use yt-dlp (slower, requires PO Token)
+
+# 5. Start backend
 uvicorn SocialScienceResearch.api:create_app --factory --host 0.0.0.0 --port 8000
 
-# 5. Start frontend
+# 6. Start frontend
 cd SocialScienceResearch/ui && npm install && npm run dev
 ```
 
@@ -1411,6 +1451,21 @@ The README is the high-level entry point. Detailed documentation lives in the do
 - [API Reference](docs/for-developers/api-reference.md) — 160+ endpoints
 - [Workspaces & Jobs](docs/for-developers/workspaces-and-jobs.md) — multi-tenancy and job management
 - [Configuration](docs/for-developers/configuration.md) — environment variables and settings
+- [Performance Optimizations](SocialScienceResearch/docs/OPTIMIZATIONS.md) — rate limiting, fast extraction, pause/resume, all optimizations
+
+### GPT-Researcher Customization
+
+This project includes a **customized fork** of [assafelovic/gpt-researcher](https://github.com/assafelovic/gpt-researcher) at `gpt-researcher/`. Key customizations:
+
+| Customization | File | Purpose |
+|---|---|---|
+| Embedding rate limiting | `gpt_researcher/memory/embeddings.py` | `RateLimitedEmbedder` via `GPT_RESEARCHER_EMBED_TPM`/`_RPM` env vars |
+| MCP tool selection | `gpt_researcher/prompts.py` | Domain-aware taxonomy (`web_research_*`, `socialcrawl_*`, `gdelt_cloud_*`) |
+| Context compression | `gpt_researcher/context/compression.py` | `ValidContentFilter` + `SafeEmbeddingsFilter` (no empty results) |
+| Config bootstrapping | `gpt_researcher/config/config.py` | `_load_root_env()` ensures `.env` vars available regardless of CWD |
+| Tool input normalization | `gpt_researcher/mcp/normalization.py` | Prevents server rejections from malformed tool args |
+
+The fork is **not a divergent rewrite** — surgical additions to upstream codebase (15 files changed, 1028 insertions). A pristine copy of the original is kept at `GPT-Researcher-Original/` for reference.
 
 ---
 
