@@ -49,9 +49,17 @@ def dump() -> None:
         sys.modules[mod_name] = MockModule()
 
     # Mock agent_server so CopilotKit endpoints are always registered
-    sys.modules["agent_server"] = MockModule()
+    agent_mock = MockModule()
+    agent_mock.agent_router = MagicMock()
+    agent_mock.register_agent = MagicMock()
+    sys.modules["agent_server"] = agent_mock
     sys.modules["agent_server.loghub"] = MockModule()
     sys.modules["agent_server.research_graph"] = MockModule()
+    sys.modules["agent_server.multi_agents"] = MockModule()
+    sys.modules["agent_server.multi_agents.agents"] = MockModule()
+    sys.modules["agent_server.multi_agents.agents.__init__"] = MockModule()
+    sys.modules["agent_server.agents"] = MockModule()
+    sys.modules["agent_server.agents.__init__"] = MockModule()
 
     from SocialScienceResearch.api.app import app
 
