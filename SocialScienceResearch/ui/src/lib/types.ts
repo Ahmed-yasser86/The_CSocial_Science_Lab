@@ -142,6 +142,7 @@ export interface CollectionSpec {
 export type JobStatus =
   | "pending"
   | "running"
+  | "paused"
   | "succeeded"
   | "failed"
   | "cancelled";

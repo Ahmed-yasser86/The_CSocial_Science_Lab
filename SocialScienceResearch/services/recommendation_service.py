@@ -137,6 +137,22 @@ class RecommendationService(CollectionService):
             run.target_video_id = video.video_id
             self._repos.runs.update_run(run)
 
+            # Persist comments from the source video (when available).
+            raw_comments = info.get("comments") or []
+            if raw_comments:
+                from SocialScienceResearch.acquisition.normalization import normalize_comments
+                comments, comment_obs = normalize_comments(raw_comments, video.video_id, run.run_id)
+                for c in comments:
+                    self._repos.comments.upsert_comment(c)
+                for o in comment_obs:
+                    self._repos.comments.save_comment_observation(o)
+                run.comments_collected = len(comments)
+                self._repos.runs.update_run(run)
+                logger.info(
+                    "recommendation run %s: persisted %d comments for %s",
+                    run.run_id, len(comments), video.video_id,
+                )
+
         self._report(reporter, "recommendation/start", message=f"Starting recommendation scrape for {video_url}")
 
         # 2. Attempt recommendation observation.

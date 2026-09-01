@@ -6,7 +6,8 @@
 
 > **Performance updates:** See `docs/OPTIMIZATIONS.md` for all applied optimizations
 > (fast `/next` extraction, yt-dlp tuning, UTF-8 fixes, stuck-run reconciliation,
-> enrich=False for API endpoint, Docker support).
+> enrich=False for API endpoint, Docker support, rate limiting architecture,
+> pause/resume, echo chamber top-N config).
 
 ---
 

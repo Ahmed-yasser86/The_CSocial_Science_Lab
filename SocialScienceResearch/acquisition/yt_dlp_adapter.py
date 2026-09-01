@@ -758,6 +758,38 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             if isinstance(sub_text, dict):
                 result["channel_follower_count"] = _parse_count(sub_text.get("simpleText", ""))
 
+        # Fallback: try to extract channel_id from engagementPanelSectionListRenderer
+        if "channel_id" not in result:
+            panels = data.get("engagementPanels", [])
+            for panel in panels:
+                panel_content = panel.get("engagementPanelSectionListRenderer", {})
+                header = panel_content.get("header", {})
+                ep_header = header.get("engagementPanelTitleHeaderRenderer", {})
+                context = ep_header.get("contextualInfo", {})
+                # Sometimes channel info is in the panel header
+                menu = ep_header.get("menu", {})
+                channel_chip = menu.get("channelSubscribeChipRenderer", {})
+                if channel_chip:
+                    browse_ep2 = channel_chip.get("navigationEndpoint", {}).get("browseEndpoint", {})
+                    cid2 = browse_ep2.get("browseId", "")
+                    if cid2 and cid2.startswith("UC"):
+                        result["channel_id"] = cid2
+                        break
+
+        # Fallback: try to get channel_id from contents (compactVideoRenderer)
+        if "channel_id" not in result:
+            for item in primary_items:
+                # Check compactVideoRenderer
+                cvr = item.get("compactVideoRenderer", {})
+                if cvr:
+                    owner_ep = cvr.get("shortBylineText", {}).get("runs", [])
+                    if owner_ep:
+                        browse_ep3 = owner_ep[0].get("navigationEndpoint", {}).get("browseEndpoint", {})
+                        cid3 = browse_ep3.get("browseId", "")
+                        if cid3 and cid3.startswith("UC"):
+                            result["channel_id"] = cid3
+                            break
+
         # thumbnail
         thumbs = two_col.get("results", {}).get("results", {}).get("contents", [])
         # Try primary info thumbnail first

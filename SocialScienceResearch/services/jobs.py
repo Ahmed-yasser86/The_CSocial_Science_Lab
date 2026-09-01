@@ -95,6 +95,7 @@ def _percent_complete(
 class JobStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -113,6 +114,7 @@ class Job:
     progress: dict[str, Any] = field(default_factory=dict)
     message: str | None = None
     cancel_requested: bool = False
+    pause_requested: bool = False
     result: Any = None
     error: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -393,7 +395,10 @@ class JobManager:
             # thread must not resurrect it.
             if job.status != JobStatus.RUNNING:
                 return
-            if job.cancel_requested:
+            if job.pause_requested:
+                job.status = JobStatus.PAUSED
+                job.message = "paused after the current unit of work finished"
+            elif job.cancel_requested:
                 job.status = JobStatus.CANCELLED
                 job.message = "cancelled after the current unit of work finished"
             else:
@@ -402,7 +407,10 @@ class JobManager:
         except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
             if job.status != JobStatus.RUNNING:
                 return
-            if job.cancel_requested:
+            if job.pause_requested:
+                job.status = JobStatus.PAUSED
+                job.message = "paused after the current unit of work finished"
+            elif job.cancel_requested:
                 job.status = JobStatus.CANCELLED
                 job.message = "cancelled after the current unit of work finished"
             else:
@@ -429,6 +437,56 @@ class JobManager:
         if accepted:
             self._notify(job)
         return accepted
+
+    def pause(self, job_id: str) -> bool:
+        """Request pause. True if the job could accept the request.
+
+        The job transitions to PAUSED after the current unit of work finishes.
+        A paused job can be resumed later with ``resume()``.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.status == JobStatus.RUNNING:
+                job.pause_requested = True
+                accepted = True
+            else:
+                accepted = False
+        if accepted:
+            self._notify(job)
+        return accepted
+
+    def resume(self, job_id: str) -> bool:
+        """Resume a paused job. True if the job could accept the request."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.status == JobStatus.PAUSED:
+                job.status = JobStatus.PENDING
+                job.pause_requested = False
+                accepted = True
+            else:
+                accepted = False
+        if accepted:
+            self._submit_job(job)
+            self._notify(job)
+        return accepted
+
+    def is_pause_requested(self) -> bool:
+        """Check if the current worker thread's job has a pause request.
+
+        Long-running workers should call this between units of work and
+        yield when True (returning a partial result so the job can be
+        resumed later).
+        """
+        job_id = _job_id_var.get("")
+        if not job_id:
+            return False
+        with self._lock:
+            job = self._jobs.get(job_id)
+            return job.pause_requested if job else False
 
     def recycle_executor(self) -> None:
         """Discard the worker pool and start a fresh one.

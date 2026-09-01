@@ -206,6 +206,14 @@ export function cancelJob(jobId: string): Promise<{ job_id: string; cancelled: b
   return request(`/jobs/${jobId}/cancel`, { method: "POST" });
 }
 
+export function pauseJob(jobId: string): Promise<{ job_id: string; paused: boolean }> {
+  return request(`/jobs/${jobId}/pause`, { method: "POST" });
+}
+
+export function resumeJob(jobId: string): Promise<{ job_id: string; resumed: boolean }> {
+  return request(`/jobs/${jobId}/resume`, { method: "POST" });
+}
+
 export function killStuckJobs(): Promise<{ killed: number; job_ids: string[] }> {
   return request(`/jobs/kill-stuck`, { method: "POST" });
 }

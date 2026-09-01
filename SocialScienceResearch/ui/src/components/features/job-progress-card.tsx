@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Ban, CheckCircle2, Loader2, XCircle } from "lucide-react";
-import { useJob, useCancelJob } from "@/services/queries";
+import { Ban, CheckCircle2, Loader2, Pause, Play, XCircle } from "lucide-react";
+import { useJob, useCancelJob, usePauseJob, useResumeJob } from "@/services/queries";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -52,6 +52,8 @@ export function JobProgressCard({
 }) {
   const jobQuery = useJob(jobId);
   const cancel = useCancelJob();
+  const pause = usePauseJob();
+  const resume = useResumeJob();
   const job = jobQuery.data;
   const status = job?.status;
 
@@ -114,6 +116,7 @@ export function JobProgressCard({
   }
 
   const running = status === "pending" || status === "running";
+  const paused = status === "paused";
 
   return (
     <Card className="space-y-3 p-4">
@@ -124,28 +127,53 @@ export function JobProgressCard({
               className="size-4 animate-spin text-muted-foreground"
               aria-hidden
             />
+          ) : paused ? (
+            <Pause className="size-4 text-amber-500" aria-hidden />
           ) : (
             <Loader2 className="size-4 text-muted-foreground" aria-hidden />
           )}
           <span className="font-medium">
             {title ? `${title}: ` : ""}
-            {formatJobStage(progress?.stage)}
+            {paused ? "Paused" : formatJobStage(progress?.stage)}
           </span>
           <span className="font-mono text-xs text-muted-foreground">
             {jobId}
           </span>
         </div>
-        {running ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => cancel.mutate(jobId)}
-            disabled={cancel.isPending}
-          >
-            <Ban className="size-3.5" aria-hidden />
-            Cancel
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {running ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => pause.mutate(jobId)}
+              disabled={pause.isPending}
+            >
+              <Pause className="size-3.5" aria-hidden />
+              Pause
+            </Button>
+          ) : null}
+          {paused ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => resume.mutate(jobId)}
+              disabled={resume.isPending}
+            >
+              <Play className="size-3.5" aria-hidden />
+              Resume
+            </Button>
+          ) : null}
+          {running || paused ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => cancel.mutate(jobId)}
+              disabled={cancel.isPending}
+            >
+              <Ban className="size-3.5" aria-hidden />
+              Cancel
+            </Button>
+          ) : null}
       </div>
       {running && discovered > 0 ? (
         <div className="space-y-1">

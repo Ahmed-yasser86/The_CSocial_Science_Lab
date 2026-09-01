@@ -428,6 +428,26 @@ export function useCancelJob() {
   });
 }
 
+export function usePauseJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.pauseJob(jobId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs() });
+    },
+  });
+}
+
+export function useResumeJob() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) => api.resumeJob(jobId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs() });
+    },
+  });
+}
+
 export function useKillStuckJobs() {
   const queryClient = useQueryClient();
   return useMutation({

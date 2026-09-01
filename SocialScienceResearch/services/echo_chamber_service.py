@@ -70,6 +70,7 @@ class EchoChamberService(LayerScrapeService):
         collect_comments: bool = False,
         projection: str = "video",
         tags: list[str] | None = None,
+        max_recommendations_per_video: int | None = None,
     ) -> EchoDetection:
         """Create a detection record and queue its layered crawl as ONE job.
 
@@ -105,6 +106,7 @@ class EchoChamberService(LayerScrapeService):
                 "collect_comments": collect_comments,
                 "projection": projection,
                 "tags": list(tags or []),
+                "max_recommendations_per_video": max_recommendations_per_video,
             },
             created_at=now,
             updated_at=now,
@@ -278,6 +280,9 @@ class EchoChamberService(LayerScrapeService):
                     projection=str(
                         (detection.params or {}).get("projection") or "video"
                     ),
+                    max_recommendations_per_video=(
+                        detection.params or {}
+                    ).get("max_recommendations_per_video"),
                     reporter=reporter,
                 )
             except ValueError as exc:

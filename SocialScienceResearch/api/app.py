@@ -2381,6 +2381,46 @@ def create_app(
 
 
 
+    @app.post(
+
+        f"{prefix}/jobs/{{job_id}}/pause",
+
+        tags=["jobs"],
+
+    )
+
+    def pause_job(job_id: str):
+
+        if services["jobs"].pause(job_id):
+
+            return {"job_id": job_id, "paused": True}
+
+        detail = f"Job {job_id} cannot be paused (not running or missing)"
+
+        raise HTTPException(status_code=409, detail=detail)
+
+
+
+    @app.post(
+
+        f"{prefix}/jobs/{{job_id}}/resume",
+
+        tags=["jobs"],
+
+    )
+
+    def resume_job(job_id: str):
+
+        if services["jobs"].resume(job_id):
+
+            return {"job_id": job_id, "resumed": True}
+
+        detail = f"Job {job_id} cannot be resumed (not paused or missing)"
+
+        raise HTTPException(status_code=409, detail=detail)
+
+
+
     @app.get(
 
         f"{prefix}/jobs/{{job_id}}/result",

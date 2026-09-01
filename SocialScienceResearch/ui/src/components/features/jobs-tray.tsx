@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Briefcase, Ban, Loader2, Skull } from "lucide-react";
+import { Briefcase, Ban, Loader2, Pause, Play, Skull } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useJobs, useCancelJob, useKillStuckJobs } from "@/services/queries";
+import { useJobs, useCancelJob, usePauseJob, useResumeJob, useKillStuckJobs } from "@/services/queries";
 import { useToast } from "@/components/ui/toast";
 import { RunStatusBadge } from "@/components/features/run-status-badge";
 import { LoadingState } from "@/components/features/state";
@@ -19,11 +19,12 @@ import { formatNumber, formatDateTime } from "@/lib/format";
 import { JobDetailDialog } from "@/components/features/job-detail-dialog";
 import type { Job, JobStatus, CollectionStatus } from "@/lib/types";
 
-const ACTIVE_STATUSES: JobStatus[] = ["pending", "running"];
+const ACTIVE_STATUSES: JobStatus[] = ["pending", "running", "paused"];
 
 const RUN_STATUS: Record<JobStatus, CollectionStatus> = {
   pending: "pending",
   running: "running",
+  paused: "pending",
   succeeded: "success",
   failed: "failed",
   cancelled: "failed",
@@ -32,6 +33,8 @@ const RUN_STATUS: Record<JobStatus, CollectionStatus> = {
 export function JobsTray() {
   const { data: jobs, isLoading, isError } = useJobs();
   const cancel = useCancelJob();
+  const pause = usePauseJob();
+  const resume = useResumeJob();
   const killStuck = useKillStuckJobs();
   const { toast } = useToast();
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
@@ -64,6 +67,42 @@ export function JobsTray() {
       onError: (error) => {
         toast({
           title: "Could not cancel job",
+          description: (error as Error).message,
+          variant: "destructive",
+        });
+      },
+    });
+  }
+
+  function requestPause(job: Job) {
+    pause.mutate(job.job_id, {
+      onSuccess: () => {
+        toast({
+          title: "Pause requested",
+          description: `Job ${job.job_id} will pause after the current step.`,
+        });
+      },
+      onError: (error) => {
+        toast({
+          title: "Could not pause job",
+          description: (error as Error).message,
+          variant: "destructive",
+        });
+      },
+    });
+  }
+
+  function requestResume(job: Job) {
+    resume.mutate(job.job_id, {
+      onSuccess: () => {
+        toast({
+          title: "Job resumed",
+          description: `Job ${job.job_id} has been resumed.`,
+        });
+      },
+      onError: (error) => {
+        toast({
+          title: "Could not resume job",
           description: (error as Error).message,
           variant: "destructive",
         });
@@ -170,6 +209,8 @@ export function JobsTray() {
                       job={job}
                       cancelling={cancel.isPending && cancel.variables === job.job_id}
                       onCancel={() => requestCancel(job)}
+                      onPause={() => requestPause(job)}
+                      onResume={() => requestResume(job)}
                       onOpen={() => setDetailJobId(job.job_id)}
                     />
                   ))}
@@ -182,6 +223,8 @@ export function JobsTray() {
                       key={job.job_id}
                       job={job}
                       onCancel={() => requestCancel(job)}
+                      onPause={() => requestPause(job)}
+                      onResume={() => requestResume(job)}
                       onOpen={() => setDetailJobId(job.job_id)}
                     />
                   ))}
@@ -225,15 +268,20 @@ function JobGroup({
 function JobRow({
   job,
   onCancel,
+  onPause,
+  onResume,
   onOpen,
   cancelling = false,
 }: {
   job: Job;
   onCancel: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onOpen: () => void;
   cancelling?: boolean;
 }) {
   const active = ACTIVE_STATUSES.includes(job.status);
+  const isPaused = job.status === "paused";
   return (
     <div className="space-y-1 rounded-md border p-2.5">
       <div className="flex items-center justify-between gap-2">
@@ -245,19 +293,32 @@ function JobRow({
           {job.job_id}
         </Link>
         {active ? (
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={onCancel}
-            disabled={cancelling || job.cancel_requested}
-          >
-            {cancelling ? (
-              <Loader2 className="size-3 animate-spin" aria-hidden />
+          <div className="flex items-center gap-1">
+            {isPaused ? (
+              <Button variant="outline" size="xs" onClick={onResume}>
+                <Play className="size-3" aria-hidden />
+                Resume
+              </Button>
             ) : (
-              <Ban className="size-3" aria-hidden />
+              <Button variant="outline" size="xs" onClick={onPause}>
+                <Pause className="size-3" aria-hidden />
+                Pause
+              </Button>
             )}
-            {job.cancel_requested ? "Cancelling" : "Cancel"}
-          </Button>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={onCancel}
+              disabled={cancelling || job.cancel_requested}
+            >
+              {cancelling ? (
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+              ) : (
+                <Ban className="size-3" aria-hidden />
+              )}
+              {job.cancel_requested ? "Cancelling" : "Cancel"}
+            </Button>
+          </div>
         ) : (
           <JobStatusBadge status={job.status} />
         )}

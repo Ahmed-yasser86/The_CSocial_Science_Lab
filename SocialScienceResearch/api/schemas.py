@@ -374,6 +374,16 @@ class EchoDetectRequest(_Base):
         default_factory=list,
         description="Researcher labels applied to the job and its runs.",
     )
+    max_recommendations_per_video: int | None = Field(
+        None,
+        ge=1,
+        le=100,
+        description=(
+            "Cap the number of recommendation edges observed per video. "
+            "None means no limit (all ~20 sidebar recs). Setting this to "
+            "10 reduces crawl cost by ~50% while keeping the strongest signals."
+        ),
+    )
 
 
 class EchoContinueRequest(_Base):

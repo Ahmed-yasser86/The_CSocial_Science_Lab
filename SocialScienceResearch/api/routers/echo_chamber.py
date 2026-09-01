@@ -83,6 +83,7 @@ def detect(request: Request, body: EchoDetectRequest):
             collect_comments=body.collect_comments,
             projection=body.projection,
             tags=body.tags,
+            max_recommendations_per_video=body.max_recommendations_per_video,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
