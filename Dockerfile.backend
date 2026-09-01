@@ -1,0 +1,122 @@
+# =============================================================================
+# Dockerfile.backend — Multi-stage build for the Python monolith
+# =============================================================================
+# Stage 1: Build dependencies (compilation, system packages, Python wheels)
+# Stage 2: Minimal runtime (only libs + app code)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS builder
+
+# System packages needed for compilation and Python C extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libpq-dev \
+    libmagic-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    libssl-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    curl \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20.x (required by yt-dlp for JS challenge solving)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Install uv for fast Python package installation
+RUN pip install --no-cache-dir uv
+
+# Copy dependency manifests first for better layer caching
+COPY pyproject.toml uv.lock ./
+
+# Copy gpt-researcher dependency manifest
+COPY gpt-researcher/pyproject.toml ./gpt-researcher/
+
+# Install Python dependencies from lock file
+# Use --no-dev to skip dev dependencies in production
+RUN uv pip install --system --no-cache \
+    --requirement pyproject.toml \
+    --locked \
+    --index-url https://pypi.org/simple/
+
+# Install gpt-researcher as editable (imported via sys.path at runtime)
+# We do a full install since the main project imports from it
+RUN pip install --no-cache-dir -e ./gpt-researcher 2>/dev/null || \
+    pip install --no-cache-dir \
+    --no-deps \
+    -e ./gpt-researcher
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim-bookworm AS runtime
+
+# Runtime system libraries only (no compilers, no dev headers)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libmagic1 \
+    libxml2 \
+    libxslt1.1 \
+    libffi8 \
+    libssl3 \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js runtime only (for yt-dlp JS challenge solving)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+WORKDIR /app
+
+# Copy application packages in correct directory structure
+# Critical: these paths match the sys.path manipulation in app.py
+COPY SocialScienceResearch/ ./SocialScienceResearch/
+COPY RetrievalPipeline/ ./RetrievalPipeline/
+COPY Ingestion_Pipline/ ./Ingestion_Pipline/
+COPY gpt-researcher/ ./gpt-researcher/
+
+# Copy root-level files needed at runtime
+COPY main.py ./
+
+# Create directories for runtime state
+RUN mkdir -p /app/data/social_science \
+    && mkdir -p /app/intelligence_data \
+    && mkdir -p /app/outputs
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /bin/bash appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8000
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    SOCIAL_API_HOST=0.0.0.0
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+CMD ["uvicorn", "SocialScienceResearch.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

@@ -275,6 +275,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // before the pointer is restored.
   useEffect(() => {
     if (!hydrated || !reconciled || workspaceId) return;
+    // Don't auto-select on the chooser/home pages; the bootstrap test expects
+    // a pure chooser at "/" and the workspace home at "/w".
+    if (pathname === "/" || pathname === "/w") return;
 
     const workspaces = workspacesQuery.data ?? [];
     if (workspaces.length === 0) {

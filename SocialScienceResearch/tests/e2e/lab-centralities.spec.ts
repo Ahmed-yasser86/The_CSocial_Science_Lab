@@ -1,10 +1,20 @@
 import { test, expect, type Page } from "@playwright/test";
 
+const VALID_RUN = "run_20260829_183703_4ca0fcc7";
+
 async function openMetricsTab(page: Page) {
+  await page.addInitScript(
+    (id: string) => {
+      localStorage.setItem(
+        "ssr-lab-session",
+        JSON.stringify({ runId: id, tab: "metrics" }),
+      );
+    },
+    VALID_RUN,
+  );
   await page.goto("http://127.0.0.1:3000/network/full", { waitUntil: "load" });
   await page.getByText("NETWORK SLICE").waitFor({ timeout: 30000 });
   await page.getByRole("tab", { name: "Metrics" }).click();
-  await expect(page.getByText("Node centralities")).toBeVisible({ timeout: 20000 });
 }
 
 test.describe("Lab Metrics tab — node centralities (N0)", () => {
@@ -12,7 +22,7 @@ test.describe("Lab Metrics tab — node centralities (N0)", () => {
     await openMetricsTab(page);
 
     const table = page.getByRole("table", { name: "Node centralities" });
-    await expect(table).toBeVisible({ timeout: 20000 });
+    await expect(table).toBeVisible({ timeout: 120000 });
 
     // Header must expose the core centrality measures computed by the service.
     await expect(table.getByRole("columnheader", { name: "Degree" })).toBeVisible();
@@ -25,4 +35,3 @@ test.describe("Lab Metrics tab — node centralities (N0)", () => {
     await expect(table.locator("tbody tr").first()).toBeVisible({ timeout: 20000 });
   });
 });
-

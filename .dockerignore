@@ -1,0 +1,101 @@
+# ---- Version control ----
+.git
+.github
+.gitignore
+
+# ---- Python environments ----
+.venv
+__pycache__
+*.pyc
+*$py.class
+*.egg-info
+.pytest_cache
+.mypy_cache
+.dmypy.json
+.pyre
+.pytype
+cython_debug
+
+# ---- Node / Frontend build artifacts ----
+node_modules
+.next
+SocialScienceResearch/ui/node_modules
+SocialScienceResearch/ui/.next
+SocialScienceResearch/ui/pnpm-lock.yaml
+
+# ---- Logs & scratch ----
+*.log
+*.log.err
+*.out
+*.err
+debug_out.txt
+out.txt
+diff_*.txt
+graph.png
+identity_graph.png
+intelligence_graph.png
+SocialScienceResearch/debug*-screenshot.png
+agent.page.html
+*.res
+
+# ---- Local data (mounted at runtime, not baked in) ----
+data/
+outputs/
+intelligence_data/
+test-results/
+.playwright-mcp
+TestingOutputMdFiles/
+CodingPlans/
+TempTests/
+
+# ---- Vendored external repos ----
+GPT-Researcher-Original/
+OpenGenerativeUI/
+
+# ---- Debug / scratch scripts ----
+.check_env.py
+.venv_check_tavily.py
+.run_audience_debug.py
+debug_yt_dlp*.py
+debug*.py
+tmp_*.py
+temp_fix.py
+compare_diff.py
+quick_test.py
+test_mcp*.py
+test_retrievers_config.py
+test_wrapper_expansion.py
+test_gdelt*.py
+test_socialcrawl_tools.py
+test_youtube_research_integration.py
+test_scraper_integration.py
+test_recommendation_service.py
+run_tests.py
+
+# ---- Docker files (not needed inside image) ----
+docker-compose.yml
+docker-compose.dev.yml
+docker-compose.prod.yml
+Dockerfile*
+DOCKERIZATION_PLAN.md
+
+# ---- Documentation ----
+docs/
+site/
+mkdocs.yml
+*.md
+!README.md
+
+# ---- IDE / editor ----
+.vscode
+.idea
+
+# ---- Other ----
+.playwright-mcp
+SocialScienceResearch/ui/scripts/pw_*.mjs
+SocialScienceResearch/ui/cpk-install.*
+SocialScienceResearch/ui/nextdev.*
+SocialScienceResearch/ui/ui.dev.*
+SocialScienceResearch/ui/agent.page.html
+SocialScienceResearch/ui/serve.pid
+RetrievalPipeline/agent-ui/

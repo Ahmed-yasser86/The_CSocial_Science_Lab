@@ -1,0 +1,71 @@
+# =============================================================================
+# Dockerfile.frontend — Multi-stage build for Next.js 16
+# =============================================================================
+# Stage 1: Install deps + build
+# Stage 2: Production runtime server
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Builder
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency manifests first for layer caching
+COPY SocialScienceResearch/ui/package.json SocialScienceResearch/ui/package-lock.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY SocialScienceResearch/ui/ ./
+
+# NEXT_PUBLIC_* vars are embedded at build time
+# NEXT_PUBLIC_AGENT_BACKEND_URL and NEXT_PUBLIC_API_URL point to the backend
+ARG NEXT_PUBLIC_AGENT_BACKEND_URL=http://localhost:8000
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1/social-science
+
+ENV NEXT_PUBLIC_AGENT_BACKEND_URL=${NEXT_PUBLIC_AGENT_BACKEND_URL} \
+    NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+# Build Next.js
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 2: Production runtime
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS runtime
+
+WORKDIR /app
+
+# Copy package manifest
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json ./
+
+# Copy node_modules (needed for production server without standalone output)
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy build output
+COPY --from=builder /app/.next ./.next
+
+# Copy public assets
+COPY --from=builder /app/public ./public
+
+# Copy next config (needed at runtime for rewrites)
+COPY --from=builder /app/next.config.ts ./
+COPY --from=builder /app/tsconfig.json ./
+
+# Runtime environment variables for rewrites (read at server start)
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME="0.0.0.0" \
+    BACKEND_URL=http://backend:8000 \
+    AGENT_BACKEND_URL=http://backend:8000
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget --spider -q http://localhost:3000 || exit 1
+
+CMD ["npm", "start"]

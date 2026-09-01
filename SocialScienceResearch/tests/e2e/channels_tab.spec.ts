@@ -1,7 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3000';
 const API = process.env.API_URL ?? 'http://localhost:8000/api/v1/social-science';
+const VALID_RUN = 'run_20260829_183703_4ca0fcc7';
+
+async function gotoLab(page: Page, runId = VALID_RUN) {
+  await page.addInitScript(
+    (id: string) => {
+      localStorage.setItem('ssr-lab-session', JSON.stringify({ runId: id, tab: 'channels' }));
+    },
+    runId,
+  );
+  await page.goto(`${BASE_URL}/network/full`);
+  await page.waitForLoadState('load');
+}
 
 /**
  * Channels tab (Lab) E2E. Requires the UI + API to be running against the
@@ -38,8 +50,7 @@ test.describe('Channels tab', () => {
   test('Channels tab renders search and a channel list or empty state', async ({
     page,
   }) => {
-    await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('load');
+    await gotoLab(page);
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     await expect(
@@ -58,8 +69,7 @@ test.describe('Channels tab', () => {
 
   test('Channel search filters by name', async ({ page }) => {
     test.skip(!seededChannelTitle, 'No seeded channel title available');
-    await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('load');
+    await gotoLab(page);
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     const search = page.getByRole('textbox', { name: 'Search channels' });
@@ -75,8 +85,7 @@ test.describe('Channels tab', () => {
     page,
   }) => {
     test.skip(!seededChannelId, 'No seeded channel available');
-    await page.goto(`${BASE_URL}/network/full`);
-    await page.waitForLoadState('load');
+    await gotoLab(page);
     await page.getByRole('tab', { name: 'Channels' }).click();
 
     const row = page

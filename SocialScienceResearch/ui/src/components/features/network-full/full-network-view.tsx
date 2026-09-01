@@ -255,12 +255,12 @@ export function FullNetworkView() {
   }, []);
 
   // Default-run selection (B'): when no Lab run is explicitly chosen (a fresh
-  // session with no restored resumable state) pick the most recent *successful*
-  // run so the Lab tabs (centralities, layers, matrices, roles, …) have a scope
-  // to compute against instead of the whole corpus — computing over all runs is
-  // too slow to render. We skip `failed`/`partial`/empty runs (e.g. the most
-  // recent run is often a failed scrape with no graph). Gated on `hydrated` so
-  // it never overrides a restored resumable session.
+  // session with no restored resumable state) pick the *largest* successful run
+  // (by entities_succeeded) so the Lab tabs (echo, layers, channels, centralities,
+  // matrices, …) have enough graph data to render. The most recent successful
+  // run is often tiny (e.g. 4 nodes), which leaves echo-verdict and channel
+  // popovers empty. Gated on `hydrated` so it never overrides a restored
+  // resumable session.
   useEffect(() => {
     if (!hydrated || runId || !runsQuery.data) return;
     const candidates = (
@@ -276,7 +276,12 @@ export function FullNetworkView() {
           r.status === "success" ||
           (r.entities_succeeded ?? 0) > 0,
       )
-      .sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""));
+      .sort((a, b) => {
+        const ea = a.entities_succeeded ?? 0;
+        const eb = b.entities_succeeded ?? 0;
+        if (eb !== ea) return eb - ea;
+        return (b.started_at ?? "").localeCompare(a.started_at ?? "");
+      });
     if (candidates.length === 0) return;
     setRunId(candidates[0].run_id);
   }, [hydrated, runId, runsQuery.data]);

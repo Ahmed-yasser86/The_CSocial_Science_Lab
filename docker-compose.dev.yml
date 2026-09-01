@@ -1,0 +1,40 @@
+
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: builder  # Stay in builder stage for editable installs
+    volumes:
+      # Source code (hot reload)
+      - ./SocialScienceResearch:/app/SocialScienceResearch
+      - ./RetrievalPipeline:/app/RetrievalPipeline
+      - ./Ingestion_Pipline:/app/Ingestion_Pipline
+      - ./gpt-researcher:/app/gpt-researcher
+      # Config + data
+      - ./.env:/app/.env
+      - ./data:/app/data
+      - ./intelligence_data:/app/intelligence_data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SOCIAL_API_HOST=0.0.0.0
+    ports:
+      - "8000:8000"
+    command: >
+      uvicorn SocialScienceResearch.api:create_app
+      --factory --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    volumes:
+      # Source code (hot reload)
+      - ./SocialScienceResearch/ui/src:/app/src
+      - ./SocialScienceResearch/ui/public:/app/public
+    environment:
+      - NEXT_PUBLIC_AGENT_BACKEND_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1/social-science
+    command: ["npm", "run", "dev"]
+
+  postgres:
+    ports:
+      - "5432:5432"

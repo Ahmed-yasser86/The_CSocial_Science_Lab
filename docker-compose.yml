@@ -1,20 +1,121 @@
+# =============================================================================
+# docker-compose.yml — Base Compose configuration
+# =============================================================================
+# Usage:
+#   Development:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#   Quick start:  docker compose up (uses defaults below)
+# =============================================================================
+
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — Social science data persistence
+  # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:16
-    container_name: social_science_db
+    image: postgres:16-alpine
+    container_name: graphrag-postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
       POSTGRES_DB: social_science
-    ports:
-      - "5432:5432"
     volumes:
-      - social_science_pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d social_science"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    networks:
+      - graphrag-net
+
+  # ---------------------------------------------------------------------------
+  # Backend — Python monolith (FastAPI + yt-dlp + LangGraph + ingestion)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: graphrag-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      SOCIAL_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-123456}@postgres:5432/social_science
+      # API
+      SOCIAL_API_HOST: "0.0.0.0"
+      SOCIAL_API_PORT: "8000"
+      SOCIAL_CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      # Qdrant (external — point to your Qdrant instance)
+      QDRANT_URL: ${QDRANT_URL:-http://localhost:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION_NAME: ${QDRANT_COLLECTION_NAME:-DocumentHelper}
+      # LLM / Embedding providers (pass through from .env)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      STRATEGIC_LLM: ${STRATEGIC_LLM:-}
+      SMART_LLM: ${SMART_LLM:-}
+      FAST_LLM: ${FAST_LLM:-}
+      CHAT_MODEL_PROVIDER: ${CHAT_MODEL_PROVIDER:-}
+      CHAT_MODEL: ${CHAT_MODEL:-}
+      EMBEDDING: ${EMBEDDING:-}
+      GPT_RESEARCHER_EMBEDDING: ${GPT_RESEARCHER_EMBEDDING:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-}
+      RETRIEVER: ${RETRIEVER:-tavily}
+      FREETRANSCRIPTAPI_KEY: ${FREETRANSCRIPTAPI_KEY:-}
+      MCP_API_KEY: ${MCP_API_KEY:-}
+      GDELT_MCP_API_KEY: ${GDELT_MCP_API_KEY:-}
+      SOCIALCRAWL_MCP_API_KEY: ${SOCIALCRAWL_MCP_API_KEY:-}
+      # Scraping
+      SOCIAL_PROXY: ${SOCIAL_PROXY:-}
+      SOCIAL_SAMPLING_SEED: ${SOCIAL_SAMPLING_SEED:-42}
+    volumes:
+      - pgdata-persisted:/app/data
+      - intelligence_data:/app/intelligence_data
+    networks:
+      - graphrag-net
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Frontend — Next.js 16
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_AGENT_BACKEND_URL: ${NEXT_PUBLIC_AGENT_BACKEND_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1/social-science}
+    container_name: graphrag-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_URL: http://backend:8000
+      AGENT_BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    networks:
+      - graphrag-net
+    restart: unless-stopped
 
 volumes:
-  social_science_pgdata:
+  pgdata:
+    name: graphrag-pgdata
+  pgdata-persisted:
+    name: graphrag-data
+  intelligence_data:
+    name: graphrag-intelligence
+
+networks:
+  graphrag-net:
+    driver: bridge
