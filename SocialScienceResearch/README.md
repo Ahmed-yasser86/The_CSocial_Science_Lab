@@ -9,10 +9,10 @@ persists it to support longitudinal, quantitative social-science research.
 ## Key Achievements
 
 ### Performance
-- **12x faster video enrichment** via YouTube `/next` API bypass (2.8s vs 33s per video)
-- **Multi-layer crawling**: 2+ layers, 6,500+ videos, 0 failures in 1 hour
-- **Zero rate-limit blocks**: AIMD-based BudgetController with circuit breaker, speed presets (fast/balanced/careful), and priority task queue
-- **Fast `/next` extraction**: parses `videoPrimaryInfoRenderer` + `videoSecondaryInfoRenderer` directly, eliminating full yt-dlp pipeline overhead
+- **Video enrichment: 33s → 2.8s (~12x faster)** — bypasses full yt-dlp pipeline via YouTube `/next` API, parsing `videoPrimaryInfoRenderer` + `videoSecondaryInfoRenderer` directly
+- **collect/recommendations endpoint: 90s+ timeout → 38s** — skips per-target enrichment with `enrich=False`, creates stubs instead
+- **Multi-layer crawling**: 2+ layers, 6,500+ videos, 0 failures, 0 rate-limit blocks in 1 hour
+- **Advanced rate limiting**: AIMD-based BudgetController (self-tuning throttle), CircuitBreaker, YtdlContextLimiter (4 concurrent), PriorityTaskQueue, speed presets (fast/balanced/careful)
 
 ### Reliability
 - **939/939 unit tests passing** + 71/71 E2E tests
