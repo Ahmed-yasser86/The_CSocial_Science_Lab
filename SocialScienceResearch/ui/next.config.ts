@@ -6,6 +6,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // Increase the proxy timeout for slow backend requests (e.g. proxy self-test
+  // which goes through an external residential proxy).
+  experimental: {
+    proxyTimeout: 120_000,
+  },
   // Next 16 dev serves scripts/module chunks with the crossorigin attribute,
   // so their requests carry an Origin header. Requests whose Origin is not in
   // this allowlist get 403 (hydration silently never runs). Allow the IPv4

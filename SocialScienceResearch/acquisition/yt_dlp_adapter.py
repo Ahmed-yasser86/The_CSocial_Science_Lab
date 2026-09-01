@@ -13,6 +13,25 @@ network/rate-limit failures are retried via the tenacity policy.
 
 from __future__ import annotations
 
+import codecs
+import io
+import locale
+import sys
+
+# Force UTF-8 stdout/stderr on Windows to prevent charmap crashes
+# when yt-dlp encounters non-Latin video titles (e.g. Arabic, Japanese).
+if sys.platform == "win32":
+    for _stream_name in ("stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream is not None and hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+    # Patch the locale encoding to prefer UTF-8 as well.
+    if hasattr(locale, "getencoding"):
+        locale.getencoding = lambda: "utf-8"  # type: ignore[assignment]
+
 import html
 import os
 import re
@@ -727,6 +746,12 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         """
         opts = self._base_opts()
         opts["write_pages"] = True
+        # Skip webpage download — the page-dump only needs the INNERTUBE
+        # /next response (which yt-dlp fetches regardless).  Skipping the
+        # full HTML page avoids the heaviest network request and the
+        # visionos/android_vr client attempts that cause GetPOT warnings.
+        yt_args = opts.setdefault("extractor_args", {}).setdefault("youtube", {})
+        yt_args["player_skip"] = ["webpage", "configs"]
         with tempfile.TemporaryDirectory(prefix="ssr_upnext_") as tmp:
             with _PAGE_DUMP_LOCK:
                 with _temporary_cwd(tmp):
@@ -891,15 +916,25 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
+            "ignore_no_formats_error": True,
             "socket_timeout": self._settings.socket_timeout,
             "logger": _YtDlpLogger(),
             "extractor_retries": 0,  # retries handled by our tenacity policy
-            # Channel tabs to fetch via the youtubetab extractor (used as the
-            # default feed when a channel/tab URL is extracted).
+            # YouTube extractor args: optimised for metadata-only extraction.
+            # - player_client: web only — fastest client, works with GetPOT,
+            #   no hanging on page reload (tv_downgraded) or slow fallbacks
+            #   (visionos/android_vr). ignore_no_formats_error handles the
+            #   "only images available" case gracefully.
+            # - skip=hls,dash: skip HLS/DASH manifest fetching — we only need
+            #   metadata + recommendations, not stream URLs.
             "extractor_args": {
+                "youtube": {
+                    "player_client": ["web"],
+                    "skip": ["hls", "dash"],
+                },
                 "youtubetab": {
                     "tab": list(self._collection.video_tabs or ["videos", "shorts"])
-                }
+                },
             },
         }
         # Modern YouTube extraction needs a JS runtime for challenge solving;

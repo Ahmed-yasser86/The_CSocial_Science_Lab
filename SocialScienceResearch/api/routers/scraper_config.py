@@ -92,100 +92,75 @@ def update_proxy_config(request: Request, body: ProxyConfigPayload) -> dict[str,
     tags=["scraper"],
 )
 def test_proxy(request: Request) -> dict[str, Any]:
-    """Verify the proxy works by requesting the egress IP through it.
+    """Verify the proxy works by requesting the egress IP through it."""
+    try:
+        config = _get_runtime_config(request)
+        if config is None:
+            return {"ok": False, "error": "Proxy configuration not initialised on the server"}
+        url = config.proxy_url()
+        if not url:
+            return {"ok": False, "error": "Proxy is not enabled/configured"}
+        proxies = {"http": url, "https": url}
 
-    Tries the Decodo egress check first, then falls back to a neutral IP
-    checker so a restriction on Decodo's own domain doesn't mask a working
-    proxy. Residential proxies can be slow to warm up, so the read timeout is
-    generous.
-    """
-    config = _get_runtime_config(request)
-    if config is None:
-        return {"ok": False, "error": "Proxy configuration not initialised on the server"}
-    url = config.proxy_url()
-    if not url:
-        return {"ok": False, "error": "Proxy is not enabled/configured"}
-    proxies = {"http": url, "https": url}
-
-    def _try(label: str, target: str, expect_json: bool = True) -> dict[str, Any]:
-        try:
-            resp = requests.get(
-                target,
-                proxies=proxies,
-                timeout=(20, 90),
-                verify=config.proxy_verify,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            ok = resp.status_code < 400
-            return {
-                "label": label,
-                "ok": ok,
-                "status_code": resp.status_code,
-                "body": resp.json() if (expect_json and resp.headers.get("content-type", "").startswith("application/json")) else resp.text[:400],
-            }
-        except Exception as exc:  # noqa: BLE001 - report any failure to the UI
-            msg = str(exc)
-            if "timed out" in msg:
-                reason = (
-                    "proxy too slow or unreachable - residential proxies can take "
-                    ">30s to allocate an egress IP; increase patience or check the host/port"
+        def _try(label: str, target: str, expect_json: bool = True) -> dict[str, Any]:
+            try:
+                resp = requests.get(
+                    target,
+                    proxies=proxies,
+                    timeout=(10, 30),
+                    verify=config.proxy_verify,
+                    headers={"User-Agent": "Mozilla/5.0"},
                 )
-            elif "10054" in msg or "ConnectionReset" in type(exc).__name__ or "Connection aborted" in msg:
-                reason = (
-                    "proxy reset the connection - Decodo rejected it, almost always "
-                    "bad credentials, wrong username format, or an inactive plan"
-                )
-            elif "407" in msg or "Proxy Authentication" in msg:
-                reason = "proxy returned 407 - credentials rejected"
-            else:
-                reason = "request through the proxy failed"
-            return {"label": label, "ok": False, "error": msg, "reason": reason}
+                ok = resp.status_code < 400
+                return {
+                    "label": label,
+                    "ok": ok,
+                    "status_code": resp.status_code,
+                    "body": resp.json() if (expect_json and resp.headers.get("content-type", "").startswith("application/json")) else resp.text[:400],
+                }
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                if "timed out" in msg:
+                    reason = "proxy too slow or unreachable"
+                elif "10054" in msg or "ConnectionReset" in type(exc).__name__ or "Connection aborted" in msg:
+                    reason = "proxy rejected connection - bad credentials or inactive plan"
+                elif "407" in msg or "Proxy Authentication" in msg:
+                    reason = "proxy returned 407 - credentials rejected"
+                else:
+                    reason = "request through the proxy failed"
+                return {"label": label, "ok": False, "error": msg, "reason": reason}
 
-    # Validate against the REAL target (YouTube) routed through the proxy, not
-    # Decodo's own meta endpoint - that is what the proxy is actually for.
-    youtube = _try(
-        "youtube",
-        "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=Ca4fjWgPrwI&format=json",
-    )
+        youtube = _try(
+            "youtube",
+            "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=Ca4fjWgPrwI&format=json",
+        )
 
-    # Best-effort egress-IP reporting. IP-echo services are frequently blocked
-    # or slowed by residential proxies, so we try a few and only surface the IP
-    # when one actually answers. A null egress_ip is NOT a failure - the
-    # YouTube check above is the real signal that the proxy egress works.
-    import re as _re
-
-    _ip_re = _re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-    egress_probes = [
-        ("ipify", "https://api.ipify.org?format=json", True),
-        ("ifconfig.me", "https://ifconfig.me/ip", False),
-        ("ipinfo.io", "https://ipinfo.io/ip", False),
-    ]
-    egress_results: list[dict[str, Any]] = []
-    reported_ip = None
-    for label, target, is_json in egress_probes:
-        res = _try(label, target, expect_json=is_json)
-        egress_results.append(res)
-        if reported_ip is None and res.get("ok"):
-            body = res.get("body")
-            if isinstance(body, dict) and body.get("ip"):
-                reported_ip = str(body["ip"])
-            elif isinstance(body, str):
-                m = _ip_re.search(body.strip())
-                if m:
-                    reported_ip = m.group(0)
-    return {
-        "ok": youtube["ok"] or any(r.get("ok") for r in egress_results),
-        "egress_ip": reported_ip,
-        "egress_note": (
-            None
-            if reported_ip
-            else "Egress IP not reported (IP-echo services are often blocked by "
-            "residential proxies) - but YouTube was reached through the proxy, "
-            "which is what matters."
-        ),
-        "youtube": youtube,
-        "egress_checks": egress_results,
-    }
+        import re as _re
+        _ip_re = _re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+        egress_probes = [
+            ("ipify", "https://api.ipify.org?format=json", True),
+        ]
+        egress_results: list[dict[str, Any]] = []
+        reported_ip = None
+        for label, target, is_json in egress_probes:
+            res = _try(label, target, expect_json=is_json)
+            egress_results.append(res)
+            if reported_ip is None and res.get("ok"):
+                body = res.get("body")
+                if isinstance(body, dict) and body.get("ip"):
+                    reported_ip = str(body["ip"])
+                elif isinstance(body, str):
+                    m = _ip_re.search(body.strip())
+                    if m:
+                        reported_ip = m.group(0)
+        return {
+            "ok": youtube["ok"] or any(r.get("ok") for r in egress_results),
+            "egress_ip": reported_ip,
+            "youtube": youtube,
+            "egress_checks": egress_results,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"proxy test failed: {exc}"}
 
 
 @router.get(

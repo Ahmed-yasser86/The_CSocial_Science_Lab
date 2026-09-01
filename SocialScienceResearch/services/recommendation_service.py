@@ -77,6 +77,7 @@ class RecommendationService(CollectionService):
         layer_index: int | None = None,
         max_recommendations_per_video: int | None = None,
         reporter: ProgressReporter | None = None,
+        enrich: bool = True,
     ) -> CollectionResult:
         """Collect the source video plus its observable recommendations.
 
@@ -164,6 +165,7 @@ class RecommendationService(CollectionService):
             layer_index=layer_index,
             max_recommendations_per_video=max_recommendations_per_video,
             reporter=reporter,
+            enrich=enrich,
         )
 
     # ------------------------------------------------------------------
@@ -434,6 +436,7 @@ class RecommendationService(CollectionService):
         max_recommendations_per_video: int | None = None,
         reporter: ProgressReporter | None,
         pending_targets: dict[str, dict[str, Any]] | None = None,
+        enrich: bool = True,
     ) -> CollectionResult:
         """Persist one video's recommendation outcome + run + dataset.
 
@@ -599,9 +602,20 @@ class RecommendationService(CollectionService):
             targets = self._collect_recommendation_targets(edges, run)
             for video_id, marker in targets.items():
                 pending_targets[video_id] = marker
-        else:
-            # Single-video path: enrich on the spot (this run only).
+        elif enrich:
+            # Single-video path with enrichment: deep-enrich on the spot.
             self._persist_recommended_targets(edges, run)
+        else:
+            # Fast path: persist stubs only (no per-target extraction).
+            targets = self._collect_recommendation_targets(edges, run)
+            for video_id, marker in targets.items():
+                marker["_discovery"]["stub"] = True
+                try:
+                    self._repos.videos.upsert_video(
+                        self._make_stub_video(video_id, run.run_id, marker)
+                    )
+                except Exception:
+                    logger.debug("Failed to persist stub %s", video_id)
 
         dataset_id = self._persist_run_dataset(
             run,
@@ -910,6 +924,32 @@ class RecommendationService(CollectionService):
                 video_id,
                 exc,
             )
+
+    @staticmethod
+    def _make_stub_video(video_id: str, run_id: str, marker: dict) -> Any:
+        """Create a minimal Video row for a recommendation stub.
+
+        Used by the fast (non-enriched) path so that crawl-next-layer can
+        still discover targets without the expensive per-video extraction.
+        """
+        from SocialScienceResearch.models import Video
+
+        return Video(
+            video_id=video_id,
+            title=None,
+            channel_id=None,
+            duration=None,
+            view_count=None,
+            like_count=None,
+            comment_count=None,
+            upload_date=None,
+            description=None,
+            tags=None,
+            categories=None,
+            raw_json=marker,
+            first_observed_run_id=run_id,
+            recommendations_scraped=False,
+        )
 
     def _fetch_target_video(
         self, video_id: str, run_id: str | None = None

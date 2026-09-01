@@ -38,7 +38,8 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv()
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(_ROOT_DIR, ".env"), override=True)
 
 # Make the Graph package importable (it uses flat relative imports).
 GRAPH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Graph")

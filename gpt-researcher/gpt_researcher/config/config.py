@@ -10,6 +10,26 @@ import os
 import warnings
 from typing import Any, Dict, List, Type, Union, get_args, get_origin
 
+# Aggressively load .env from repo root so FAST_LLM / SMART_LLM etc. are always
+# available regardless of CWD or import order.
+def _load_root_env():
+    """Walk up from this file to find and load the repo-root .env."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):  # max 8 levels up
+        candidate = os.path.join(d, ".env")
+        if os.path.isfile(candidate):
+            with open(candidate) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip()
+                        os.environ[k] = v
+            return
+        d = os.path.dirname(d)
+
+_load_root_env()
+
 from gpt_researcher.llm_provider.generic.base import ReasoningEfforts
 
 from .variables.base import BaseConfig

@@ -718,6 +718,17 @@ class SqlCollectionRunRepository(_SqlEntityRepository, CollectionRunRepository):
             _params(run),
         )
 
+    def reconcile_stale_running(self, message: str) -> int:
+        """Mark any 'running' or 'pending' runs as 'failed' on startup."""
+        rows = self._db.fetchall(
+            'UPDATE "collection_runs" '
+            'SET "status" = %(status)s, "error" = %(msg)s, '
+            '"finished_at" = NOW() '
+            'WHERE "status" IN (%(p)s, %(r)s) RETURNING "run_id"',
+            {"status": "failed", "msg": message, "p": "pending", "r": "running"},
+        )
+        return len(rows) if rows else 0
+
     def get_run(self, run_id: str) -> CollectionRun | None:
         return self._get(run_id)  # type: ignore[return-value]
 

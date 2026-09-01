@@ -40,7 +40,7 @@ from Nodes import (
 from persistence import get_store, new_session_id, get_data_dir
 
 # Load environment variables
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"), override=True)
 
 # Constants
 IDENTITY_RESEARCH = "identity_research"

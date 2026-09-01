@@ -351,13 +351,13 @@ def build_services(
     try:
 
         repos.jobs.reconcile_stale_running(
-
             "interrupted: the server restarted while this job was active"
-
+        )
+        repos.runs.reconcile_stale_running(
+            "interrupted: the server restarted while this run was active"
         )
 
     except Exception:  # noqa: BLE001 - persistence is best-effort at boot
-
         pass
 
     if jobs_manager is None:
@@ -1508,6 +1508,25 @@ def create_app(
 
         _asyncio.get_event_loop().run_in_executor(None, _warm)
 
+        # Start the bgutil PO Token server if available (needed for YouTube
+        # bot-detection bypass).  Best-effort: if the server is already
+        # running or the directory is missing, skip silently.
+        import subprocess as _sp, shutil as _shutil, pathlib as _pathlib
+
+        _bgutil_dir = _pathlib.Path.home() / "bgutil-ytdlp-pot-provider" / "server"
+        _node = _shutil.which("node")
+        if _node and (_bgutil_dir / "build" / "main.js").exists():
+            try:
+                _sp.Popen(
+                    [_node, "build/main.js"],
+                    cwd=str(_bgutil_dir),
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+                    stdout=_sp.DEVNULL,
+                    stderr=_sp.DEVNULL,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
         yield
 
         services["repos"].store.close()
@@ -1896,7 +1915,7 @@ def create_app(
 
         return _collection_payload(
 
-            services["recommendations"].collect_recommendations(body.url)
+            services["recommendations"].collect_recommendations(body.url, enrich=False)
 
         )
 
