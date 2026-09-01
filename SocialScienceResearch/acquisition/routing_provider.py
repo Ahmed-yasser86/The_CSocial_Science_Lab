@@ -49,5 +49,8 @@ class RoutingAcquisitionProvider(AcquisitionProvider):
     def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         return self._ytdlp.extract_video(video_url, include_comments=include_comments)
 
+    def extract_video_fast(self, video_url: str) -> dict[str, Any] | None:
+        return self._ytdlp.extract_video_fast(video_url)
+
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
         return self._ytdlp.extract_recommendations(video_url)

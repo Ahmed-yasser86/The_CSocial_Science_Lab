@@ -66,6 +66,15 @@ class AcquisitionProvider(ABC):
     def extract_video(self, video_url: str, *, include_comments: bool | None = None) -> dict[str, Any]:
         """Extract raw full metadata for a single video (with comments when configured)."""
 
+    def extract_video_fast(self, video_url: str) -> dict[str, Any] | None:
+        """Lightweight metadata extraction (no comments, no full format solving).
+
+        Returns a dict compatible with ``normalize_video`` on success, or
+        ``None`` when the fast path is unavailable or fails.  Callers should
+        fall back to ``extract_video`` when this returns ``None``.
+        """
+        return None
+
     @abstractmethod
     def extract_recommendations(self, video_url: str) -> list[dict[str, Any]]:
         """Extract raw recommendation entries for a video.

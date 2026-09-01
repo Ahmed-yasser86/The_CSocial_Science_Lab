@@ -956,13 +956,23 @@ class RecommendationService(CollectionService):
     ) -> dict[str, Any]:
         """Network phase for deep-enriching one recommended target.
 
-        Runs on a worker thread: only the rate-limited ``extract_video`` call
-        happens here; persistence and error recording stay on the caller
-        thread so the store is never written concurrently.
+        Runs on a worker thread: tries the fast /next API first (1-3s),
+        falls back to full yt-dlp extraction (~33s) on failure. Persistence
+        and error recording stay on the caller thread.
         """
+        url = _watch_url(video_id)
+        # Fast path: direct /next API (1-3s, no comments)
         try:
             with run_context(run_id):
-                info = self._provider.extract_video(_watch_url(video_id))
+                info = self._provider.extract_video_fast(url)
+            if info is not None:
+                return {"video_id": video_id, "info": info, "error": None}
+        except Exception:  # noqa: BLE001
+            pass
+        # Slow path: full yt-dlp extraction
+        try:
+            with run_context(run_id):
+                info = self._provider.extract_video(url)
         except AcquisitionError as exc:
             return {"video_id": video_id, "info": None, "error": exc}
         return {"video_id": video_id, "info": info, "error": None}

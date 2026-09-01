@@ -12,6 +12,9 @@ It assumes the overhaul's lineage work is present (`CollectionRun.parent_run_id`
 `run.config_json["trigger"]`, `collect_recommendations_for_videos`,
 `POST /network/scrape/{video,run,channel}`) — all confirmed in the tree.
 
+> **Performance updates:** See `docs/OPTIMIZATIONS.md` for the fast `/next` extraction
+> path that makes crawl-next-layer ~12x faster (2.8s/video vs 33s/video).
+
 ---
 
 ## 0. Feature statement (restated precisely)

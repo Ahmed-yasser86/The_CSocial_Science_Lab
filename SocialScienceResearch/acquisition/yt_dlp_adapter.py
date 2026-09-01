@@ -33,6 +33,7 @@ if sys.platform == "win32":
         locale.getencoding = lambda: "utf-8"  # type: ignore[assignment]
 
 import html
+import json
 import os
 import re
 import shutil
@@ -613,6 +614,158 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         info.setdefault("duration", None)
         return info
 
+    def extract_video_fast(self, video_url: str) -> dict[str, Any] | None:
+        """Lightweight extraction via /next API (1-3s vs ~33s yt-dlp).
+
+        Returns None on any failure so callers fall back to ``extract_video``.
+        """
+        try:
+            return self._extract_video_via_next(video_url)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("fast /next extraction failed for %s: %s", video_url, exc)
+            return None
+
+    def _extract_video_via_next(self, video_url: str) -> dict[str, Any]:
+        """Fast metadata extraction using YouTube's /next API directly.
+
+        Bypasses the full yt-dlp pipeline (no player JS, no format solving,
+        no PO Token negotiation).  Takes 1-3s vs ~33s for ``_extract_video``.
+
+        Returns a dict compatible with ``normalize_video`` / ``normalize_video_observation``.
+        Raises ``AcquisitionError`` on failure so callers can fall back to
+        the full yt-dlp path.
+        """
+        video_id = _video_id_from_url(video_url)
+        if not video_id:
+            raise InvalidURLError(f"Cannot extract video ID from URL: {video_url}")
+
+        api_key = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+        next_url = f"https://www.youtube.com/youtubei/v1/next?key={api_key}&prettyPrint=false"
+        payload = json.dumps({
+            "videoId": video_id,
+            "context": {
+                "client": {
+                    "clientName": "WEB",
+                    "clientVersion": "2.20250101.00.00",
+                    "hl": "en",
+                    "gl": "US",
+                }
+            },
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            next_url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Origin": "https://www.youtube.com",
+                "Referer": "https://www.youtube.com/",
+            },
+        )
+        proxy_url = self._resolve_proxy()
+        if proxy_url:
+            handler = urllib.request.ProxyHandler({"https": proxy_url})
+            opener = urllib.request.build_opener(handler)
+        else:
+            opener = urllib.request.build_opener()
+
+        with opener.open(req, timeout=self._settings.socket_timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+
+        return self._parse_next_response(data, video_id)
+
+    @staticmethod
+    def _parse_next_response(data: dict, video_id: str) -> dict[str, Any]:
+        """Parse a /next API response into a normalize_video-compatible dict."""
+        result: dict[str, Any] = {
+            "id": video_id,
+            "video_id": video_id,
+            "webpage_url": f"https://www.youtube.com/watch?v={video_id}",
+        }
+
+        contents = data.get("contents", {})
+        two_col = contents.get("twoColumnWatchNextResults", {})
+        results = two_col.get("results", {}).get("results", {})
+        primary_items = results.get("contents", [])
+
+        # --- primary info (title, views, likes, date) ---
+        primary = None
+        for item in primary_items:
+            if "videoPrimaryInfoRenderer" in item:
+                primary = item["videoPrimaryInfoRenderer"]
+                break
+
+        if primary:
+            # title
+            title_obj = primary.get("title", {})
+            if isinstance(title_obj, dict):
+                runs = title_obj.get("runs", [])
+                result["title"] = "".join(r.get("text", "") for r in runs) if runs else title_obj.get("simpleText")
+            else:
+                result["title"] = str(title_obj) if title_obj else None
+
+            # view count
+            vc = primary.get("viewCount", {})
+            if isinstance(vc, dict):
+                vcr = vc.get("videoViewCountRenderer", {})
+                vt = vcr.get("viewCount", {})
+                vs = vt.get("simpleText", "")
+                if vs:
+                    result["view_count"] = _parse_count(vs)
+                else:
+                    svt = vcr.get("shortViewCount", {})
+                    result["view_count"] = _parse_count(svt.get("simpleText", ""))
+
+            # like count
+            topr = primary.get("videoActions", {}).get("menuRenderer", {}).get("topLevelButtons", [])
+            for btn in topr:
+                seg = btn.get("segmentedLikeDislikeButtonViewModel", {})
+                like_btn = seg.get("likeButtonViewModel", {}).get("likeButtonViewModel", {})
+                toggle = like_btn.get("toggleButtonViewModel", {}).get("toggleButtonViewModel", {})
+                default = toggle.get("defaultButtonViewModel", {}).get("buttonViewModel", {})
+                text = default.get("title", "")
+                if text:
+                    result["like_count"] = _parse_count(text)
+                    break
+
+            # date
+            date_text = primary.get("dateText", {})
+            result["upload_date"] = date_text.get("simpleText") if isinstance(date_text, dict) else None
+
+        # --- secondary info (channel) ---
+        secondary = None
+        for item in primary_items:
+            if "videoSecondaryInfoRenderer" in item:
+                secondary = item["videoSecondaryInfoRenderer"]
+                break
+
+        if secondary:
+            owner = secondary.get("owner", {}).get("videoOwnerRenderer", {})
+            # channel name
+            cn = owner.get("title", {})
+            if isinstance(cn, dict):
+                runs = cn.get("runs", [])
+                result["channel"] = runs[0].get("text") if runs else cn.get("simpleText")
+            # channel ID
+            browse_ep = owner.get("navigationEndpoint", {}).get("browseEndpoint", {})
+            cid = browse_ep.get("browseId", "")
+            if cid:
+                result["channel_id"] = cid
+
+            # subscriber count
+            sub_text = owner.get("subscriberCountText", {})
+            if isinstance(sub_text, dict):
+                result["channel_follower_count"] = _parse_count(sub_text.get("simpleText", ""))
+
+        # thumbnail
+        thumbs = two_col.get("results", {}).get("results", {}).get("contents", [])
+        # Try primary info thumbnail first
+        vp = primary_items[0].get("videoPrimaryInfoRenderer", {}) if primary_items else {}
+        result["thumbnail"] = None  # /next doesn't always include thumbnail directly
+
+        return result
+
     def get_video_metadata(self, video_id: str) -> dict[str, Any]:
         """Fetch metadata for a single video using yt-dlp."""
         video_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -978,6 +1131,24 @@ class YtDlpAcquisitionProvider(AcquisitionProvider):
         if self._settings.impersonate:
             opts["impersonate"] = self._settings.impersonate
         return opts
+
+
+def _parse_count(text: str) -> int | None:
+    """Parse a YouTube count string like '1.2M views' or '1,234' into an int."""
+    if not text:
+        return None
+    text = text.strip().lower().replace(",", "").replace(" views", "").replace(" view", "")
+    multipliers = {"k": 3, "m": 6, "b": 9}
+    for suffix, exp in multipliers.items():
+        if text.endswith(suffix):
+            try:
+                return int(float(text[:-1]) * (10 ** exp))
+            except (ValueError, OverflowError):
+                return None
+    try:
+        return int(text)
+    except (ValueError, TypeError):
+        return None
 
 
 _CUE_LINE = re.compile(r"\d{1,2}:\d{2}(:\d{2})?[.,]\d{3}\s*-->\s*\d{1,2}:\d{2}(:\d{2})?[.,]\d{3}")

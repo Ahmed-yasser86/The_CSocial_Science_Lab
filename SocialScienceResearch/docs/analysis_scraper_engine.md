@@ -4,6 +4,10 @@
 **Root:** `SocialScienceResearch`
 **Relevant code:** `acquisition/yt_dlp_adapter.py`, `acquisition/normalization.py`, `acquisition/retry.py`, `acquisition/errors.py`, `services/collection_service.py`, `services/recommendation_service.py`, `services/recommendation_graph_service.py`, `services/dataset_service.py`, `services/jobs.py`, `api/app.py`, `api/routers/network_ext.py`, `services/network_analytics_service.py`, `domain/models.py`, `domain/enums.py`, `persistence/base.py`, `ui/src/services/queries.ts`, `ui/src/components/features/ego-network-view.tsx`.
 
+> **Performance updates:** See `docs/OPTIMIZATIONS.md` for all applied optimizations
+> (fast `/next` extraction, yt-dlp tuning, UTF-8 fixes, stuck-run reconciliation,
+> enrich=False for API endpoint, Docker support).
+
 ---
 
 ## 1. Current pipeline audit
