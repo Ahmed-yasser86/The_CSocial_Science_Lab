@@ -112,7 +112,7 @@ dependencies = [
     "langchain-chroma==1.1.0; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
     "langchain-classic==1.0.8; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
     "langchain-community==0.4.2; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
-    "langchain-core==1.4.9; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
+    "langchain-core>=1.5.0; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
     "langchain-docling==2.0.0; python_version >= '3.10' and python_version < '4'",
     "langchain-pinecone==0.2.13; python_version < '3.14' and python_version >= '3.9'",
     "langchain-protocol==0.0.18; python_full_version >= '3.10.0' and python_full_version < '4.0.0'",
@@ -287,3 +287,8 @@ pythonpath = [
     "gpt-researcher"
 ]
 testpaths = ["RetrievalPipeline/Graph/Chains/tests"]
+
+[tool.uv]
+# Exclude macOS from resolution — docling-core[chunking] on darwin requires
+# transformers<5.0 or >=5.4,<5.9 which conflicts with transformers==5.13.1.
+environments = ["sys_platform != 'darwin'"]
