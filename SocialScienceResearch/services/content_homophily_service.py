@@ -1328,6 +1328,10 @@ class ContentHomophilyService:
         )
         vectors: dict[str, np.ndarray] = {}
         embedded_list = sorted(selected_texts)
+        self._log(record, (
+            f"Embedding Preparation: {len(embedded_list)} videos to embed | "
+            f"model={adapter.model_name}"
+        ))
         for index, video_id in enumerate(embedded_list):
             if self._stop_requested(job_id_holder):
                 raise OperationCancelled()
@@ -1356,7 +1360,14 @@ class ContentHomophilyService:
             })
             self._touch_eta(record, index + 1, len(embedded_list), started)
             self._save(record)
-            self._log(record, f"embedding ready: {video_id}")
+            elapsed = progress.get("elapsed_seconds", 0)
+            eta = progress.get("eta_seconds", "?")
+            self._log(record, (
+                f"embedding [{index+1}/{len(embedded_list)}] ready: {video_id} | "
+                f"reused={adapter.embeddings_reused} generated={adapter.embeddings_generated} "
+                f"failed={adapter.embedding_failures} | model={adapter.model_name} | "
+                f"elapsed={elapsed}s ETA={eta}s"
+            ))
         progress.pop("current_video", None)
         self._stage(record, "embedding_preparation", "done")
         if len(vectors) < 2:
