@@ -67,14 +67,23 @@ nav:
     - Case Study: for-recruiters/case-study.md
   - Researchers:
     - Overview: for-researchers/index.md
+    - Research Features: for-researchers/research-features.md
     - Methodology: for-researchers/methodology.md
     - Reproducibility: for-researchers/reproducibility.md
     - Network Science: for-researchers/network.md
     - Echo Chamber: for-researchers/echo-chamber.md
     - Sampling: for-researchers/sampling.md
+    - Limitations: for-researchers/limitations.md
     - Ethics & Data Minimization: for-researchers/ethics.md
     - Data Model: for-researchers/data-model.md
     - Citation: for-researchers/citation.md
+  - Concepts:
+    - Structure vs Meaning: concepts/structure-vs-meaning.md
+  - Pipelines:
+    - Overview: pipelines/index.md
+    - Content Homophily: pipelines/content-homophily.md
+    - Recommendation Crawling: pipelines/recommendation-crawling.md
+    - Context-Aware Acquisition: pipelines/context-aware-acquisition.md
   - Developers:
     - Overview: for-developers/index.md
     - Quickstart: for-developers/quickstart.md

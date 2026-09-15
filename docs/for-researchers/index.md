@@ -154,10 +154,15 @@ Five structural signals computed from observed recommendation and interaction da
 
 | Page | Content |
 |---|---|
+| [Research Features](research-features.md) | The 11 scientifically distinctive capabilities — start here for what's novel |
+| [Structure × Meaning](../concepts/structure-vs-meaning.md) | The core methodological distinction |
+| [Content-Homophily Pipeline](../pipelines/content-homophily.md) | Flagship pipeline: full technical characterization |
+| [Pipelines](../pipelines/index.md) | All end-to-end pipelines (crawling, context, homophily) |
 | [Methodology](methodology.md) | Observations, data availability, determinism |
 | [Reproducibility](reproducibility.md) | Seeds, provenance, weight specs, figure contract |
 | [Network Science](network.md) | Two network families, centrality, communities, export |
 | [Echo Chamber](echo-chamber.md) | S1-S5 signals, parameters, structural analysis |
+| [Limitations](limitations.md) | Consolidated threats to validity |
 | [Sampling](sampling.md) | 17 strategies, determinism, advanced filtering |
 | [Ethics](ethics.md) | Data collection scope, minimization, retention |
 | [Data Model](data-model.md) | Entities, observations, persistence |

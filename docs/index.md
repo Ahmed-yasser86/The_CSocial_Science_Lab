@@ -156,6 +156,16 @@ cd SocialScienceResearch/ui && npm install && npm run dev
 | [**For Researchers**](for-researchers/index.md) | 15 min | Methodology, reproducibility, network science, echo chambers |
 | [**For Developers**](for-developers/quickstart.md) | 5 min | Setup, architecture, API reference |
 
+## Researcher Path (new)
+
+| Step | Document |
+|---|---|
+| What's novel | [Research Features](for-researchers/research-features.md) |
+| The core idea | [Structure × Meaning](concepts/structure-vs-meaning.md) |
+| How it runs end-to-end | [Pipelines](pipelines/index.md), flagship [Content Homophily](pipelines/content-homophily.md) |
+| Method detail | [Methodology](for-researchers/methodology.md), [Echo Chamber](for-researchers/echo-chamber.md), [Network Science](for-researchers/network.md) |
+| What can go wrong | [Limitations](for-researchers/limitations.md) |
+
 ---
 
 ## Honesty Principles

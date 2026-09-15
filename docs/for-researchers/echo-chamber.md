@@ -34,7 +34,14 @@ The echo-chamber detection system computes five structural signals from observed
 
 **What it measures:** Whether recommendation expansion narrows over successive layers.
 
-**Operationalization:** As the recommendation network expands from Layer 0 through Layer N, the frontier (newly discovered videos) may shrink, indicating that the recommendation system is converging on a narrow set of content.
+**Formula (implemented, `echo_chamber_service.py:423-482`):**
+
+```
+per layer L (L ≥ 2):  S1_L = collapsed_L / total_L
+scored (cumulative):  S1   = Σ collapsed_L / Σ total_L   over all layers L ≥ 2
+```
+
+where `collapsed_L` = edges of layer L whose *target* video already appeared in any earlier layer's frontier/discovered sets. Undefined before layer 2 → `unavailable`.
 
 **Interpretation:** A declining frontier may suggest reduced content diversity in deeper recommendation layers. This is a structural observation, not evidence of user experience.
 
@@ -42,7 +49,14 @@ The echo-chamber detection system computes five structural signals from observed
 
 **What it measures:** Whether recommendations cluster around the seed community.
 
-**Operationalization:** Measures the proportion of recommended content that belongs to the same community as the seed video (using Louvain community detection or channel share).
+**Formula (implemented, `echo_chamber_service.py:533-567`):** Louvain (`seed=42`) community share of the seed video's community, with modularity in `detail`:
+
+```
+comm_share    = |seed community| / n_nodes
+concentration = clamp01(comm_share / base),  base = |seed community| / n_nodes
+```
+
+**Known implementation quirk:** as written, `base` equals the unrounded `comm_share`, so the scored value saturates at ≈ 1.0 whenever it is available. The informative carriers are the accompanying `detail` fields (`community_share`, `community_size`, `modularity`) — read those, not just the headline value. Recorded here rather than silently "fixed" because this is a documentation task; see [Limitations](limitations.md).
 
 **Interpretation:** High concentration may suggest that recommendations reinforce existing community boundaries. This is observable structure, not evidence of information isolation.
 
@@ -50,15 +64,25 @@ The echo-chamber detection system computes five structural signals from observed
 
 **What it measures:** Concentration of recommendation edges in a few channels.
 
-**Operationalization:** Measures the weighted in-degree concentration — whether a small number of channels receive a disproportionate share of recommendation edges.
+**Formula (implemented, `echo_chamber_service.py:585-630`):** on the channel projection (video edges aggregated, weighted by `video_edge_count`):
+
+```
+S3 = max_c weighted_in(c) / Σ_c weighted_in(c)   (top-1 share; top-3 and seed-channel share in detail)
+```
 
 **Interpretation:** High concentration may suggest reduced diversity in recommended sources. This is a structural property of the recommendation network, not evidence of user exposure patterns.
 
 ### S4: Cross-Layer Repetition
 
-**What it measures:** Whether the same channels persist across recommendation layers.
+**What it measures:** Whether the same content persists across recommendation layers.
 
-**Operationalization:** Tracks which channels appear in recommendations across multiple layers, measuring repetition as a proportion of total recommendations.
+**Formula (implemented, `echo_chamber_service.py:633-677`):**
+
+```
+S4 = #{video pairs observed in ≥ 2 distinct layers} / #{distinct video pairs}
+```
+
+with the channel-pair analog (`channel_repeat`) in `detail`. Needs ≥ 2 crawled layers, else `unavailable`.
 
 **Interpretation:** High repetition may suggest that the recommendation system repeatedly surfaces the same content across layers. This is observable platform behavior, not evidence of user consumption.
 
@@ -66,7 +90,13 @@ The echo-chamber detection system computes five structural signals from observed
 
 **What it measures:** Whether commenters within recommended videos are from the same community.
 
-**Operationalization:** For recommended videos, measures Jaccard similarity of commenters between the seed video and recommended videos. Uses `S5_TOP_K = 5` recommended videos.
+**Formula (implemented, `echo_chamber_service.py:680-719`):** mean Jaccard overlap between the seed video's commenter set and each of the top-`S5_TOP_K = 5` recommended videos' sets (ranked by in-degree), skipping videos without collected comments:
+
+```
+S5 = mean_v |C_seed ∩ C_v| / |C_seed ∪ C_v|
+```
+
+Available only when comments were collected and at least one top video has commenters — otherwise `unavailable`, never zero.
 
 **Interpretation:** High overlap may suggest that recommendations connect videos with similar audiences. This is a structural observation about audience composition, not evidence of social reinforcement.
 
@@ -89,7 +119,13 @@ The echo-chamber analysis includes structural metrics beyond the five signals:
 
 ## Composite Scoring
 
-The five signals are combined into a weighted composite score:
+The five signals are combined into a weighted composite score (`services/echo_scoring.py:72-149`) — a weighted mean over **available** signals only, weights renormalized over what was observed:
+
+```
+score = Σ_{available k} w_k · clamp01(value_k) / Σ_{available k} w_k
+```
+
+Any missing core signal (S1–S4) forces the verdict to `inconclusive` while the indicative score is still shown and labeled.
 
 | Signal | Weight |
 |---|---|

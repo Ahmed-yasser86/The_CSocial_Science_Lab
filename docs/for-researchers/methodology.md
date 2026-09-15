@@ -28,6 +28,8 @@ Every observation carries a `collection_run_id` linking it to its collection eve
 
 ## Social Network Construction
 
+> Two network families (directed recommendation vs undirected co-comment), the full metric battery, and community detection live canonically in [Network Science](network.md). This section is the condensed reference.
+
 ### Input
 
 Collected comments with author identifiers and video associations.
@@ -69,6 +71,8 @@ Structural proximity in this network indicates shared audience participation. Br
 ---
 
 ## Semantic Content Analysis
+
+> **Canonical source:** [Content Homophily: Structure × Meaning](../pipelines/content-homophily.md) — full pipeline characterization with verbatim parameters, formulas, and failure modes. This section is the overview.
 
 ### Input
 
@@ -112,6 +116,8 @@ Significantly higher within-community similarity relative to between-community s
 ---
 
 ## Recommendation Network Collection
+
+> **Canonical source:** [Recommendation Crawling](../pipelines/recommendation-crawling.md) (graph construction) and [Context-Aware Acquisition](../pipelines/context-aware-acquisition.md) (collection context as experimental variable).
 
 ### Input
 
@@ -161,6 +167,8 @@ Directed edges represent observed platform-mediated content connections. Layer e
 
 ## Echo-Chamber Detection
 
+> **Canonical source:** [Echo-Chamber Detection](echo-chamber.md) — per-signal formulas, composite scoring, verdict bands.
+
 ### Input
 
 Recommendation network with community structure.
@@ -205,6 +213,8 @@ Signals indicate structural patterns consistent with echo-chamber-like dynamics.
 ---
 
 ## Content Homophily Analysis
+
+> **Canonical source:** [Content Homophily: Structure × Meaning](../pipelines/content-homophily.md). What follows is the condensed reference.
 
 ### Input
 
