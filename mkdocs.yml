@@ -81,6 +81,7 @@ nav:
     - Structure vs Meaning: concepts/structure-vs-meaning.md
   - Pipelines:
     - Overview: pipelines/index.md
+    - Documentation Index: pipelines/documentation-index.md
     - Content Homophily: pipelines/content-homophily.md
     - Recommendation Crawling: pipelines/recommendation-crawling.md
     - Context-Aware Acquisition: pipelines/context-aware-acquisition.md

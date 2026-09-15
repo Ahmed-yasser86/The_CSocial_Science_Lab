@@ -4,6 +4,8 @@
 
 Each pipeline document follows the same contract: **Why** (research rationale) → **Inputs** → **Stages in order** → **Representation changes** → **Algorithms with real parameters** → **AI vs deterministic logic** → **Persistence** → **Failures** → **Limitations** → **Code paths**.
 
+> **Lost?** The [Documentation Index](documentation-index.md) lists every document on the site — what it answers, who it is for, and where to go next.
+
 ---
 
 ## Pipeline map
@@ -18,6 +20,9 @@ Each pipeline document follows the same contract: **Why** (research rationale) �
 | **Reproducible sampling** | Which subset, chosen how, reproducibly? | [../for-researchers/sampling.md](../for-researchers/sampling.md) |
 | **Graph-RAG intelligence agent** | What is known about a subject/audience/ecosystem from the web? | [../for-developers/ingestion-and-agent.md](../for-developers/ingestion-and-agent.md) |
 | **Document ingestion (Tavily → Qdrant)** | What web content is searchable by meaning? | [../for-developers/ingestion-and-agent.md](../for-developers/ingestion-and-agent.md) |
+| **GPT-Researcher fork** | What was customized in the vendored research engine (prompts, rate limiting, compression)? | [../for-developers/gpt-researcher-customization.md](../for-developers/gpt-researcher-customization.md) |
+
+> Full site map: [Documentation Index](documentation-index.md) — every page, its question, its audience, and next steps.
 
 ---
 

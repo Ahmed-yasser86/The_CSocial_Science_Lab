@@ -166,6 +166,8 @@ cd SocialScienceResearch/ui && npm install && npm run dev
 | Method detail | [Methodology](for-researchers/methodology.md), [Echo Chamber](for-researchers/echo-chamber.md), [Network Science](for-researchers/network.md) |
 | What can go wrong | [Limitations](for-researchers/limitations.md) |
 
+**Full site map:** [Documentation Index](pipelines/documentation-index.md) — every page on the site, what it answers, and where to go next.
+
 ---
 
 ## Honesty Principles
