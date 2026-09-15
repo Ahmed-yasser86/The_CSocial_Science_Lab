@@ -7,4 +7,6 @@ preserves it to support longitudinal, quantitative social-science research.
 
 from __future__ import annotations
 
+# Package marker — no runtime behavior; keeps the folder's latest-commit label fresh.
+
 __version__ = "0.1.0"
