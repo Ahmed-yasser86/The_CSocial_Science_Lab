@@ -2,7 +2,7 @@
 
 > Every document in this site on one page: what it answers, who it is for, and where to go next. Start here if you are lost.
 
-**Reading paths:** Researcher path: [README](../../README.md) → [Research Features](../for-researchers/research-features.md) → [Structure × Meaning](../concepts/structure-vs-meaning.md) → [Pipelines](index.md) → [Methodology](../for-researchers/methodology.md) → [Limitations](../for-researchers/limitations.md).
+**Reading paths:** Researcher path: [README](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme) → [Research Features](../for-researchers/research-features.md) → [Structure × Meaning](../concepts/structure-vs-meaning.md) → [Pipelines](index.md) → [Methodology](../for-researchers/methodology.md) → [Limitations](../for-researchers/limitations.md).
 Developer path: [Quickstart](../for-developers/quickstart.md) → [Architecture](../for-developers/architecture.md) → [API Reference](../for-developers/api-reference.md) → pipeline doc for your task → code paths listed there.
 Evaluator path (2 min): [For Recruiters](../for-recruiters/index.md) → [Case Study](../for-recruiters/case-study.md).
 
@@ -13,7 +13,7 @@ Evaluator path (2 min): [For Recruiters](../for-recruiters/index.md) → [Case S
 | Document | Answers | For |
 |---|---|---|
 | [Home](../index.md) | What is this project, in one page (framework, three systems, honesty principles)? | Everyone |
-| [README](../../README.md) | What is it / why exists / what achieved / where are details? (entry point, links out) | Everyone |
+| [README (repo root)](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme) | What is it / why exists / what achieved / where are details? (entry point, links out) | Everyone |
 | **This index** (`pipelines/documentation-index.md`) | Where is everything? | Everyone lost |
 
 ## Concepts — the ideas everything else rests on
