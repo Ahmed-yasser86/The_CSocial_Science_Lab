@@ -8,6 +8,7 @@
 
 | Track | Time | Start | You get |
 |---|---|---|---|
+| **Overview** (the narrative) | 10 min | [Project Overview](overview.md) | Why the project exists, problem, framework, three systems, pipeline |
 | **Evaluators** (hiring, review) | 2 min | [For Recruiters](for-recruiters/index.md) | What was built, technical complexity, achievements |
 | **Researchers** (method, validity) | 15 min | [For Researchers](for-researchers/index.md) | Methodology, reproducibility, network science, echo chambers |
 | **Developers** (run, build, extend) | 5 min | [Quickstart](for-developers/quickstart.md) | Setup, architecture, API reference |
@@ -90,18 +91,4 @@
 
 ## About this project (one paragraph)
 
-A research-engineering artifact for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube. Three systems (CSS workbench, Graph-RAG agent, ingestion pipeline), one repository — full identity lives in the [README](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme). Citation: [Researchers → Citation](for-researchers/citation.md) (`CITATION.cff` at repo root). License: MIT.
-
----
-
-## Project overview (where the archived content lives)
-
-The long-form overview that used to sit here — problem statement, research challenge, conceptual framework, three-systems diagram, end-to-end pipeline, quick start — now lives where it belongs:
-
-| Content | Canonical location |
-|---|---|
-| Project identity, goal, problem, achievements | [README](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme) (repo root) |
-| Achievements with evidence links | [Achievements](achievements.md) |
-| Conceptual framework + methodology | [Methodology](for-researchers/methodology.md), [Research Features](for-researchers/research-features.md) |
-| Quick start / runbook | [Quickstart](for-developers/quickstart.md) |
-| Tracks (recruiter / researcher / developer) | Tables at the top of this page |
+A research-engineering artifact for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube. Three systems (CSS workbench, Graph-RAG agent, ingestion pipeline), one repository. The full narrative lives in [Project Overview](overview.md); the repo entry point is the [README](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme). Citation: [Researchers → Citation](for-researchers/citation.md) (`CITATION.cff` at repo root). License: MIT.

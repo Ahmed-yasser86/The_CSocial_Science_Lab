@@ -13,6 +13,7 @@ Evaluator path (2 min): [For Recruiters](../for-recruiters/index.md) → [Case S
 | Document | Answers | For |
 |---|---|---|
 | [Docs router](../index.md) | Router to every track and section (this site's landing page) | Everyone |
+| [Project Overview](../overview.md) | Narrative overview: why the project exists, problem, framework, systems, pipeline | Everyone |
 | [README (repo root)](https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab#readme) | What is it / why exists / what achieved / where are details? (entry point, links out) | Everyone |
 | **This index** (`pipelines/documentation-index.md`) | Where is everything? | Everyone lost |
 
