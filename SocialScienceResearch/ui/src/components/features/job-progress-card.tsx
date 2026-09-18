@@ -174,6 +174,7 @@ export function JobProgressCard({
               Cancel
             </Button>
           ) : null}
+        </div>
       </div>
       {running && discovered > 0 ? (
         <div className="space-y-1">
