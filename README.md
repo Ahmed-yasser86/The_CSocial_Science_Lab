@@ -100,6 +100,15 @@ Co-commenting is indirect (no lurkers, no reply quality); embeddings are topical
 > **Developer path:** README → Quickstart → Architecture → API Reference → Pipelines → code paths in each pipeline doc.
 
 ## Installation / getting started (abridged)
+## Pre-Run Requirements & Research Ethics
+
+Before running the project, ensure that all required API keys, credentials, and configuration settings have been correctly installed and configured.
+
+**Research ethics and responsible data collection are mandatory.** Before initiating any data collection, researchers must consider applicable research ethics requirements, institutional review procedures, platform Terms of Service, privacy regulations, and relevant data-protection laws.
+
+Researchers are responsible for ensuring that their data collection and subsequent processing respect user privacy, data minimization, and the intended research scope. They must also ensure that their collection methods are appropriate and permitted for the intended study.
+
+The availability of a technical collection method does not imply ethical approval, legal authorization, or permission from the platform. Researchers must obtain any required approvals and ensure that data collection, storage, processing, sharing, and publication comply with applicable ethical and legal standards.
 
 ```bash
 git clone https://github.com/Ahmed-yasser86/The_CSocial_Science_Lab.git
