@@ -62,6 +62,7 @@ validation:
 nav:
   - Home: index.md
   - Overview: overview.md
+  - Screenshots: screenshots.md
   - Achievements: achievements.md
   - Recruiters:
     - Overview: for-recruiters/index.md

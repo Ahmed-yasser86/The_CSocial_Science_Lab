@@ -18,6 +18,20 @@ Contemporary platforms are simultaneously social environments, content-distribut
 
 Three cooperating systems live in one repository: **A. CSS Research Workbench** (`SocialScienceResearch/`) — YouTube acquisition, network analysis, echo-chamber detection, export across 160+ endpoints; **B. Graph-RAG Intelligence Agent** (`RetrievalPipeline/`) — LangGraph state machine for identity → subject → audience → ecosystem analysis; **C. Ingestion Pipeline** (`Ingestion_Pipline/`) — Tavily crawl, chunk, embed (Gemini), Qdrant store. Details: [Architecture](docs/for-developers/architecture.md).
 
+## Screenshots
+
+Captured from the running workbench against a live corpus — 2,431 collection runs, 1,705 videos, 153,531 comments, 39 projects.
+
+| Workspaces | Full recommendation network |
+|---|---|
+| ![Workspace picker with per-workspace volume counters](docs/assets/screenshots/workspace-overview.png) | ![Full recommendation network, 10,806 nodes colored by role](docs/assets/screenshots/network-graph.png) |
+
+| Projects | Data library coverage |
+|---|---|
+| ![Projects list](docs/assets/screenshots/projects-list.png) | ![Corpus coverage counters](docs/assets/screenshots/coverage.png) |
+
+Full gallery with metrics, provenance and dataset views: [Screenshots](docs/screenshots.md).
+
 ## Why it exists
 
 Single-network analysis is methodologically insufficient, and the insufficiency is precise:
