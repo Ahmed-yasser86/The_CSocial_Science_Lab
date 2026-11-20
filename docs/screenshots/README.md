@@ -80,6 +80,7 @@ frontier collapse 5.00%.
 | [30-echo-correct-network.png](30-echo-correct-network.png) | Network statistics, community structure and centrality from the video lens. |
 | [31-echo-correct-communities.png](31-echo-correct-communities.png) | Within-community recommendation rate, null model, per-layer persistence and centrality. |
 | [32-agent-console.png](32-agent-console.png) | Graph-RAG research agent console with previous subject/audience/ecosystem runs. |
+| [33-echo-result-6500.png](33-echo-result-6500.png) | The echo-chamber Videos tab for the headline crawl: 2,447 nodes and **6,500 unique recommendation edges**, with 20 Louvain communities (seed community 284). This is the in-app result behind the CV's 6,500-video figure; the documented 1,138 → 111 unattributed-edge improvement is recorded in [Performance Optimizations](../for-developers/performance-optimizations.md). |
 
 ## Notes
 

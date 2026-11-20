@@ -41,6 +41,13 @@ Coverage is reported, never silently assumed: in Legacy, 267 of 1,705 videos
 were read directly from the databases on 2026-11-20; workspace data changes as
 runs are collected.
 
+**Headline echo-chamber result** — the two-layer crawl produced a 2,447-node
+video graph with **6,500 unique recommendation edges**:
+
+![Echo-chamber Videos tab showing 2,447 nodes and 6,500 recommendation edges](docs/screenshots/33-echo-result-6500.png)
+
+Projection details: [Performance Optimizations](docs/for-developers/performance-optimizations.md).
+
 | Workspaces | Full recommendation network |
 |---|---|
 | ![Workspace picker with per-workspace volume counters](docs/screenshots/01-workspaces.png) | ![Full recommendation network, 10,806 nodes colored by role](docs/screenshots/05-network-lab.png) |

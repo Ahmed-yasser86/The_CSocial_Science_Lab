@@ -134,3 +134,7 @@ per-screen notes, see the [catalogue](README.md).
 ### 32 — Research agent console
 
 ![Graph-RAG agent console with previous runs](32-agent-console.png)
+
+### 33 — Echo-chamber result: 6,500 recommendations
+
+![Echo-chamber Videos tab with 2,447 nodes and 6,500 recommendation edges](33-echo-result-6500.png)
