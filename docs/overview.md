@@ -87,7 +87,7 @@ graph LR
 
 | System | Purpose | Key Metrics |
 |---|---|---|
-| **CSS Research Workbench** | YouTube data collection, network analysis, echo-chamber detection | 160+ API endpoints, 36 services |
+| **CSS Research Workbench** | YouTube data collection, network analysis, echo-chamber detection | 166 documented API paths, 36 services |
 | **Graph-RAG Intelligence Agent** | Multi-stage intelligence analysis via LangGraph | 5-node pipeline, session persistence |
 | **Ingestion Pipeline** | Document processing and vector storage | Tavily crawl, Qdrant embeddings |
 
@@ -131,6 +131,17 @@ cd SocialScienceResearch/ui && npm install && npm run dev
 Full runbook: [Quickstart](for-developers/quickstart.md). Configuration: [Configuration](for-developers/configuration.md).
 
 ---
+
+## Screenshots
+
+The workbench in use against the Legacy workspace:
+
+![Aggregate recommendation network overview](screenshots/04-analyze-overview.png)
+
+Every screen — collection, network lab, echo signals, commenters, comparison,
+query, explorer, data library and provenance — is in the
+[full gallery](screenshots/GALLERY.md) and the
+[per-screen catalogue](screenshots/README.md).
 
 ## Choose Your Track
 

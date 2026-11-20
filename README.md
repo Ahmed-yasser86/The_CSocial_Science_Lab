@@ -3,7 +3,7 @@
 > A research-engineering artifact for investigating platform-mediated information environments through joint analysis of social interaction, content semantics, recommendation structures, and community dynamics on YouTube.
 
 ![Docs](https://img.shields.io/badge/docs-MkDocs%20Material-blue)
-![OpenAPI](https://img.shields.io/badge/OpenAPI-160%20paths-blue)
+![OpenAPI](https://img.shields.io/badge/OpenAPI-166%20paths-blue)
 ![Tests](https://img.shields.io/badge/tests-939-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
@@ -16,21 +16,42 @@
 
 Contemporary platforms are simultaneously social environments, content-distribution systems, recommendation engines, and information landscapes — interleaved forces that shape exposure, community formation, and information access. This project implements the computational infrastructure to study them: a research workbench that constructs and jointly examines **three network representations of YouTube data** — a social interaction network from commenter co-participation, a semantic content network from transcript embeddings, and a platform-mediated recommendation network from observable recommendation pathways — within a single environment, enabling cross-network comparison, community interaction analysis, and echo-chamber detection through five observable signals.
 
-Three cooperating systems live in one repository: **A. CSS Research Workbench** (`SocialScienceResearch/`) — YouTube acquisition, network analysis, echo-chamber detection, export across 160+ endpoints; **B. Graph-RAG Intelligence Agent** (`RetrievalPipeline/`) — LangGraph state machine for identity → subject → audience → ecosystem analysis; **C. Ingestion Pipeline** (`Ingestion_Pipline/`) — Tavily crawl, chunk, embed (Gemini), Qdrant store. Details: [Architecture](docs/for-developers/architecture.md).
+Three cooperating systems live in one repository: **A. CSS Research Workbench** (`SocialScienceResearch/`) — YouTube acquisition, network analysis, echo-chamber detection, export across 166 documented API paths; **B. Graph-RAG Intelligence Agent** (`RetrievalPipeline/`) — LangGraph state machine for identity → subject → audience → ecosystem analysis; **C. Ingestion Pipeline** (`Ingestion_Pipline/`) — Tavily crawl, chunk, embed (Gemini), Qdrant store. Details: [Architecture](docs/for-developers/architecture.md).
 
-## Screenshots
+## Screenshots and corpus numbers
 
-Captured from the running workbench against a live corpus — 2,431 collection runs, 1,705 videos, 153,531 comments, 39 projects.
+The captures below are from the **Legacy workspace**: 2,431 collection runs,
+1,705 videos, 153,531 comments and 39 projects. Counters are per workspace — an
+installation can hold many isolated workspace databases. Summed over **every
+workspace database in this installation**:
+
+| Measure | Legacy workspace (shown in screenshots) | All workspace databases |
+|---|---:|---:|
+| Collection runs | 2,431 | 3,040 |
+| Channels | 745 | 1,473 |
+| Videos | 1,705 | 3,794 |
+| Comments | 153,531 | 297,683 |
+| Projects | 39 | 44 |
+| Recommendation edges | 46,442 | 67,604 |
+| Datasets | 895 | 896 |
+| Transcripts | 0 | 846 |
+
+Coverage is reported, never silently assumed: in Legacy, 267 of 1,705 videos
+(16%) have comment rows and 0 have an available transcript. The figures above
+were read directly from the databases on 2026-11-20; workspace data changes as
+runs are collected.
 
 | Workspaces | Full recommendation network |
 |---|---|
-| ![Workspace picker with per-workspace volume counters](docs/assets/screenshots/workspace-overview.png) | ![Full recommendation network, 10,806 nodes colored by role](docs/assets/screenshots/network-graph.png) |
+| ![Workspace picker with per-workspace volume counters](docs/screenshots/01-workspaces.png) | ![Full recommendation network, 10,806 nodes colored by role](docs/screenshots/05-network-lab.png) |
 
-| Projects | Data library coverage |
+| Echo signals | Data library coverage |
 |---|---|
-| ![Projects list](docs/assets/screenshots/projects-list.png) | ![Corpus coverage counters](docs/assets/screenshots/coverage.png) |
+| ![Observed echo-chamber signals](docs/screenshots/07-echo-chambers.png) | ![Corpus coverage counters](docs/screenshots/22-data-library.png) |
 
-Full gallery with metrics, provenance and dataset views: [Screenshots](docs/screenshots.md).
+Browse every screen in the [catalogue](docs/screenshots/README.md) or scroll
+through the [full one-page gallery](docs/screenshots/GALLERY.md). The earlier
+walkthrough with prose captions is [docs/screenshots.md](docs/screenshots.md).
 
 ## Why it exists
 
@@ -94,7 +115,8 @@ Co-commenting is indirect (no lurkers, no reply quality); embeddings are topical
 | [Echo-Chamber Detection](docs/for-researchers/echo-chamber.md) | S1–S5 formulas, composite scoring, verdict bands |
 | [Network Science](docs/for-researchers/network.md) | Graph families, weight grammar, centrality, communities |
 | [Sampling](docs/for-researchers/sampling.md) · [Reproducibility](docs/for-researchers/reproducibility.md) · [Ethics](docs/for-researchers/ethics.md) | Selection, determinism, scope |
-| [Architecture](docs/for-developers/architecture.md) · [API Reference](docs/for-developers/api-reference.md) · [Quickstart](docs/for-developers/quickstart.md) | Software structure, 160+ endpoints, 5-minute setup |
+| [Architecture](docs/for-developers/architecture.md) · [API Reference](docs/for-developers/api-reference.md) · [Quickstart](docs/for-developers/quickstart.md) | Software structure, 166 documented paths, 5-minute setup |
+| [Screenshots](docs/screenshots/README.md) · [Full gallery](docs/screenshots/GALLERY.md) | Per-screen catalogue and every capture in one scroll |
 
 > **Researcher path:** README → Research Features → Structure × Meaning → Pipelines → Methodology → Limitations → Research directions.
 > **Developer path:** README → Quickstart → Architecture → API Reference → Pipelines → code paths in each pipeline doc.

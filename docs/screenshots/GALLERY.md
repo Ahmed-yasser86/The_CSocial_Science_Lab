@@ -1,0 +1,112 @@
+# Full screenshot gallery — one scroll
+
+Every capture from the running Social Science Research Workbench, sorted by the
+flow of an investigation: workspace → collection → analyze → data → provenance.
+All images are real captures from the Legacy workspace. For captions and
+per-screen notes, see the [catalogue](README.md).
+
+---
+
+### 01 — Workspaces
+
+![Workspace picker with per-workspace counters](01-workspaces.png)
+
+### 02 — Legacy workspace
+
+![Legacy workspace counters and recent runs](02-workspace-legacy.png)
+
+### 03 — Collection
+
+![Collection form for channel, video and recommendation runs](03-collect.png)
+
+### 04 — Analyze: network overview
+
+![Aggregate recommendation network overview](04-analyze-overview.png)
+
+### 05 — Analyze: network lab
+
+![Full recommendation network graph](05-network-lab.png)
+
+### 06 — Analyze: network metrics
+
+![Structural metrics and centrality table](06-network-metrics.png)
+
+### 07 — Echo chambers
+
+![Observed echo-chamber signals](07-echo-chambers.png)
+
+### 08 — Echo: audience
+
+![Audience echo view](08-echo-audience.png)
+
+### 09 — Echo: channels
+
+![Channel-level echo view](09-echo-channels.png)
+
+### 10 — Echo: videos
+
+![Video-level echo view](10-echo-videos.png)
+
+### 11 — Commenters
+
+![Commenter overlap analysis](11-commenters.png)
+
+### 12 — Commenters by channel
+
+![Channel-scoped commenter overlap](12-commenters-channels.png)
+
+### 13 — Content homophily
+
+![Within-vs-between semantic similarity with null model](13-content-homophily.png)
+
+### 14 — Compare
+
+![Comparison workspace](14-compare.png)
+
+### 15 — Query
+
+![Condition funnel preview](15-query.png)
+
+### 16 — Explorer
+
+![Record explorer](16-explorer.png)
+
+### 17 — Data coverage
+
+![Corpus coverage counters](17-data-coverage.png)
+
+### 18 — Provenance ledger
+
+![Collection runs provenance](18-provenance-runs.png)
+
+### 19 — Datasets
+
+![Dataset catalogue](19-datasets.png)
+
+### 20 — Projects
+
+![Projects list](20-projects.png)
+
+### 21 — Project detail
+
+![Project detail](21-project-detail.png)
+
+### 22 — Data library
+
+![Data library coverage card](22-data-library.png)
+
+### 23 — Research samples
+
+![Sampling workbench](23-samples.png)
+
+### 24 — In-app docs
+
+![Documentation entry point](24-docs.png)
+
+### 25 — Run detail
+
+![Collection run detail and configuration snapshot](25-run-detail.png)
+
+### 26 — Video detail
+
+![Video detail with network, engagement and comments](26-video-detail.png)

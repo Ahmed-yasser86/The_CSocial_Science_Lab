@@ -13,6 +13,7 @@
 | **Researchers** (method, validity) | 15 min | [For Researchers](for-researchers/index.md) | Methodology, reproducibility, network science, echo chambers |
 | **Developers** (run, build, extend) | 5 min | [Quickstart](for-developers/quickstart.md) | Setup, architecture, API reference |
 | **Achievements** (what's proven) | 3 min | [Achievements](achievements.md) | Numbers, wins, integrations — each linked to evidence |
+| **Screenshots** (visual tour) | 5 min | [Full gallery](screenshots/GALLERY.md) | Every screen in one scroll; [catalogue](screenshots/README.md) |
 
 ---
 
@@ -48,7 +49,7 @@
 |---|---|
 | [Quickstart](for-developers/quickstart.md) | Postgres → backend → frontend → first query |
 | [Architecture](for-developers/architecture.md) | Three systems, service container, data flows (canonical software structure) |
-| [API Reference](for-developers/api-reference.md) | All 160 paths (generated, guarded OpenAPI contract) |
+| [API Reference](for-developers/api-reference.md) | All 166 paths (generated, guarded OpenAPI contract) |
 | [Ingestion & Agent](for-developers/ingestion-and-agent.md) | Tavily→Qdrant ingestion + 5-node LangGraph agent + HTTP/MCP |
 | [GPT-Researcher Customization](for-developers/gpt-researcher-customization.md) | Fork diff: prompts, rate limiting, compression, MCP normalization |
 | [Workspaces & Jobs](for-developers/workspaces-and-jobs.md) | Multi-tenant isolation + long-running work lifecycle |

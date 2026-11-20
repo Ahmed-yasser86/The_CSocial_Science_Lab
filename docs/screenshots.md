@@ -1,5 +1,10 @@
 # Screenshots
 
+A consolidated, sorted gallery of every capture now lives in
+[docs/screenshots/GALLERY.md](screenshots/GALLERY.md), with the per-screen
+catalogue in [docs/screenshots/README.md](screenshots/README.md). This page keeps
+the longer prose walkthrough.
+
 Screenshots of the running workbench, captured against a live workspace with real
 collected data. They are not mockups or staged fixtures: every number below is read
 from the PostgreSQL corpus at capture time.
