@@ -49,6 +49,10 @@ runs are collected.
 |---|---|
 | ![Observed echo-chamber signals](docs/screenshots/07-echo-chambers.png) | ![Corpus coverage counters](docs/screenshots/22-data-library.png) |
 
+| Two-layer crawl job | Echo detection |
+|---|---|
+| ![Jobs tray with the 6,500-video crawl](docs/screenshots/27-jobs-two-layer.png) | ![Completed echo detection with the Mohamed bin Shams al-Din seed](docs/screenshots/29-echo-correct-header.png) |
+
 Browse every screen in the [catalogue](docs/screenshots/README.md) or scroll
 through the [full one-page gallery](docs/screenshots/GALLERY.md). The earlier
 walkthrough with prose captions is [docs/screenshots.md](docs/screenshots.md).
@@ -76,12 +80,13 @@ cos(u,v) = (u · v) / (‖u‖ ‖v‖)        u,v = mean-pooled video vectors
 observed = within_mean − between_mean  (+ permutation null, z, p)
 ```
 
-Nothing in the measurement path generates text or judges content — similarity is computed, not generated. That boundary (learned projection vs deterministic arithmetic vs generative agents) is enforced across all [Pipelines](docs/pipelines/index.md).
+Nothing in the measurement path generates text or judges content — similarity is computed, not generated. That boundary (learned projection vs deterministic arithmetic vs generative agents) is enforced across all [Pipelines](docs/pipelines/index.md). The author's Medium write-up of this method is [Embedding Models Beyond RAG: A Network Science Experiment](https://medium.com/everyday-ai/embedding-models-beyond-rag-a-network-science-experiment-de9778eff684).
 
 ## Major achievements and capabilities
 
 - **Recommendation-network crawler**: BFS layered expansion with frontier classification (`NEW_VIDEO / EXISTING_VIDEO / NEW_CHANNEL / CONNECTED / DISCONNECTED`), per-layer `LayerRun` provenance; 6,500+ videos across 2+ layers with 0 failures/blocks; enrichment 33s → 2.8s (~12x via `/next` bypass). → [Recommendation Crawling](docs/pipelines/recommendation-crawling.md)
 - **Five echo-chamber signals (S1–S5)** from observed edges only — frontier collapse, seed-community concentration, top-channel share, cross-layer repetition, commenter-overlap reinforcement — each `available | unavailable` (never zero-filled), composite = renormalized weighted mean (`0.35/0.30/0.20/0.15/0.15`), missing core signal ⇒ `inconclusive`. → [Echo-Chamber Detection](docs/for-researchers/echo-chamber.md)
+- **Two-layer recommendation crawl (case study)**: `job_20260901_163631_76aae01d` — 284 runs, 6,784 videos discovered, **6,500 succeeded**, 0 failures, with per-layer provenance. The optimized channel projection cut unattributed edges from **1,138 to 111** (46% → 5% of edges). → [Performance details](docs/for-developers/performance-optimizations.md) · [Jobs screenshot](docs/screenshots/27-jobs-two-layer.png)
 - **Content-homophily infrastructure**: transcript reuse-first acquisition, `8000/200` chunking, cached mean-pooled embeddings, balanced/stratified pair sampling, bounded replacement, permutation null testing. → [Content-Homophily Pipeline](docs/pipelines/content-homophily.md)
 - **Full SNA battery**: density, reciprocity, clustering, 10 centralities, Louvain (`seed=42`), roles, PageRank/HITS, channel projection (95% edge survival), 6 export formats — Karate-Club-validated to 1e-6. → [Network Science](docs/for-researchers/network.md)
 - **Reproducibility as architecture**: `seed=42` everywhere, immutable samples with recipes (17 strategies), content-hash embedding cache, `collection_run_id` provenance, CI-guarded OpenAPI contract, 939 unit + 71 E2E tests. → [Reproducibility](docs/for-researchers/reproducibility.md)

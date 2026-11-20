@@ -110,3 +110,27 @@ per-screen notes, see the [catalogue](README.md).
 ### 26 — Video detail
 
 ![Video detail with network, engagement and comments](26-video-detail.png)
+
+### 27 — Headline crawl job
+
+![Jobs tray listing the 6,500-video two-layer crawl](27-jobs-two-layer.png)
+
+### 28 — Crawl workspace
+
+![Workspace holding the headline two-layer crawl](28-correct-workspace.png)
+
+### 29 — Echo detection and seed
+
+![Completed echo detection with Mohamed bin Shams al-Din seed](29-echo-correct-header.png)
+
+### 30 — Video-lens statistics
+
+![Network statistics, communities and centrality](30-echo-correct-network.png)
+
+### 31 — Reinforcement and null model
+
+![Within-community rate, null model and per-layer persistence](31-echo-correct-communities.png)
+
+### 32 — Research agent console
+
+![Graph-RAG agent console with previous runs](32-agent-console.png)
