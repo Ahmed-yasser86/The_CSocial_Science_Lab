@@ -8,8 +8,6 @@
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 
-*The full pre-refactor README (≈1540 lines) is preserved verbatim at [`README.full.backup.md`](README.full.backup.md). Nothing of substance was discarded — it was moved into the documentation system and linked below.*
-
 ---
 
 ## What this project is
