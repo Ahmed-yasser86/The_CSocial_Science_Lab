@@ -20,10 +20,17 @@ Three cooperating systems live in one repository: **A. CSS Research Workbench** 
 
 ## Screenshots and corpus numbers
 
+**Demonstration data provenance.** Every figure and capture in this section
+comes from isolated workspace databases populated during application
+development and the continuous testing cycle, not from a production
+deployment. All values are observed rows read directly from those databases;
+none is estimated or synthetic.
+
 The captures below are from the **Legacy workspace**: 2,431 collection runs,
 1,705 videos, 153,531 comments and 39 projects. Counters are per workspace — an
 installation can hold many isolated workspace databases. Summed over **every
-workspace database in this installation**:
+database in this installation that holds workbench data** — the Legacy
+database, 53 isolated per-workspace databases, and the stress/test databases:
 
 | Measure | Legacy workspace (shown in screenshots) | All workspace databases |
 |---|---:|---:|
@@ -38,13 +45,31 @@ workspace database in this installation**:
 
 Coverage is reported, never silently assumed: in Legacy, 267 of 1,705 videos
 (16%) have comment rows and 0 have an available transcript. The figures above
-were read directly from the databases on 2026-11-20; workspace data changes as
-runs are collected.
+were read directly from the databases and re-verified on 2026-11-21; workspace
+data changes as runs are collected.
 
 **Headline echo-chamber result** — the two-layer crawl produced a 2,447-node
 video graph with **6,500 unique recommendation edges**:
 
 ![Echo-chamber Videos tab showing 2,447 nodes and 6,500 recommendation edges](docs/screenshots/33-echo-result-6500.png)
+
+The same detection reports **observed per-layer signals** — layer 2 covers 258
+nodes / 6,018 edges with frontier collapse 18.49%, top-channel share 9.40% and
+community share 11.61%:
+
+![Echo-chamber per-layer signals: layer 2 with 258 nodes, 6,018 edges and observed structural signals](docs/screenshots/36-echo-per-layer-signals.png)
+
+The channel projection for this detection covers the full family edge set:
+1,518 unique channel edges and 3,575 unattributed edges. The 1,138 → 111
+benchmark refers to the optimized projection described in
+[Performance Optimizations](docs/for-developers/performance-optimizations.md).
+
+![Echo-chamber channel network projection with 182 nodes, 1,518 edges and 3,575 unattributed edges](docs/screenshots/34-echo-channel-network.png)
+
+Full network analytics on a single run slice reports 31 nodes, 30 edges,
+density 0.032 and one community:
+
+![Full network analytics Metrics tab on a small run slice: 31 nodes, 30 edges, density 0.032](docs/screenshots/35-full-network-metrics-small.png)
 
 Projection details: [Performance Optimizations](docs/for-developers/performance-optimizations.md).
 
@@ -58,11 +83,11 @@ Projection details: [Performance Optimizations](docs/for-developers/performance-
 
 | Two-layer crawl job | Echo detection |
 |---|---|
-| ![Jobs tray with the 6,500-video crawl](docs/screenshots/27-jobs-two-layer.png) | ![Completed echo detection with the Mohamed bin Shams al-Din seed](docs/screenshots/29-echo-correct-header.png) |
+| ![Jobs tray with the 6,500-video crawl](docs/screenshots/27-jobs-two-layer.png) | ![Completed echo detection with its seed video](docs/screenshots/29-echo-correct-header.png) |
 
 Browse every screen in the [catalogue](docs/screenshots/README.md) or scroll
-through the [full one-page gallery](docs/screenshots/GALLERY.md). The earlier
-walkthrough with prose captions is [docs/screenshots.md](docs/screenshots.md).
+through the [full one-page gallery](docs/screenshots/GALLERY.md). A narrative
+walkthrough is available in [docs/screenshots.md](docs/screenshots.md).
 
 ## Why it exists
 
@@ -76,28 +101,28 @@ Single-network analysis is methodologically insufficient, and the insufficiency 
 
 A researcher studying only social structure cannot see whether the platform's recommendations bridge separated communities; studying only recommendations cannot see whether users engage across them; studying only content similarity cannot see either wiring. The relationships *between* these perspectives are themselves the object of study — so the infrastructure builds all three and compares them. Full statement: [Research Features](docs/for-researchers/research-features.md), [Methodology](docs/for-researchers/methodology.md).
 
-Critically, collection is **context-aware**: account/session cookies, browser impersonation, proxy-based network positioning, and scraping profiles are controlled experimental variables — the same content observed under different user or geographic contexts yields comparable recommendation environments, not one blind scrape. See [Context-Aware Acquisition](docs/pipelines/context-aware-acquisition.md).
+Critically, collection is **context-aware**: account/session cookies, browser impersonation, proxy-based network positioning, and scraping profiles are controlled experimental variables — the same content observed under different user or geographic contexts yields comparable recommendation environments rather than a single uncontextualized collection pass. See [Context-Aware Acquisition](docs/pipelines/context-aware-acquisition.md).
 
 ## What makes the approach interesting
 
-**Structure × meaning, measured independently.** Traditional network analysis reveals the shape of relationships but not what the nodes mean. Instead of asking a (probabilistic, expensive, context-limited) LLM to classify transcripts, the flagship [content-homophily pipeline](docs/pipelines/content-homophily.md) projects transcripts to vectors with an embedding model (deterministic given model + input + config), mean-pools chunk embeddings to one vector per video, and compares videos arithmetically — cosine similarity within vs between Louvain communities (`seed=42`), tested against a label-permutation null (z-score, p-value). Structural separation can then be checked against semantic separation: do communities that the wiring separates also *talk about different things*? The distinction is characterized in [Structure vs Meaning](docs/concepts/structure-vs-meaning.md):
+**Structure × meaning, measured independently.** Traditional network analysis reveals the shape of relationships but not what the nodes mean. Instead of asking a (probabilistic, expensive, context-limited) LLM to classify transcripts, the flagship [content-homophily pipeline](docs/pipelines/content-homophily.md) projects transcripts to vectors with an embedding model (deterministic given model + input + config), mean-pools chunk embeddings to one vector per video, and compares videos arithmetically — cosine similarity within vs between Louvain communities (`seed=42`), tested against a label-permutation null (z-score, p-value). Structural separation can then be checked against semantic separation: do communities that the wiring separates also differ in content? The distinction is characterized in [Structure vs Meaning](docs/concepts/structure-vs-meaning.md):
 
 ```
 cos(u,v) = (u · v) / (‖u‖ ‖v‖)        u,v = mean-pooled video vectors
 observed = within_mean − between_mean  (+ permutation null, z, p)
 ```
 
-Nothing in the measurement path generates text or judges content — similarity is computed, not generated. That boundary (learned projection vs deterministic arithmetic vs generative agents) is enforced across all [Pipelines](docs/pipelines/index.md). The author's Medium write-up of this method is [Embedding Models Beyond RAG: A Network Science Experiment](https://medium.com/everyday-ai/embedding-models-beyond-rag-a-network-science-experiment-de9778eff684).
+Nothing in the measurement path generates text or judges content — similarity is computed, not generated. That boundary (learned projection vs deterministic arithmetic vs generative agents) is enforced across all [Pipelines](docs/pipelines/index.md). A companion write-up of this method is [Embedding Models Beyond RAG: A Network Science Experiment](https://medium.com/everyday-ai/embedding-models-beyond-rag-a-network-science-experiment-de9778eff684).
 
 ## Major achievements and capabilities
 
-- **Recommendation-network crawler**: BFS layered expansion with frontier classification (`NEW_VIDEO / EXISTING_VIDEO / NEW_CHANNEL / CONNECTED / DISCONNECTED`), per-layer `LayerRun` provenance; 6,500+ videos across 2+ layers with 0 failures/blocks; enrichment 33s → 2.8s (~12x via `/next` bypass). → [Recommendation Crawling](docs/pipelines/recommendation-crawling.md)
+- **Recommendation-network crawler**: BFS layered expansion with frontier classification (`NEW_VIDEO / EXISTING_VIDEO / NEW_CHANNEL / CONNECTED / DISCONNECTED`), per-layer `LayerRun` provenance; 6,500 videos across 2 layers with 0 failures; enrichment 33s → 2.8s (~12x via `/next` bypass). → [Recommendation Crawling](docs/pipelines/recommendation-crawling.md)
 - **Five echo-chamber signals (S1–S5)** from observed edges only — frontier collapse, seed-community concentration, top-channel share, cross-layer repetition, commenter-overlap reinforcement — each `available | unavailable` (never zero-filled), composite = renormalized weighted mean (`0.35/0.30/0.20/0.15/0.15`), missing core signal ⇒ `inconclusive`. → [Echo-Chamber Detection](docs/for-researchers/echo-chamber.md)
 - **Two-layer recommendation crawl (case study)**: `job_20260901_163631_76aae01d` — 284 runs, 6,784 videos discovered, **6,500 succeeded**, 0 failures, with per-layer provenance. The optimized channel projection cut unattributed edges from **1,138 to 111** (46% → 5% of edges). → [Performance details](docs/for-developers/performance-optimizations.md) · [Jobs screenshot](docs/screenshots/27-jobs-two-layer.png)
 - **Content-homophily infrastructure**: transcript reuse-first acquisition, `8000/200` chunking, cached mean-pooled embeddings, balanced/stratified pair sampling, bounded replacement, permutation null testing. → [Content-Homophily Pipeline](docs/pipelines/content-homophily.md)
 - **Full SNA battery**: density, reciprocity, clustering, 10 centralities, Louvain (`seed=42`), roles, PageRank/HITS, channel projection (95% edge survival), 6 export formats — Karate-Club-validated to 1e-6. → [Network Science](docs/for-researchers/network.md)
 - **Reproducibility as architecture**: `seed=42` everywhere, immutable samples with recipes (17 strategies), content-hash embedding cache, `collection_run_id` provenance, CI-guarded OpenAPI contract, 939 unit + 71 E2E tests. → [Reproducibility](docs/for-researchers/reproducibility.md)
-- **Honesty principles**: observed, never estimated; deterministic; validated; contract is law. Availability typing (`available | missing | unsupported`) propagates through every mean, composite, and verdict. → [Limitations](docs/for-researchers/limitations.md)
+- **Measurement principles**: observed, never estimated; deterministic; validated; CI-enforced API contract. Availability typing (`available | missing | unsupported`) propagates through every mean, composite, and verdict. → [Limitations](docs/for-researchers/limitations.md)
 
 ## High-level methodology
 

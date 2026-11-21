@@ -2,8 +2,10 @@
 
 Every capture from the running Social Science Research Workbench, sorted by the
 flow of an investigation: workspace → collection → analyze → data → provenance.
-All images are real captures from the Legacy workspace. For captions and
-per-screen notes, see the [catalogue](README.md).
+All images are real captures from isolated development and testing workspaces
+populated during application development and the continuous testing cycle —
+not a production deployment. Most are from the Legacy workspace. For captions
+and per-screen notes, see the [catalogue](README.md).
 
 ---
 
@@ -121,7 +123,7 @@ per-screen notes, see the [catalogue](README.md).
 
 ### 29 — Echo detection and seed
 
-![Completed echo detection with Mohamed bin Shams al-Din seed](29-echo-correct-header.png)
+![Completed echo detection with its seed video](29-echo-correct-header.png)
 
 ### 30 — Video-lens statistics
 
@@ -138,3 +140,15 @@ per-screen notes, see the [catalogue](README.md).
 ### 33 — Echo-chamber result: 6,500 recommendations
 
 ![Echo-chamber Videos tab with 2,447 nodes and 6,500 recommendation edges](33-echo-result-6500.png)
+
+### 34 — Echo chamber: channel network projection
+
+![Echo chamber Channels tab showing 182 nodes, 1,518 channel edges and 3,575 unattributed edges](34-echo-channel-network.png)
+
+### 35 — Full network analytics: a small run slice
+
+![Full network Metrics tab for one run slice: 31 nodes, 30 edges, density 0.032, one community](35-full-network-metrics-small.png)
+
+### 36 — Echo chamber: observed per-layer signals
+
+![Echo chamber per-layer signal table: layer 2 has 258 nodes, 6,018 edges, frontier collapse 18.49% and top-channel share 9.40%](36-echo-per-layer-signals.png)
